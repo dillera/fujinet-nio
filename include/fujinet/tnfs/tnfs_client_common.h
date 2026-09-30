@@ -4,6 +4,7 @@
 #include "fujinet/io/core/channel.h"
 #include "fujinet/core/logging.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <memory>
@@ -16,9 +17,11 @@ static constexpr const char* TAG = "tnfs";
 
 class CommonTnfsClient : public ITnfsClient {
 public:
-    CommonTnfsClient(std::unique_ptr<fujinet::io::Channel> channel, const char* transportName)
+    CommonTnfsClient(std::unique_ptr<fujinet::io::Channel> channel, const char* transportName,
+                     bool parallelReads = false)
         : _channel(std::move(channel))
         , _transportName(transportName)
+        , _parallelReads(parallelReads)
     {
         FN_LOGI(TAG, "%s TNFS client created", _transportName);
     }
@@ -309,6 +312,64 @@ public:
         return pos;
     }
 
+    bool supports_parallel_reads() const override { return _parallelReads; }
+
+    void read_parallel(std::vector<ReadAt>& reads) override
+    {
+        for (auto& r : reads) {
+            r.got = 0;
+        }
+        if (_sessionId == 0 || reads.empty() || !_parallelReads) {
+            return;
+        }
+
+        // Seeks are idempotent, so they are retried.
+        std::vector<TnfsPacket> pkts(reads.size());
+        for (std::size_t i = 0; i < reads.size(); ++i) {
+            fill_session_header(pkts[i], CMD_LSEEK);
+            pkts[i].payload[0] = static_cast<std::uint8_t>(reads[i].fileHandle);
+            pkts[i].payload[1] = 0; // SEEK_SET
+            pkts[i].payload[2] = static_cast<std::uint8_t>(reads[i].offset & 0xFFU);
+            pkts[i].payload[3] = static_cast<std::uint8_t>((reads[i].offset >> 8) & 0xFFU);
+            pkts[i].payload[4] = static_cast<std::uint8_t>((reads[i].offset >> 16) & 0xFFU);
+            pkts[i].payload[5] = static_cast<std::uint8_t>((reads[i].offset >> 24) & 0xFFU);
+        }
+        std::vector<bool> ok = exchange_all(pkts, std::vector<std::size_t>(reads.size(), 6), kMaxAttempts,
+                                            kParallelTimeout);
+
+        // Reads are sent once: a lost reply may have moved the handle.
+        std::vector<std::size_t> which;
+        std::vector<TnfsPacket> readPkts;
+        for (std::size_t i = 0; i < reads.size(); ++i) {
+            if (!ok[i] || pkts[i].payload[0] != RESULT_SUCCESS) {
+                continue;
+            }
+            const std::size_t req = std::min<std::size_t>(reads[i].bytes, 512);
+            TnfsPacket pkt{};
+            fill_session_header(pkt, CMD_READ);
+            pkt.payload[0] = static_cast<std::uint8_t>(reads[i].fileHandle);
+            pkt.payload[1] = static_cast<std::uint8_t>(req & 0xFFU);
+            pkt.payload[2] = static_cast<std::uint8_t>((req >> 8) & 0xFFU);
+            which.push_back(i);
+            readPkts.push_back(pkt);
+        }
+        if (readPkts.empty()) {
+            return;
+        }
+        ok = exchange_all(readPkts, std::vector<std::size_t>(readPkts.size(), 3), 1, kParallelTimeout);
+        for (std::size_t k = 0; k < which.size(); ++k) {
+            ReadAt& r = reads[which[k]];
+            const TnfsPacket& reply = readPkts[k];
+            if (!ok[k] || reply.payload[0] != RESULT_SUCCESS) {
+                continue;
+            }
+            const std::size_t req = std::min<std::size_t>(r.bytes, 512);
+            const std::size_t got = std::min<std::size_t>(read_u16le(reply.payload[1], reply.payload[2]), req);
+            std::memcpy(r.dst, reply.payload + 3, got);
+            r.got = got;
+        }
+    }
+
 private:
     static std::uint16_t read_u16le(std::uint8_t lo, std::uint8_t hi)
     {
@@ -396,13 +457,45 @@ private:
         return true;
     }
 
+    static constexpr std::chrono::milliseconds kTimeoutPerAttempt{1500};
+    // Short: a block missed by read-ahead is read again with full retries.
+    static constexpr std::chrono::milliseconds kParallelTimeout{400};
+    static constexpr int kMaxAttempts = 3;
+    static constexpr std::size_t kMinResponseSize = 5;
+
+    // One reply, or false at the deadline.
+    bool receive(TnfsPacket& response, std::chrono::steady_clock::time_point deadline)
+    {
+        while (true) {
+            const std::size_t bytesRead =
+                _channel->read(reinterpret_cast<std::uint8_t*>(&response), sizeof(response));
+            if (bytesRead >= kMinResponseSize) {
+                return true;
+            }
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) {
+                return false;
+            }
+            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+            if (_channel->supports_readable_wait()) {
+                _channel->wait_for_readable(std::min(left, std::chrono::milliseconds(50)));
+            } else {
+                std::this_thread::sleep_for(std::min(left, std::chrono::milliseconds(10)));
+            }
+        }
+    }
+
+    bool is_reply_to(const TnfsPacket& response, std::uint8_t seq) const
+    {
+        if (response.sequenceNum != seq) {
+            return false;
+        }
+        return _sessionId == 0 ||
+               read_u16le(response.sessionIdL, response.sessionIdH) == _sessionId;
+    }
+
     bool send_and_receive(TnfsPacket& pkt, std::size_t payloadSize)
     {
-        static constexpr std::chrono::milliseconds kTimeoutPerAttempt(1500);
-        static constexpr std::chrono::milliseconds kPollDelay(10);
-        static constexpr int kMaxAttempts = 3;
-        static constexpr std::size_t kMinResponseSize = 5;
-
         const std::uint8_t expectedSeq = pkt.sequenceNum;
         std::vector<std::uint8_t> tx(4 + payloadSize);
         std::memcpy(tx.data(), &pkt, tx.size());
@@ -411,26 +504,12 @@ private:
             _channel->write(tx.data(), tx.size());
             const auto deadline = std::chrono::steady_clock::now() + kTimeoutPerAttempt;
 
-            while (std::chrono::steady_clock::now() < deadline) {
-                TnfsPacket response{};
-                const std::size_t bytesRead = _channel->read(reinterpret_cast<std::uint8_t*>(&response), sizeof(response));
-                if (bytesRead < kMinResponseSize) {
-                    std::this_thread::sleep_for(kPollDelay);
-                    continue;
+            TnfsPacket response{};
+            while (receive(response, deadline)) {
+                if (is_reply_to(response, expectedSeq)) {
+                    pkt = response;
+                    return true;
                 }
-
-                if (response.sequenceNum != expectedSeq) {
-                    continue;
-                }
-                if (_sessionId != 0) {
-                    const std::uint16_t respSession = read_u16le(response.sessionIdL, response.sessionIdH);
-                    if (respSession != _sessionId) {
-                        continue;
-                    }
-                }
-
-                pkt = response;
-                return true;
             }
         }
 
@@ -438,9 +517,44 @@ private:
         return false;
     }
 
+    // Replies overwrite `pkts`; returns which packets were answered.
+    std::vector<bool> exchange_all(std::vector<TnfsPacket>& pkts, const std::vector<std::size_t>& payloadSizes,
+                                   int attempts, std::chrono::milliseconds timeout)
+    {
+        std::vector<bool> done(pkts.size(), false);
+        std::size_t left = pkts.size();
+        const std::vector<TnfsPacket> sent = pkts;
+
+        for (int attempt = 0; attempt < attempts && left > 0; ++attempt) {
+            for (std::size_t i = 0; i < sent.size(); ++i) {
+                if (!done[i]) {
+                    _channel->write(reinterpret_cast<const std::uint8_t*>(&sent[i]), 4 + payloadSizes[i]);
+                }
+            }
+            const auto deadline = std::chrono::steady_clock::now() + timeout;
+            TnfsPacket response{};
+            while (left > 0 && receive(response, deadline)) {
+                for (std::size_t i = 0; i < sent.size(); ++i) {
+                    if (!done[i] && is_reply_to(response, sent[i].sequenceNum)) {
+                        pkts[i] = response;
+                        done[i] = true;
+                        --left;
+                        break;
+                    }
+                }
+            }
+        }
+        if (left > 0) {
+            FN_LOGW(TAG, "%s TNFS: %u of %u parallel replies missing", _transportName,
+                    static_cast<unsigned>(left), static_cast<unsigned>(pkts.size()));
+        }
+        return done;
+    }
+
 private:
     std::unique_ptr<fujinet::io::Channel> _channel;
     const char* _transportName;
+    bool _parallelReads{false};
     std::uint16_t _sessionId{0};
     std::uint8_t _sequenceNum{0};
 };

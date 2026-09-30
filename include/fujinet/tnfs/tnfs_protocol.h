@@ -128,6 +128,25 @@ public:
     virtual std::size_t write(int fileHandle, const void* buffer, std::size_t bytes) = 0;
     virtual bool seek(int fileHandle, uint32_t offset) = 0;
     virtual uint32_t tell(int fileHandle) = 0;
+
+    struct ReadAt {
+        int fileHandle{-1};
+        uint32_t offset{0};
+        uint8_t* dst{nullptr};
+        std::size_t bytes{0}; // at most 512
+        std::size_t got{0}; // 0 on failure
+    };
+
+    // Over TCP a server may drop requests that share a segment.
+    virtual bool supports_parallel_reads() const { return false; }
+
+    // One handle per entry; leaves the handles' positions unknown.
+    virtual void read_parallel(std::vector<ReadAt>& reads)
+    {
+        for (auto& r : reads) {
+            r.got = 0;
+        }
+    }
 };
 
 std::unique_ptr<ITnfsClient> make_udp_tnfs_client(std::unique_ptr<fujinet::io::Channel> channel);

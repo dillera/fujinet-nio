@@ -6,7 +6,7 @@ namespace fujinet::tnfs {
 
 std::unique_ptr<ITnfsClient> make_udp_tnfs_client(std::unique_ptr<fujinet::io::Channel> channel)
 {
-    return std::make_unique<CommonTnfsClient>(std::move(channel), "UDP");
+    return std::make_unique<CommonTnfsClient>(std::move(channel), "UDP", /*parallelReads=*/true);
 }
 
 } // namespace fujinet::tnfs
