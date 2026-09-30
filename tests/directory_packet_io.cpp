@@ -102,7 +102,8 @@ bool publish_control(const std::string& path, const std::string& value)
 std::string fresh_challenge()
 {
     unsigned char random[16];
-    if (::getrandom(random, sizeof(random), 0) != sizeof(random)) return {};
+    // getrandom() is Linux-only.
+    if (::getentropy(random, sizeof(random)) != 0) return {};
     static const char hex[] = "0123456789abcdef";
     std::string value;
     for (const auto byte : random) {
