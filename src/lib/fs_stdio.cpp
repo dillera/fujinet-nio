@@ -40,18 +40,21 @@ public:
     std::size_t read(void* dst, std::size_t maxBytes) override
     {
         if (!_fp || maxBytes == 0) return 0;
+        switch_to(LastOp::Read);
         return std::fread(dst, 1, maxBytes, _fp);
     }
 
     std::size_t write(const void* src, std::size_t bytes) override
     {
         if (!_fp || bytes == 0) return 0;
+        switch_to(LastOp::Write);
         return std::fwrite(src, 1, bytes, _fp);
     }
 
     bool seek(std::uint64_t offset) override
     {
         if (!_fp) return false;
+        _last = LastOp::None;
         return std::fseek(_fp, static_cast<long>(offset), SEEK_SET) == 0;
     }
 
@@ -65,11 +68,24 @@ public:
     bool flush() override
     {
         if (!_fp) return false;
+        _last = LastOp::None;
         return std::fflush(_fp) == 0;
     }
 
 private:
+    enum class LastOp { None, Read, Write };
+
+    // C requires a seek between reads and writes on an update stream.
+    void switch_to(LastOp op)
+    {
+        if (_last != LastOp::None && _last != op) {
+            std::fseek(_fp, 0, SEEK_CUR);
+        }
+        _last = op;
+    }
+
     std::FILE* _fp{};
+    LastOp _last{LastOp::None};
 };
 
 // ----------------------
