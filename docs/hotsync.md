@@ -29,7 +29,16 @@ hotsync:
   backup: flagged      # none | flagged | all
 ```
 
-Settings are read at start-up, so a change takes effect after a restart.
+Or from the diagnostics console:
+
+```
+hotsync.set enabled 1
+hotsync.set user_name Andy D
+hotsync.save
+```
+
+`hotsync.get` shows the stored settings. They are read at start-up, so a
+change takes effect after a restart.
 
 `backup` chooses what a sync copies off the Palm:
 
@@ -76,7 +85,9 @@ so the first sync with `backup: flagged` backs it up.
 ## Diagnostics
 
 `hotsync.status` shows whether the service is on and listening, its settings,
-how many syncs have run, and the result of the last one:
+how many syncs have run, and the result of the last one. `rejected` counts
+connections that never completed the NetSync handshake, such as a port scan;
+they are not syncs:
 
 ```
 enabled: 1
@@ -88,6 +99,7 @@ backup: flagged
 syncing: 0
 syncs: 1
 failures: 0
+rejected: 0
 last_time: 2026-10-18 13:02:12
 last_user: Test Palm
 last_result: ok

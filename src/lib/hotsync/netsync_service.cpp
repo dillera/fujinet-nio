@@ -124,6 +124,15 @@ void NetSyncService::run()
 
 void NetSyncService::serve(int fd)
 {
+    TcpLink link(_ops, fd);
+    NetSyncTransport transport(link);
+    // A port probe or a stray client is not a Palm; count it apart from syncs.
+    if (!transport.accept()) {
+        FN_LOGW(TAG, "NetSync handshake failed; not a Palm");
+        std::lock_guard<std::mutex> lock(_statusMutex);
+        ++_status.rejected;
+        return;
+    }
     {
         std::lock_guard<std::mutex> lock(_statusMutex);
         _status.syncing = true;
@@ -131,23 +140,16 @@ void NetSyncService::serve(int fd)
     }
     FN_LOGI(TAG, "NetSync connection");
 
-    TcpLink link(_ops, fd);
-    NetSyncTransport transport(link);
-    SessionReport report;
-    if (transport.accept()) {
-        FsStorage storage(_fs, _settings.root);
-        SessionOptions options;
-        options.defaultUserName = _settings.userName;
-        options.newUserId = new_user_id();
-        options.backup = _settings.backup;
-        options.maxDatabaseBytes = _settings.maxDatabaseBytes;
-        if (_clock) {
-            options.now = _clock();
-        }
-        report = Session(transport, storage, options).run();
-    } else {
-        report.error = DlpError::Transport;
+    FsStorage storage(_fs, _settings.root);
+    SessionOptions options;
+    options.defaultUserName = _settings.userName;
+    options.newUserId = new_user_id();
+    options.backup = _settings.backup;
+    options.maxDatabaseBytes = _settings.maxDatabaseBytes;
+    if (_clock) {
+        options.now = _clock();
     }
+    const SessionReport report = Session(transport, storage, options).run();
 
     std::lock_guard<std::mutex> lock(_statusMutex);
     _status.syncing = false;

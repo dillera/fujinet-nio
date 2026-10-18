@@ -344,7 +344,7 @@ extern "C" void fujinet_core_task(void* arg)
     if (bootDiag) diagRegistry.add_provider(*bootDiag);
     // Palm HotSync over the network. Its task waits for the network itself.
     auto hotsync = fujinet::hotsync::start_netsync_service(core.storageManager(), config.hotsync);
-    auto hotsyncDiag = fujinet::diag::create_hotsync_diagnostic_provider(hotsync);
+    auto hotsyncDiag = fujinet::diag::create_hotsync_diagnostic_provider(hotsync, services.fuji);
     diagRegistry.add_provider(*hotsyncDiag);
 
     // If we load config at this point to find out if the services should be enabled or not, it adds 80ms before the main loop starts

@@ -305,7 +305,7 @@ int main()
 
     // Palm HotSync over the network, on a thread of its own.
     auto hotsync = fujinet::hotsync::start_netsync_service(core.storageManager(), config.hotsync);
-    auto hotsyncDiag = fujinet::diag::create_hotsync_diagnostic_provider(hotsync);
+    auto hotsyncDiag = fujinet::diag::create_hotsync_diagnostic_provider(hotsync, fujiConcrete);
     diagRegistry.add_provider(*hotsyncDiag);
     core::setup_transports(core, *channel, profile, &config);
 #endif

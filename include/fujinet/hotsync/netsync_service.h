@@ -38,6 +38,7 @@ struct NetSyncStatus {
     std::uint16_t port{0};
     std::uint32_t syncs{0};    // syncs started
     std::uint32_t failures{0}; // syncs that did not reach EndOfSync
+    std::uint32_t rejected{0}; // connections that never completed the NetSync handshake
     std::string lastTime;      // local time the last sync ended, or empty
     std::string lastUser;
     std::string lastResult;    // e.g. "ok" or "link failure"

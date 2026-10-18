@@ -13,16 +13,20 @@
 #include "fujinet/hotsync/dlp_client.h"
 #include "fujinet/hotsync/fs_storage.h"
 #include "fujinet/hotsync/hotsync_init.h"
+#include "fujinet/hotsync/netsync_service.h"
 #include "fujinet/hotsync/netsync_transport.h"
 #include "fujinet/hotsync/padp_transport.h"
 #include "fujinet/hotsync/palm_database.h"
 #include "fujinet/hotsync/session.h"
 #include "fujinet/hotsync/slp.h"
+#include "fujinet/io/devices/fuji_device.h"
+#include "fujinet/net/tcp_socket_ops.h"
 
 #include <algorithm>
 #include <cstring>
 #include <deque>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -746,14 +750,155 @@ TEST_CASE("HotSync config: backup policy names parse both ways")
     CHECK_FALSE(parse_backup_policy("some", policy));
 }
 
+namespace {
+
+class MemoryConfigStore final : public fujinet::config::FujiConfigStore {
+public:
+    fujinet::config::FujiConfig load() override { return saved; }
+    void save(const fujinet::config::FujiConfig& cfg) override
+    {
+        saved = cfg;
+        ++saves;
+    }
+    fujinet::config::FujiConfig saved;
+    int saves{0};
+};
+
+fujinet::diag::DiagResult run_diag(fujinet::diag::IDiagnosticProvider& p, std::vector<std::string_view> argv)
+{
+    fujinet::diag::DiagArgsView args;
+    args.line = argv.empty() ? std::string_view{} : argv[0];
+    args.argv = std::move(argv);
+    return p.execute(args);
+}
+
+} // namespace
+
 TEST_CASE("HotSync diagnostics: status says how to turn HotSync on when it is off")
 {
-    auto provider = fujinet::diag::create_hotsync_diagnostic_provider(nullptr);
-    fujinet::diag::DiagArgsView args;
-    args.line = "hotsync.status";
-    args.argv = {"hotsync.status"};
-    const fujinet::diag::DiagResult r = provider->execute(args);
+    auto provider = fujinet::diag::create_hotsync_diagnostic_provider(nullptr, nullptr);
+    const fujinet::diag::DiagResult r = run_diag(*provider, {"hotsync.status"});
     CHECK(r.status == fujinet::diag::DiagStatus::Ok);
-    CHECK(r.text.find("enabled: 0") != std::string::npos);
-    CHECK(r.text.find("hotsync.enabled") != std::string::npos);
+    CHECK(r.text == "enabled: 0\r\n(hotsync.set enabled 1, hotsync.save, then restart)\r\n");
+    CHECK(run_diag(*provider, {"hotsync.get"}).status == fujinet::diag::DiagStatus::NotReady);
+    CHECK(run_diag(*provider, {"hotsync.save"}).status == fujinet::diag::DiagStatus::NotReady);
+}
+
+TEST_CASE("HotSync diagnostics: set changes the stored settings and save writes them")
+{
+    auto storeOwned = std::make_unique<MemoryConfigStore>();
+    MemoryConfigStore& store = *storeOwned;
+    fujinet::io::FujiDevice fuji(nullptr, std::move(storeOwned));
+    auto provider = fujinet::diag::create_hotsync_diagnostic_provider(nullptr, &fuji);
+    using fujinet::diag::DiagStatus;
+
+    CHECK(run_diag(*provider, {"hotsync.get"}).text ==
+          "enabled: 0\r\nport: 14238\r\nroot: /hotsync\r\nuser_name: FujiNet\r\nbackup: flagged\r\n");
+
+    CHECK(run_diag(*provider, {"hotsync.set", "enabled", "1"}).status == DiagStatus::Ok);
+    CHECK(run_diag(*provider, {"hotsync.set", "port", "14239"}).status == DiagStatus::Ok);
+    CHECK(run_diag(*provider, {"hotsync.set", "root", "/palm"}).status == DiagStatus::Ok);
+    CHECK(run_diag(*provider, {"hotsync.set", "user_name", "Andy", "D"}).status == DiagStatus::Ok);
+    CHECK(run_diag(*provider, {"hotsync.set", "backup", "ALL"}).status == DiagStatus::Ok);
+    CHECK(run_diag(*provider, {"hotsync.get"}).text ==
+          "enabled: 1\r\nport: 14239\r\nroot: /palm\r\nuser_name: Andy D\r\nbackup: all\r\n");
+    CHECK(store.saves == 0);
+
+    CHECK(run_diag(*provider, {"hotsync.save"}).status == DiagStatus::Ok);
+    CHECK(store.saves == 1);
+    CHECK(store.saved.hotsync.enabled);
+    CHECK(store.saved.hotsync.port == 14239);
+    CHECK(store.saved.hotsync.userName == "Andy D");
+    CHECK(store.saved.hotsync.backup == "all");
+}
+
+TEST_CASE("HotSync diagnostics: set refuses bad values and leaves the setting alone")
+{
+    fujinet::io::FujiDevice fuji(nullptr, std::make_unique<MemoryConfigStore>());
+    auto provider = fujinet::diag::create_hotsync_diagnostic_provider(nullptr, &fuji);
+    using fujinet::diag::DiagStatus;
+
+    CHECK(run_diag(*provider, {"hotsync.set", "enabled", "yes"}).status == DiagStatus::InvalidArgs);
+    CHECK(run_diag(*provider, {"hotsync.set", "port", "0"}).status == DiagStatus::InvalidArgs);
+    CHECK(run_diag(*provider, {"hotsync.set", "port", "65536"}).status == DiagStatus::InvalidArgs);
+    CHECK(run_diag(*provider, {"hotsync.set", "root", "hotsync"}).status == DiagStatus::InvalidArgs);
+    CHECK(run_diag(*provider, {"hotsync.set", "user_name", std::string(41, 'x')}).status == DiagStatus::InvalidArgs);
+    CHECK(run_diag(*provider, {"hotsync.set", "backup", "some"}).status == DiagStatus::InvalidArgs);
+    CHECK(run_diag(*provider, {"hotsync.set", "colour", "red"}).status == DiagStatus::InvalidArgs);
+    CHECK(run_diag(*provider, {"hotsync.set", "port"}).status == DiagStatus::InvalidArgs);
+    CHECK(fuji.config().hotsync.port == 14238);
+    CHECK(fuji.config().hotsync.root == "/hotsync");
+    CHECK(fuji.config().hotsync.backup == "flagged");
+}
+
+namespace {
+
+// Listens on fd 3 and hands out one connection, fd 4, whose peer has already
+// hung up: a port probe.
+struct ProbeSocketOps final : fujinet::net::ITcpSocketOps {
+    bool accepted = false;
+    std::uint64_t now = 0;
+
+    int socket(int, int, int) override { return 3; }
+    void close(int) override {}
+    int connect(int, const struct sockaddr*, fujinet::net::SockLen) override { return -1; }
+    int bind(int, const struct sockaddr*, fujinet::net::SockLen) override { return 0; }
+    int listen(int, int) override { return 0; }
+    int accept(int, struct sockaddr*, fujinet::net::SockLen*) override
+    {
+        if (accepted) return -1;
+        accepted = true;
+        return 4;
+    }
+    int set_nonblocking(int) override { return 0; }
+    bool poll_connect_complete(int) override { return false; }
+    fujinet::net::SSize send(int, const void*, std::size_t len) override
+    {
+        return static_cast<fujinet::net::SSize>(len);
+    }
+    fujinet::net::SSize recv(int, void*, std::size_t) override { return 0; }
+    int shutdown_write(int) override { return 0; }
+    int get_so_error(int) override { return 0; }
+    int setsockopt(int, int, int, const void*, fujinet::net::SockLen) override { return 0; }
+    void apply_stream_socket_options(int, bool, bool) override {}
+    void apply_listen_socket_options(int) override {}
+    int getaddrinfo(const char*, const char*, const void*, fujinet::net::AddrInfo** res) override
+    {
+        *res = reinterpret_cast<fujinet::net::AddrInfo*>(&now);
+        return 0;
+    }
+    const void* tcp_stream_addrinfo_hints() const noexcept override { return nullptr; }
+    const void* tcp_stream_passive_addrinfo_hints() const noexcept override { return nullptr; }
+    void freeaddrinfo(fujinet::net::AddrInfo*) override {}
+    fujinet::net::AddrInfo* addrinfo_next(fujinet::net::AddrInfo*) override { return nullptr; }
+    int addrinfo_family(fujinet::net::AddrInfo*) override { return 0; }
+    int addrinfo_socktype(fujinet::net::AddrInfo*) override { return 0; }
+    int addrinfo_protocol(fujinet::net::AddrInfo*) override { return 0; }
+    const struct sockaddr* addrinfo_addr(fujinet::net::AddrInfo*, fujinet::net::SockLen*) override { return nullptr; }
+    std::uint64_t now_ms() override { return now; }
+    int last_errno() override { return 0; }
+    const char* err_string(int) override { return "probe socket"; }
+    bool is_would_block(int) const noexcept override { return false; }
+    bool is_in_progress(int) const noexcept override { return false; }
+    bool is_peer_gone(int) const noexcept override { return true; }
+    int err_timed_out() const noexcept override { return 110; }
+    int err_conn_refused() const noexcept override { return 111; }
+    int err_host_unreach() const noexcept override { return 113; }
+};
+
+} // namespace
+
+TEST_CASE("HotSync service: a connection that never completes the handshake is rejected, not a failed sync")
+{
+    ProbeSocketOps ops;
+    fujinet::tests::MemoryFileSystem fs("host");
+    NetSyncService service(ops, fs, NetSyncSettings{}, nullptr);
+
+    CHECK(service.poll());
+    const NetSyncStatus s = service.status();
+    CHECK(s.listening);
+    CHECK(s.rejected == 1);
+    CHECK(s.syncs == 0);
+    CHECK(s.failures == 0);
+    CHECK(s.lastResult.empty());
 }

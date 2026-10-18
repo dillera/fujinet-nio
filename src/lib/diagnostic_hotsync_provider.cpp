@@ -1,8 +1,13 @@
 #include "fujinet/diag/diagnostic_provider.h"
 
+#include "fujinet/config/fuji_config.h"
+#include "fujinet/diag/diagnostic_parse.h"
 #include "fujinet/hotsync/hotsync_init.h"
 #include "fujinet/hotsync/netsync_service.h"
+#include "fujinet/hotsync/session.h"
+#include "fujinet/io/devices/fuji_device.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -13,6 +18,9 @@ namespace fujinet::diag {
 
 namespace {
 
+// Palm OS keeps at most 40 characters of user name.
+constexpr std::size_t kMaxUserName = 40;
+
 void add_line(DiagResult& r, const char* key, const std::string& value)
 {
     r.text += key;
@@ -22,10 +30,23 @@ void add_line(DiagResult& r, const char* key, const std::string& value)
     r.kv.emplace_back(key, value);
 }
 
+std::string join_args(const DiagArgsView& args, std::size_t from)
+{
+    std::string out;
+    for (std::size_t i = from; i < args.argv.size(); ++i) {
+        if (i > from) {
+            out.push_back(' ');
+        }
+        out.append(args.argv[i].data(), args.argv[i].size());
+    }
+    return out;
+}
+
 class HotSyncDiagnosticProvider final : public IDiagnosticProvider {
 public:
-    explicit HotSyncDiagnosticProvider(std::shared_ptr<hotsync::NetSyncService> service)
+    HotSyncDiagnosticProvider(std::shared_ptr<hotsync::NetSyncService> service, io::FujiDevice* fuji)
         : _service(std::move(service))
+        , _fuji(fuji)
     {}
 
     std::string_view provider_id() const noexcept override { return "hotsync"; }
@@ -38,6 +59,24 @@ public:
             .usage = "hotsync.status",
             .safe = true,
         });
+        out.push_back(DiagCommandSpec{
+            .name = "hotsync.get",
+            .summary = "show the stored HotSync settings (applied at start-up)",
+            .usage = "hotsync.get",
+            .safe = true,
+        });
+        out.push_back(DiagCommandSpec{
+            .name = "hotsync.set",
+            .summary = "change a stored HotSync setting; hotsync.save, then restart to apply",
+            .usage = "hotsync.set <enabled|port|root|user_name|backup> <value...>",
+            .safe = false,
+        });
+        out.push_back(DiagCommandSpec{
+            .name = "hotsync.save",
+            .summary = "write the HotSync settings into fujinet.yaml (requires FujiDevice)",
+            .usage = "hotsync.save",
+            .safe = false,
+        });
     }
 
     DiagResult execute(const DiagArgsView& args) override
@@ -45,9 +84,11 @@ public:
         if (args.argv.empty()) {
             return DiagResult::invalid_args("missing command");
         }
-        if (args.argv[0] == "hotsync.status") {
-            return cmd_status();
-        }
+        const std::string_view cmd = args.argv[0];
+        if (cmd == "hotsync.status") return cmd_status();
+        if (cmd == "hotsync.get") return cmd_get();
+        if (cmd == "hotsync.set") return cmd_set(args);
+        if (cmd == "hotsync.save") return cmd_save();
         return DiagResult::not_found("unknown hotsync command");
     }
 
@@ -57,7 +98,7 @@ private:
         DiagResult r = DiagResult::ok();
         if (!_service) {
             add_line(r, "enabled", "0");
-            r.text += "(set hotsync.enabled in fujinet.yaml and restart)\r\n";
+            r.text += "(hotsync.set enabled 1, hotsync.save, then restart)\r\n";
             return r;
         }
         const hotsync::NetSyncSettings& settings = _service->settings();
@@ -71,6 +112,7 @@ private:
         add_line(r, "syncing", s.syncing ? "1" : "0");
         add_line(r, "syncs", std::to_string(s.syncs));
         add_line(r, "failures", std::to_string(s.failures));
+        add_line(r, "rejected", std::to_string(s.rejected));
         if (s.syncs > 0 && !s.syncing) {
             add_line(r, "last_time", s.lastTime.empty() ? "(clock not set)" : s.lastTime);
             add_line(r, "last_user", s.lastUser);
@@ -83,15 +125,87 @@ private:
         return r;
     }
 
+    DiagResult cmd_get() const
+    {
+        if (!_fuji) return DiagResult::not_ready("FujiDevice not available");
+        const config::HotSyncConfig& c = _fuji->config().hotsync;
+        DiagResult r = DiagResult::ok();
+        add_line(r, "enabled", c.enabled ? "1" : "0");
+        add_line(r, "port", std::to_string(c.port));
+        add_line(r, "root", c.root);
+        add_line(r, "user_name", c.userName);
+        add_line(r, "backup", c.backup);
+        return r;
+    }
+
+    DiagResult cmd_set(const DiagArgsView& args)
+    {
+        static constexpr const char* kUsage = "usage: hotsync.set <enabled|port|root|user_name|backup> <value...>";
+        if (args.argv.size() < 3) {
+            return DiagResult::invalid_args(kUsage);
+        }
+        if (!_fuji) return DiagResult::not_ready("FujiDevice not available");
+        config::HotSyncConfig& c = _fuji->config_mut().hotsync;
+        const std::string_view field = args.argv[1];
+        const std::string value = join_args(args, 2);
+
+        if (ascii_iequals(field, "enabled")) {
+            if (value != "0" && value != "1") {
+                return DiagResult::invalid_args("enabled must be 0 or 1");
+            }
+            c.enabled = value == "1";
+        } else if (ascii_iequals(field, "port")) {
+            std::uint32_t port = 0;
+            if (!parse_decimal_u32(value, port) || port < 1 || port > 65535) {
+                return DiagResult::invalid_args("port must be 1..65535");
+            }
+            c.port = static_cast<std::uint16_t>(port);
+        } else if (ascii_iequals(field, "root")) {
+            if (value.empty() || value.front() != '/') {
+                return DiagResult::invalid_args("root must start with /");
+            }
+            c.root = value;
+        } else if (ascii_iequals(field, "user_name")) {
+            if (value.size() > kMaxUserName) {
+                return DiagResult::invalid_args("user_name is at most 40 characters");
+            }
+            c.userName = value;
+        } else if (ascii_iequals(field, "backup")) {
+            std::string lower = value;
+            for (char& ch : lower) {
+                if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+            }
+            hotsync::BackupPolicy policy{};
+            if (!hotsync::parse_backup_policy(lower, policy)) {
+                return DiagResult::invalid_args("backup must be none, flagged or all");
+            }
+            c.backup = hotsync::backup_policy_name(policy);
+        } else {
+            return DiagResult::invalid_args(kUsage);
+        }
+        return DiagResult::ok(std::string(field) + " stored; hotsync.save, then restart to apply\r\n");
+    }
+
+    DiagResult cmd_save()
+    {
+        if (!_fuji) return DiagResult::not_ready("FujiDevice not available");
+        auto* store = _fuji->config_store();
+        if (!store) return DiagResult::not_ready("config store not available");
+        store->save(_fuji->config());
+        return DiagResult::ok("saved hotsync settings to config store; restart to apply\r\n");
+    }
+
     std::shared_ptr<hotsync::NetSyncService> _service;
+    io::FujiDevice* _fuji;
 };
 
 } // namespace
 
 std::unique_ptr<IDiagnosticProvider> create_hotsync_diagnostic_provider(
-    std::shared_ptr<hotsync::NetSyncService> service)
+    std::shared_ptr<hotsync::NetSyncService> service,
+    io::FujiDevice* fuji)
 {
-    return std::make_unique<HotSyncDiagnosticProvider>(std::move(service));
+    return std::make_unique<HotSyncDiagnosticProvider>(std::move(service), fuji);
 }
 
 } // namespace fujinet::diag

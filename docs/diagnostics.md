@@ -152,14 +152,20 @@ sending, or CMD is wired to a different pin than `pinmap.cpp` says); edges but
 Pair it with `disk.stats` to see whether sector requests reach the disk.
 ### Provider: `hotsync`
 
-Created with `fujinet::diag::create_hotsync_diagnostic_provider(service)` on
-POSIX and ESP32; `service` is null when HotSync is off. It exposes:
+Created with `fujinet::diag::create_hotsync_diagnostic_provider(service, fuji)`
+on POSIX and ESP32; `service` is null when HotSync is off. It exposes:
 
 - `hotsync.status` — whether the NetSync service is on and listening, its
   settings, sync counts, and the user, time and result of the last sync
+- `hotsync.get` — the stored `hotsync:` settings
+- `hotsync.set <enabled|port|root|user_name|backup> <value...>` — change a
+  stored setting (`enabled` is `0` or `1`; `backup` is `none`, `flagged` or
+  `all`; `user_name` may contain spaces, up to 40 characters)
+- `hotsync.save` — write the `hotsync:` settings into `fujinet.yaml`
 
-The `hotsync:` settings are read at start-up; edit `fujinet.yaml` and restart
-to change them. See [`hotsync.md`](hotsync.md).
+`get`, `set` and `save` need the FujiDevice. The service reads its settings at
+start-up, so a change takes effect after `hotsync.save` and a restart. See
+[`hotsync.md`](hotsync.md).
 
 ### Provider: `net`
 
