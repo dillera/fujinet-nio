@@ -16,6 +16,7 @@ class FujiDevice;
 }
 
 namespace fujinet::net { class INetworkLink; }
+namespace fujinet::hotsync { class NetSyncService; }
 
 namespace fujinet::diag {
 
@@ -77,5 +78,10 @@ std::unique_ptr<IDiagnosticProvider> create_boot_diagnostic_provider(::fujinet::
 std::unique_ptr<IDiagnosticProvider> create_uart_channel_diagnostic_provider(
     ::fujinet::io::Channel* channel,
     ::fujinet::io::FujiDevice* fuji);
+
+// Palm HotSync (docs/hotsync.md): service state and the last sync. service is
+// null when HotSync is off.
+std::unique_ptr<IDiagnosticProvider> create_hotsync_diagnostic_provider(
+    std::shared_ptr<::fujinet::hotsync::NetSyncService> service);
 
 } // namespace fujinet::diag

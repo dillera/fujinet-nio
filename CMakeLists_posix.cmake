@@ -133,6 +133,7 @@ set(FUJINET_NIO_SOURCES
         src/lib/diagnostic_boot_provider.cpp
         src/lib/diagnostic_core_provider.cpp
         src/lib/diagnostic_disk_provider.cpp
+        src/lib/diagnostic_hotsync_provider.cpp
         src/lib/diagnostic_modem_provider.cpp
         src/lib/diagnostic_network_provider.cpp
         src/lib/diagnostic_parse.cpp
@@ -168,6 +169,17 @@ set(FUJINET_NIO_SOURCES
         src/lib/host_service.cpp
         src/lib/host_service_init.cpp
         src/lib/host_state.cpp
+        src/lib/hotsync/dlp.cpp
+        src/lib/hotsync/dlp_client.cpp
+        src/lib/hotsync/fs_storage.cpp
+        src/lib/hotsync/hotsync_init.cpp
+        src/lib/hotsync/netsync_service.cpp
+        src/lib/hotsync/netsync_transport.cpp
+        src/lib/hotsync/padp_transport.cpp
+        src/lib/hotsync/palm_database.cpp
+        src/lib/hotsync/session.cpp
+        src/lib/hotsync/slp.cpp
+        src/lib/hotsync/tcp_link.cpp
         src/lib/image/ilbm_writer.cpp
         src/lib/image/image_pipeline.cpp
         src/lib/image/output_format.cpp
@@ -245,6 +257,7 @@ set(FUJINET_NIO_SOURCES
         src/platform/posix/network_registry.cpp
         src/platform/posix/pty_channel.cpp
         src/platform/posix/serial_channel.cpp
+        src/platform/posix/service_task.cpp
         src/platform/posix/tcp_channel.cpp
         src/platform/posix/tcp_network_protocol_posix.cpp
         src/platform/posix/tcp_server_channel.cpp

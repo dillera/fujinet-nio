@@ -41,6 +41,7 @@ extern "C" {
 #include "fujinet/diag/diagnostic_provider.h"
 #include "fujinet/diag/diagnostic_registry.h"
 #include "fujinet/fs/boot_mount.h"
+#include "fujinet/hotsync/hotsync_init.h"
 
 #include <atomic>
 #include <chrono>
@@ -341,6 +342,10 @@ extern "C" void fujinet_core_task(void* arg)
     // Not tied to a Channel: the Atari SIO profile has none, and still needs boot.* on the console.
     bootDiag = fujinet::diag::create_boot_diagnostic_provider(services.fuji);
     if (bootDiag) diagRegistry.add_provider(*bootDiag);
+    // Palm HotSync over the network. Its task waits for the network itself.
+    auto hotsync = fujinet::hotsync::start_netsync_service(core.storageManager(), config.hotsync);
+    auto hotsyncDiag = fujinet::diag::create_hotsync_diagnostic_provider(hotsync);
+    diagRegistry.add_provider(*hotsyncDiag);
 
     // If we load config at this point to find out if the services should be enabled or not, it adds 80ms before the main loop starts
     fujinet::core::register_host_service(core);

@@ -150,6 +150,16 @@ A quick reading: `cmd_edges: 0` means the CMD pin never changes (the Atari is no
 sending, or CMD is wired to a different pin than `pinmap.cpp` says); edges but
 `rx_bytes: 0` points at the data-in pin; bytes but `frames: 0` points at the aborts.
 Pair it with `disk.stats` to see whether sector requests reach the disk.
+### Provider: `hotsync`
+
+Created with `fujinet::diag::create_hotsync_diagnostic_provider(service)` on
+POSIX and ESP32; `service` is null when HotSync is off. It exposes:
+
+- `hotsync.status` — whether the NetSync service is on and listening, its
+  settings, sync counts, and the user, time and result of the last sync
+
+The `hotsync:` settings are read at start-up; edit `fujinet.yaml` and restart
+to change them. See [`hotsync.md`](hotsync.md).
 
 ### Provider: `net`
 

@@ -22,6 +22,7 @@
 #include "fujinet/fs/filesystem.h"
 #include "fujinet/fs/storage_manager.h"
 #include "fujinet/fs/boot_mount.h"
+#include "fujinet/hotsync/hotsync_init.h"
 #include "fujinet/io/core/channel.h"
 #include "fujinet/io/devices/fuji_device.h"
 #include "fujinet/io/devices/disk_device.h"
@@ -301,6 +302,11 @@ int main()
     if (bootDiag) {
         diagRegistry.add_provider(*bootDiag);
     }
+
+    // Palm HotSync over the network, on a thread of its own.
+    auto hotsync = fujinet::hotsync::start_netsync_service(core.storageManager(), config.hotsync);
+    auto hotsyncDiag = fujinet::diag::create_hotsync_diagnostic_provider(hotsync);
+    diagRegistry.add_provider(*hotsyncDiag);
     core::setup_transports(core, *channel, profile, &config);
 #endif
 
