@@ -26,11 +26,13 @@
 #include "fujinet/net/tcp_socket_ops.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <deque>
 #include <map>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace fujinet::hotsync;
@@ -1123,6 +1125,30 @@ TEST_CASE("HotSync cradle: a window with no WAKEUP gives the line back")
     f.cradle->release();
     CHECK(f.line->baud == 115200);
     CHECK(f.line->tx.empty());
+}
+
+TEST_CASE("HotSync cradle: a window closes on time while bytes keep arriving")
+{
+    // A Palm app retrying FujiBus requests more often than the window lasts,
+    // or bus bytes at the wrong rate: never a WAKEUP, never a quiet line.
+    class NoisyLink : public Link {
+    public:
+        int read(std::uint8_t* buf, std::size_t len, std::uint32_t) override
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            const std::uint8_t request[] = {0xC0, 0x70, 0x01, 0x07, 0x00, 0x79, 0x00, 0x01, 0xC0};
+            const std::size_t n = std::min(len, sizeof(request));
+            std::memcpy(buf, request, n);
+            return static_cast<int>(n);
+        }
+        int write(const std::uint8_t*, std::size_t len) override { return static_cast<int>(len); }
+        void set_baud_rate(std::uint32_t) override {}
+    } link;
+
+    PadpTransport padp(link);
+    const auto start = std::chrono::steady_clock::now();
+    CHECK_FALSE(padp.wait_for_wakeup(50));
+    CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(1));
 }
 
 TEST_CASE("HotSync service: cradle windows alternate with the bus and stop while an app is active")

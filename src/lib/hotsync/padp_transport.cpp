@@ -6,6 +6,7 @@
 #include "fujinet/core/logging.h"
 
 #include <algorithm>
+#include <chrono>
 
 namespace fujinet::hotsync {
 
@@ -47,10 +48,25 @@ bool PadpTransport::accept()
     return wait_for_wakeup() && answer_wakeup();
 }
 
+// A hard limit, not an idle timeout: a line that never goes quiet (a Palm app
+// retrying FujiBus requests, or bus bytes at the wrong rate) must not keep a
+// cradle window open.
 bool PadpTransport::wait_for_wakeup(std::uint32_t timeoutMs)
 {
-    Bytes message;
-    if (!receive(message, timeoutMs) || message.size() < kCmpPacketSize) {
+    using Clock = std::chrono::steady_clock;
+    const auto deadline = Clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (_received.empty()) {
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
+        SlpDatagram datagram;
+        if (left <= 0 || !_reader.read_within(datagram, static_cast<std::uint32_t>(left))) {
+            return false;
+        }
+        bool acked = false;
+        handle_incoming(datagram, 0, 0, acked);
+    }
+    const Bytes message = std::move(_received.front());
+    _received.pop_front();
+    if (message.size() < kCmpPacketSize) {
         return false;
     }
     if (message[0] != kCmpWakeup) {

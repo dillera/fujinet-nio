@@ -4,6 +4,7 @@
 #include "fujinet/hotsync/slp.h"
 
 #include <algorithm>
+#include <chrono>
 #include <iterator>
 
 namespace fujinet::hotsync {
@@ -60,6 +61,21 @@ bool SlpReader::read(SlpDatagram& out, std::uint32_t timeoutMs)
             return true;
         }
         if (!fill(timeoutMs)) {
+            return false;
+        }
+    }
+}
+
+bool SlpReader::read_within(SlpDatagram& out, std::uint32_t limitMs)
+{
+    using Clock = std::chrono::steady_clock;
+    const auto deadline = Clock::now() + std::chrono::milliseconds(limitMs);
+    for (;;) {
+        if (try_parse(out)) {
+            return true;
+        }
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
+        if (left <= 0 || !fill(static_cast<std::uint32_t>(left))) {
             return false;
         }
     }

@@ -21,7 +21,8 @@ public:
     explicit PadpTransport(Link& link, std::uint32_t maxBaud = kCmpMaxBaud);
 
     // accept() is wait_for_wakeup() then answer_wakeup(). A cradle that only
-    // listens for a while bounds the first, never the second.
+    // listens for a while bounds the first, never the second. The wait for
+    // WAKEUP ends at timeoutMs even while bytes keep arriving.
     bool accept() override;
     bool wait_for_wakeup(std::uint32_t timeoutMs = 1000);
     bool answer_wakeup();

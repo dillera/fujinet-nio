@@ -41,6 +41,8 @@ public:
 
     // True when a datagram arrives before the link stays silent for timeoutMs.
     bool read(SlpDatagram& out, std::uint32_t timeoutMs);
+    // True when a datagram arrives within limitMs, however busy the link is.
+    bool read_within(SlpDatagram& out, std::uint32_t limitMs);
     bool link_closed() const { return _closed; }
 
 private:
