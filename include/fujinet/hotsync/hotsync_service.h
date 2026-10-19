@@ -86,6 +86,13 @@ public:
     void stop() { _stop.store(true); }
 
     HotSyncStatus status() const;
+
+    // Downloads an http:// URL into the install queue for the next sync. The
+    // file is named after the URL's last path segment unless `name` is given;
+    // either must end in .prc, .pdb or .pqa. Returns an empty string on success
+    // (`name` and `size` describe the file), otherwise what went wrong. Blocks
+    // while it downloads: for the console task.
+    std::string fetch_install(const std::string& url, std::string& name, std::size_t& size);
     const HotSyncSettings& settings() const { return _settings; }
     bool has_cradle() const { return _cradle != nullptr; }
     // Null without a cradle.

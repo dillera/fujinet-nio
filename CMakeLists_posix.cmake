@@ -175,6 +175,7 @@ set(FUJINET_NIO_SOURCES
         src/lib/hotsync/fs_storage.cpp
         src/lib/hotsync/hotsync_init.cpp
         src/lib/hotsync/hotsync_service.cpp
+        src/lib/hotsync/http_fetch.cpp
         src/lib/hotsync/netsync_transport.cpp
         src/lib/hotsync/padp_transport.cpp
         src/lib/hotsync/palm_database.cpp

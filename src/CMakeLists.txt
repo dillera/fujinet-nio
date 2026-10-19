@@ -69,6 +69,7 @@ idf_component_register(
         lib/hotsync/fs_storage.cpp
         lib/hotsync/hotsync_init.cpp
         lib/hotsync/hotsync_service.cpp
+        lib/hotsync/http_fetch.cpp
         lib/hotsync/netsync_transport.cpp
         lib/hotsync/padp_transport.cpp
         lib/hotsync/palm_database.cpp

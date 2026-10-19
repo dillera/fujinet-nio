@@ -164,6 +164,9 @@ on POSIX and ESP32; `service` is null when HotSync is off. It exposes:
   turns NetSync off; `backup` is `none`, `flagged` or `all`; `user_name` may
   contain spaces, up to 40 characters)
 - `hotsync.save` — write the `hotsync:` settings into `fujinet.yaml`
+- `hotsync.fetch <http://host[:port]/file.prc> [name]` — download a `.prc`,
+  `.pdb` or `.pqa` over plain HTTP into `install/` for the next sync (needs
+  HotSync on)
 
 `get`, `set` and `save` need the FujiDevice. The service reads its settings at
 start-up, so a change takes effect after `hotsync.save` and a restart. See

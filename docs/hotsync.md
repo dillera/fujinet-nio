@@ -61,12 +61,25 @@ The folder lives on the persistent filesystem (`host` on POSIX, `sd0` or
 |---|---|
 | `install/` | Files to install at the next sync. FujiNet creates it at start-up. |
 | `installed/` | Files move here once installed. |
+| `incoming/` | `hotsync.fetch` downloads, until complete. |
 | `backup/<user>/` | Databases backed up from the Palm, as `.pdb` or `.prc` |
 
 Copy a file into `install/` through any route that reaches the persistent
 filesystem: the host folder on POSIX, the SD card, or a FileDevice write from a
 FujiNet client. File and user names are made FAT-safe: characters other than
 letters, digits, space, `-`, `_` and `.` become `_`.
+
+Or download it from the console. Serve the files from a computer on the
+network, then fetch each into the queue:
+
+```
+python3 -m http.server 8000                     # on the computer, in the folder with the .prc
+hotsync.fetch http://192.168.1.5:8000/FujiNetTest.prc     # on the FujiNet console
+```
+
+`hotsync.fetch` takes plain `http://` only (no TLS, no redirects) and a name
+ending in `.prc`, `.pdb` or `.pqa`, from the URL or given as a second argument.
+The file lands in `incoming/` first and moves to `install/` when complete.
 
 A database larger than 1 MB is neither installed nor backed up, so it never
 has to be held in memory. On ESP32 buffers that large come from PSRAM.

@@ -15,6 +15,7 @@
 #include "fujinet/hotsync/hotsync_init.h"
 #include "fujinet/hotsync/cradle_channel.h"
 #include "fujinet/hotsync/hotsync_service.h"
+#include "fujinet/hotsync/http_fetch.h"
 #include "fujinet/hotsync/netsync_transport.h"
 #include "fujinet/hotsync/padp_transport.h"
 #include "fujinet/hotsync/palm_database.h"
@@ -846,13 +847,19 @@ namespace {
 
 // Listens on fd 3 and hands out one connection, fd 4, whose peer has already
 // hung up: a port probe.
+// Sockets that connect nowhere, or (with connects) to a server that sends
+// `reply` and closes.
 struct ProbeSocketOps final : fujinet::net::ITcpSocketOps {
     bool accepted = false;
     std::uint64_t now = 0;
+    bool connects = false;
+    std::string reply;
+    std::string sent;
+    std::string resolved;
 
     int socket(int, int, int) override { return 3; }
     void close(int) override {}
-    int connect(int, const struct sockaddr*, fujinet::net::SockLen) override { return -1; }
+    int connect(int, const struct sockaddr*, fujinet::net::SockLen) override { return connects ? 0 : -1; }
     int bind(int, const struct sockaddr*, fujinet::net::SockLen) override { return 0; }
     int listen(int, int) override { return 0; }
     int accept(int, struct sockaddr*, fujinet::net::SockLen*) override
@@ -863,18 +870,26 @@ struct ProbeSocketOps final : fujinet::net::ITcpSocketOps {
     }
     int set_nonblocking(int) override { return 0; }
     bool poll_connect_complete(int) override { return false; }
-    fujinet::net::SSize send(int, const void*, std::size_t len) override
+    fujinet::net::SSize send(int, const void* buf, std::size_t len) override
     {
+        sent.append(static_cast<const char*>(buf), len);
         return static_cast<fujinet::net::SSize>(len);
     }
-    fujinet::net::SSize recv(int, void*, std::size_t) override { return 0; }
+    fujinet::net::SSize recv(int, void* buf, std::size_t len) override
+    {
+        const std::size_t n = std::min(len, reply.size());
+        std::memcpy(buf, reply.data(), n);
+        reply.erase(0, n);
+        return static_cast<fujinet::net::SSize>(n);
+    }
     int shutdown_write(int) override { return 0; }
     int get_so_error(int) override { return 0; }
     int setsockopt(int, int, int, const void*, fujinet::net::SockLen) override { return 0; }
     void apply_stream_socket_options(int, bool, bool) override {}
     void apply_listen_socket_options(int) override {}
-    int getaddrinfo(const char*, const char*, const void*, fujinet::net::AddrInfo** res) override
+    int getaddrinfo(const char* host, const char* port, const void*, fujinet::net::AddrInfo** res) override
     {
+        resolved = std::string(host ? host : "") + ":" + port;
         *res = reinterpret_cast<fujinet::net::AddrInfo*>(&now);
         return 0;
     }
@@ -912,6 +927,75 @@ TEST_CASE("HotSync service: a connection that never completes the handshake is r
     CHECK(s.syncs == 0);
     CHECK(s.failures == 0);
     CHECK(s.lastResult.empty());
+}
+
+TEST_CASE("HotSync fetch: URLs")
+{
+    HttpUrl u;
+    REQUIRE(parse_http_url("http://192.168.1.5:8000/palm/FujiNetTest.prc", u));
+    CHECK(u.host == "192.168.1.5");
+    CHECK(u.port == "8000");
+    CHECK(u.path == "/palm/FujiNetTest.prc");
+    REQUIRE(parse_http_url("http://mac.local", u));
+    CHECK(u.host == "mac.local");
+    CHECK(u.port == "80");
+    CHECK(u.path == "/");
+    CHECK_FALSE(parse_http_url("https://mac.local/a.prc", u));
+    CHECK_FALSE(parse_http_url("http://:80/a.prc", u));
+    CHECK_FALSE(parse_http_url("http://mac:99999/a.prc", u));
+    CHECK_FALSE(parse_http_url("http://user@mac/a.prc", u));
+}
+
+TEST_CASE("HotSync fetch: the console queues a downloaded app for the next sync")
+{
+    ProbeSocketOps ops;
+    ops.connects = true;
+    ops.reply = "HTTP/1.0 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 5\r\n\r\nhello";
+    fujinet::tests::MemoryFileSystem fs("host");
+    auto service = std::make_shared<HotSyncService>(ops, fs, HotSyncSettings{}, nullptr);
+    auto provider = fujinet::diag::create_hotsync_diagnostic_provider(service, nullptr);
+
+    const fujinet::diag::DiagResult r =
+        run_diag(*provider, {"hotsync.fetch", "http://192.168.1.5:8000/palm/FujiNetTest.prc?v=2"});
+    REQUIRE(r.status == fujinet::diag::DiagStatus::Ok);
+    CHECK(r.text == "queued: FujiNetTest.prc\r\nbytes: 5\r\n(installed at the next HotSync)\r\n");
+    CHECK(ops.resolved == "192.168.1.5:8000");
+    CHECK(ops.sent.rfind("GET /palm/FujiNetTest.prc?v=2 HTTP/1.0\r\nHost: 192.168.1.5\r\n", 0) == 0);
+
+    FsStorage storage(fs, "/hotsync");
+    CHECK(storage.pending_installs() == std::vector<std::string>{"FujiNetTest.prc"});
+    Bytes data;
+    REQUIRE(storage.read_install("FujiNetTest.prc", data, 100));
+    CHECK(data == Bytes{'h', 'e', 'l', 'l', 'o'});
+    CHECK_FALSE(fs.exists("/hotsync/incoming/FujiNetTest.prc"));
+}
+
+TEST_CASE("HotSync fetch: failures queue nothing")
+{
+    ProbeSocketOps ops;
+    ops.connects = true;
+    fujinet::tests::MemoryFileSystem fs("host");
+    auto service = std::make_shared<HotSyncService>(ops, fs, HotSyncSettings{}, nullptr);
+    auto provider = fujinet::diag::create_hotsync_diagnostic_provider(service, nullptr);
+    FsStorage storage(fs, "/hotsync");
+
+    ops.reply = "HTTP/1.0 404 File not found\r\n\r\nnope";
+    fujinet::diag::DiagResult r = run_diag(*provider, {"hotsync.fetch", "http://mac:8000/Missing.prc"});
+    CHECK(r.status == fujinet::diag::DiagStatus::Error);
+    CHECK(r.text == "fetch failed: HTTP 404");
+
+    ops.reply = "HTTP/1.0 200 OK\r\nContent-Length: 10\r\n\r\nhello";
+    r = run_diag(*provider, {"hotsync.fetch", "http://mac:8000/Short.prc"});
+    CHECK(r.text == "fetch failed: reply cut short");
+
+    ops.sent.clear();
+    r = run_diag(*provider, {"hotsync.fetch", "http://mac:8000/index.html"});
+    CHECK(r.text == "fetch failed: 'index.html' is not a .prc, .pdb or .pqa name");
+    CHECK(ops.sent.empty());
+    r = run_diag(*provider, {"hotsync.fetch", "http://mac:8000/", "../evil.prc"});
+    CHECK(r.text == "fetch failed: '../evil.prc' is not a .prc, .pdb or .pqa name");
+
+    CHECK(storage.pending_installs().empty());
 }
 
 // ---------------------------------------------------------------------------

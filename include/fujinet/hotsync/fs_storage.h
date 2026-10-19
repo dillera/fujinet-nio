@@ -23,6 +23,9 @@ public:
 
     // Creates install/ so people can see where to put files.
     bool create_install_folder();
+    // Puts a file in install/ for the next sync, replacing one of that name.
+    // It is written in incoming/ first, so a sync never sees half of it.
+    bool queue_install(const std::string& fileName, const Bytes& data);
 
 private:
     std::string path(const std::string& folder, const std::string& fileName = {}) const;

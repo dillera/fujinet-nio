@@ -73,6 +73,12 @@ public:
             .safe = false,
         });
         out.push_back(DiagCommandSpec{
+            .name = "hotsync.fetch",
+            .summary = "download an app or database over HTTP into the queue for the next HotSync",
+            .usage = "hotsync.fetch <http://host[:port]/file.prc> [name]",
+            .safe = false,
+        });
+        out.push_back(DiagCommandSpec{
             .name = "hotsync.save",
             .summary = "write the HotSync settings into fujinet.yaml (requires FujiDevice)",
             .usage = "hotsync.save",
@@ -90,6 +96,7 @@ public:
         if (cmd == "hotsync.get") return cmd_get();
         if (cmd == "hotsync.set") return cmd_set(args);
         if (cmd == "hotsync.save") return cmd_save();
+        if (cmd == "hotsync.fetch") return cmd_fetch(args);
         return DiagResult::not_found("unknown hotsync command");
     }
 
@@ -133,6 +140,27 @@ private:
             add_line(r, "last_backed_up", std::to_string(s.lastBackedUp));
             add_line(r, "last_backup_failures", std::to_string(s.lastBackupFailures));
         }
+        return r;
+    }
+
+    DiagResult cmd_fetch(const DiagArgsView& args)
+    {
+        if (args.argv.size() < 2 || args.argv.size() > 3) {
+            return DiagResult::invalid_args("usage: hotsync.fetch <http://host[:port]/file.prc> [name]");
+        }
+        if (!_service) {
+            return DiagResult::not_ready("HotSync is off (hotsync.set enabled 1, hotsync.save, then restart)");
+        }
+        std::string name = args.argv.size() == 3 ? std::string(args.argv[2]) : std::string();
+        std::size_t size = 0;
+        const std::string err = _service->fetch_install(std::string(args.argv[1]), name, size);
+        if (!err.empty()) {
+            return DiagResult::error("fetch failed: " + err);
+        }
+        DiagResult r = DiagResult::ok();
+        add_line(r, "queued", name);
+        add_line(r, "bytes", std::to_string(size));
+        r.text += "(installed at the next HotSync)\r\n";
         return r;
     }
 

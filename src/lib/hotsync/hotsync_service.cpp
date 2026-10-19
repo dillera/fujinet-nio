@@ -4,11 +4,13 @@
 #include "fujinet/hotsync/cradle_channel.h"
 #include "fujinet/fs/filesystem.h"
 #include "fujinet/hotsync/fs_storage.h"
+#include "fujinet/hotsync/http_fetch.h"
 #include "fujinet/hotsync/netsync_transport.h"
 #include "fujinet/hotsync/padp_transport.h"
 #include "fujinet/hotsync/tcp_link.h"
 #include "fujinet/net/tcp_socket_ops.h"
 
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <random>
@@ -242,6 +244,64 @@ std::string HotSyncService::now_text() const
     std::snprintf(text, sizeof(text), "%04u-%02u-%02u %02u:%02u:%02u", t.year, t.month, t.day, t.hour,
                   t.minute, t.second);
     return text;
+}
+
+namespace {
+
+// A Palm database file name that is safe on FAT: letters, digits, '.', '-',
+// '_' and space, ending in an extension the install step takes.
+bool installable_name(const std::string& name)
+{
+    if (name.empty() || name.size() > 64 || name[0] == '.') {
+        return false;
+    }
+    for (const char c : name) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                        c == '.' || c == '-' || c == '_' || c == ' ';
+        if (!ok) {
+            return false;
+        }
+    }
+    const std::size_t dot = name.rfind('.');
+    if (dot == std::string::npos) {
+        return false;
+    }
+    std::string ext = name.substr(dot + 1);
+    for (char& c : ext) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return ext == "prc" || ext == "pdb" || ext == "pqa";
+}
+
+} // namespace
+
+std::string HotSyncService::fetch_install(const std::string& url, std::string& name, std::size_t& size)
+{
+    HttpUrl parsed;
+    if (!parse_http_url(url, parsed)) {
+        return "not an http:// URL";
+    }
+    if (name.empty()) {
+        std::string path = parsed.path.substr(0, parsed.path.find_first_of("?#"));
+        name = path.substr(path.rfind('/') + 1);
+    }
+    if (!installable_name(name)) {
+        return "'" + name + "' is not a .prc, .pdb or .pqa name";
+    }
+    Bytes data;
+    const std::string err = http_fetch(_ops, parsed, _settings.maxDatabaseBytes, data);
+    if (!err.empty()) {
+        return err;
+    }
+    if (data.empty()) {
+        return "the file is empty";
+    }
+    if (!FsStorage(_fs, _settings.root).queue_install(name, data)) {
+        return "cannot write to " + _settings.root + "/install";
+    }
+    size = data.size();
+    FN_LOGI(TAG, "queued %s (%u bytes) from %s", name.c_str(), static_cast<unsigned>(size), url.c_str());
+    return {};
 }
 
 HotSyncStatus HotSyncService::status() const

@@ -101,6 +101,23 @@ bool FsStorage::write_file(const std::string& dir, const std::string& fileName, 
     return f->flush() && ok;
 }
 
+bool FsStorage::queue_install(const std::string& fileName, const Bytes& data)
+{
+    const std::string partial = path("incoming", fileName);
+    const std::string queued = path("install", fileName);
+    if (!write_file(path("incoming"), fileName, data) || !ensure_dir(path("install"))) {
+        return false;
+    }
+    if (_fs.exists(queued)) {
+        _fs.removeFile(queued);
+    }
+    if (!_fs.rename(partial, queued)) {
+        _fs.removeFile(partial);
+        return false;
+    }
+    return true;
+}
+
 bool FsStorage::read_install(const std::string& fileName, Bytes& out, std::size_t maxBytes)
 {
     return read_file(path("install", fileName), out, maxBytes);
