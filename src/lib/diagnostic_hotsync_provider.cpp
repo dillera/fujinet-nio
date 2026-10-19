@@ -2,8 +2,9 @@
 
 #include "fujinet/config/fuji_config.h"
 #include "fujinet/diag/diagnostic_parse.h"
+#include "fujinet/hotsync/cradle_channel.h"
 #include "fujinet/hotsync/hotsync_init.h"
-#include "fujinet/hotsync/netsync_service.h"
+#include "fujinet/hotsync/hotsync_service.h"
 #include "fujinet/hotsync/session.h"
 #include "fujinet/io/devices/fuji_device.h"
 
@@ -44,7 +45,7 @@ std::string join_args(const DiagArgsView& args, std::size_t from)
 
 class HotSyncDiagnosticProvider final : public IDiagnosticProvider {
 public:
-    HotSyncDiagnosticProvider(std::shared_ptr<hotsync::NetSyncService> service, io::FujiDevice* fuji)
+    HotSyncDiagnosticProvider(std::shared_ptr<hotsync::HotSyncService> service, io::FujiDevice* fuji)
         : _service(std::move(service))
         , _fuji(fuji)
     {}
@@ -68,7 +69,7 @@ public:
         out.push_back(DiagCommandSpec{
             .name = "hotsync.set",
             .summary = "change a stored HotSync setting; hotsync.save, then restart to apply",
-            .usage = "hotsync.set <enabled|port|root|user_name|backup> <value...>",
+            .usage = "hotsync.set <enabled|port|cradle|root|user_name|backup> <value...>",
             .safe = false,
         });
         out.push_back(DiagCommandSpec{
@@ -101,11 +102,20 @@ private:
             r.text += "(hotsync.set enabled 1, hotsync.save, then restart)\r\n";
             return r;
         }
-        const hotsync::NetSyncSettings& settings = _service->settings();
-        const hotsync::NetSyncStatus s = _service->status();
+        const hotsync::HotSyncSettings& settings = _service->settings();
+        const hotsync::HotSyncStatus s = _service->status();
         add_line(r, "enabled", "1");
         add_line(r, "listening", s.listening ? "1" : "0");
         add_line(r, "port", std::to_string(s.port));
+        add_line(r, "cradle", s.cradle);
+        if (const hotsync::CradleChannel* cradle = _service->cradle()) {
+            const hotsync::CradleStats c = cradle->stats();
+            add_line(r, "cradle_windows", std::to_string(s.cradleWindows));
+            add_line(r, "cradle_fujibus_packets", std::to_string(c.frames));
+            add_line(r, "cradle_stray_bytes", std::to_string(c.strayBytes));
+            add_line(r, "cradle_refused", std::to_string(c.refused));
+            add_line(r, "cradle_dropped_writes", std::to_string(c.droppedWrites));
+        }
         add_line(r, "root", settings.root);
         add_line(r, "user_name", settings.userName);
         add_line(r, "backup", hotsync::backup_policy_name(settings.backup));
@@ -114,6 +124,7 @@ private:
         add_line(r, "failures", std::to_string(s.failures));
         add_line(r, "rejected", std::to_string(s.rejected));
         if (s.syncs > 0 && !s.syncing) {
+            add_line(r, "last_source", s.lastSource);
             add_line(r, "last_time", s.lastTime.empty() ? "(clock not set)" : s.lastTime);
             add_line(r, "last_user", s.lastUser);
             add_line(r, "last_result", s.lastResult);
@@ -132,6 +143,7 @@ private:
         DiagResult r = DiagResult::ok();
         add_line(r, "enabled", c.enabled ? "1" : "0");
         add_line(r, "port", std::to_string(c.port));
+        add_line(r, "cradle", c.cradle ? "1" : "0");
         add_line(r, "root", c.root);
         add_line(r, "user_name", c.userName);
         add_line(r, "backup", c.backup);
@@ -140,7 +152,8 @@ private:
 
     DiagResult cmd_set(const DiagArgsView& args)
     {
-        static constexpr const char* kUsage = "usage: hotsync.set <enabled|port|root|user_name|backup> <value...>";
+        static constexpr const char* kUsage =
+            "usage: hotsync.set <enabled|port|cradle|root|user_name|backup> <value...>";
         if (args.argv.size() < 3) {
             return DiagResult::invalid_args(kUsage);
         }
@@ -149,15 +162,15 @@ private:
         const std::string_view field = args.argv[1];
         const std::string value = join_args(args, 2);
 
-        if (ascii_iequals(field, "enabled")) {
+        if (ascii_iequals(field, "enabled") || ascii_iequals(field, "cradle")) {
             if (value != "0" && value != "1") {
-                return DiagResult::invalid_args("enabled must be 0 or 1");
+                return DiagResult::invalid_args(std::string(field) + " must be 0 or 1");
             }
-            c.enabled = value == "1";
+            (ascii_iequals(field, "enabled") ? c.enabled : c.cradle) = value == "1";
         } else if (ascii_iequals(field, "port")) {
             std::uint32_t port = 0;
-            if (!parse_decimal_u32(value, port) || port < 1 || port > 65535) {
-                return DiagResult::invalid_args("port must be 1..65535");
+            if (!parse_decimal_u32(value, port) || port > 65535) {
+                return DiagResult::invalid_args("port must be 0..65535 (0 turns NetSync off)");
             }
             c.port = static_cast<std::uint16_t>(port);
         } else if (ascii_iequals(field, "root")) {
@@ -195,14 +208,14 @@ private:
         return DiagResult::ok("saved hotsync settings to config store; restart to apply\r\n");
     }
 
-    std::shared_ptr<hotsync::NetSyncService> _service;
+    std::shared_ptr<hotsync::HotSyncService> _service;
     io::FujiDevice* _fuji;
 };
 
 } // namespace
 
 std::unique_ptr<IDiagnosticProvider> create_hotsync_diagnostic_provider(
-    std::shared_ptr<hotsync::NetSyncService> service,
+    std::shared_ptr<hotsync::HotSyncService> service,
     io::FujiDevice* fuji)
 {
     return std::make_unique<HotSyncDiagnosticProvider>(std::move(service), fuji);

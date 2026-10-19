@@ -13,12 +13,15 @@
 #include "fujinet/hotsync/dlp_client.h"
 #include "fujinet/hotsync/fs_storage.h"
 #include "fujinet/hotsync/hotsync_init.h"
-#include "fujinet/hotsync/netsync_service.h"
+#include "fujinet/hotsync/cradle_channel.h"
+#include "fujinet/hotsync/hotsync_service.h"
 #include "fujinet/hotsync/netsync_transport.h"
 #include "fujinet/hotsync/padp_transport.h"
 #include "fujinet/hotsync/palm_database.h"
 #include "fujinet/hotsync/session.h"
 #include "fujinet/hotsync/slp.h"
+#include "fujinet/io/core/baud_control.h"
+#include "fujinet/io/core/channel.h"
 #include "fujinet/io/devices/fuji_device.h"
 #include "fujinet/net/tcp_socket_ops.h"
 
@@ -723,11 +726,13 @@ TEST_CASE("HotSync config: the hotsync block round-trips through YAML")
     fujinet::config::FujiConfig defaults = store.load();
     CHECK_FALSE(defaults.hotsync.enabled);
     CHECK(defaults.hotsync.port == 14238);
+    CHECK_FALSE(defaults.hotsync.cradle);
     CHECK(defaults.hotsync.backup == "flagged");
 
     fujinet::config::FujiConfig cfg;
     cfg.hotsync.enabled = true;
     cfg.hotsync.port = 14000;
+    cfg.hotsync.cradle = true;
     cfg.hotsync.root = "/palm";
     cfg.hotsync.userName = "Desk";
     cfg.hotsync.backup = "all";
@@ -736,6 +741,7 @@ TEST_CASE("HotSync config: the hotsync block round-trips through YAML")
     const fujinet::config::FujiConfig loaded = store.load();
     CHECK(loaded.hotsync.enabled);
     CHECK(loaded.hotsync.port == 14000);
+    CHECK(loaded.hotsync.cradle);
     CHECK(loaded.hotsync.root == "/palm");
     CHECK(loaded.hotsync.userName == "Desk");
     CHECK(loaded.hotsync.backup == "all");
@@ -793,21 +799,23 @@ TEST_CASE("HotSync diagnostics: set changes the stored settings and save writes 
     using fujinet::diag::DiagStatus;
 
     CHECK(run_diag(*provider, {"hotsync.get"}).text ==
-          "enabled: 0\r\nport: 14238\r\nroot: /hotsync\r\nuser_name: FujiNet\r\nbackup: flagged\r\n");
+          "enabled: 0\r\nport: 14238\r\ncradle: 0\r\nroot: /hotsync\r\nuser_name: FujiNet\r\nbackup: flagged\r\n");
 
     CHECK(run_diag(*provider, {"hotsync.set", "enabled", "1"}).status == DiagStatus::Ok);
     CHECK(run_diag(*provider, {"hotsync.set", "port", "14239"}).status == DiagStatus::Ok);
+    CHECK(run_diag(*provider, {"hotsync.set", "cradle", "1"}).status == DiagStatus::Ok);
     CHECK(run_diag(*provider, {"hotsync.set", "root", "/palm"}).status == DiagStatus::Ok);
     CHECK(run_diag(*provider, {"hotsync.set", "user_name", "Andy", "D"}).status == DiagStatus::Ok);
     CHECK(run_diag(*provider, {"hotsync.set", "backup", "ALL"}).status == DiagStatus::Ok);
     CHECK(run_diag(*provider, {"hotsync.get"}).text ==
-          "enabled: 1\r\nport: 14239\r\nroot: /palm\r\nuser_name: Andy D\r\nbackup: all\r\n");
+          "enabled: 1\r\nport: 14239\r\ncradle: 1\r\nroot: /palm\r\nuser_name: Andy D\r\nbackup: all\r\n");
     CHECK(store.saves == 0);
 
     CHECK(run_diag(*provider, {"hotsync.save"}).status == DiagStatus::Ok);
     CHECK(store.saves == 1);
     CHECK(store.saved.hotsync.enabled);
     CHECK(store.saved.hotsync.port == 14239);
+    CHECK(store.saved.hotsync.cradle);
     CHECK(store.saved.hotsync.userName == "Andy D");
     CHECK(store.saved.hotsync.backup == "all");
 }
@@ -819,7 +827,8 @@ TEST_CASE("HotSync diagnostics: set refuses bad values and leaves the setting al
     using fujinet::diag::DiagStatus;
 
     CHECK(run_diag(*provider, {"hotsync.set", "enabled", "yes"}).status == DiagStatus::InvalidArgs);
-    CHECK(run_diag(*provider, {"hotsync.set", "port", "0"}).status == DiagStatus::InvalidArgs);
+    CHECK(run_diag(*provider, {"hotsync.set", "cradle", "on"}).status == DiagStatus::InvalidArgs);
+    CHECK(run_diag(*provider, {"hotsync.set", "port", "-1"}).status == DiagStatus::InvalidArgs);
     CHECK(run_diag(*provider, {"hotsync.set", "port", "65536"}).status == DiagStatus::InvalidArgs);
     CHECK(run_diag(*provider, {"hotsync.set", "root", "hotsync"}).status == DiagStatus::InvalidArgs);
     CHECK(run_diag(*provider, {"hotsync.set", "user_name", std::string(41, 'x')}).status == DiagStatus::InvalidArgs);
@@ -892,13 +901,256 @@ TEST_CASE("HotSync service: a connection that never completes the handshake is r
 {
     ProbeSocketOps ops;
     fujinet::tests::MemoryFileSystem fs("host");
-    NetSyncService service(ops, fs, NetSyncSettings{}, nullptr);
+    HotSyncService service(ops, fs, HotSyncSettings{}, nullptr);
 
     CHECK(service.poll());
-    const NetSyncStatus s = service.status();
+    const HotSyncStatus s = service.status();
     CHECK(s.listening);
     CHECK(s.rejected == 1);
     CHECK(s.syncs == 0);
     CHECK(s.failures == 0);
     CHECK(s.lastResult.empty());
+}
+
+// ---------------------------------------------------------------------------
+// Cradle: one serial line shared by FujiBus and HotSync.
+
+namespace {
+
+// A serial line: bytes the far end sent, bytes written to it, and its rate.
+class FakeLine final : public fujinet::io::Channel, public fujinet::io::BaudControl {
+public:
+    Bytes rx;
+    Bytes tx;
+    std::uint32_t baud{115200};
+    std::vector<std::uint32_t> rates; // every rate change, in order
+
+    void receive(const Bytes& bytes) { rx.insert(rx.end(), bytes.begin(), bytes.end()); }
+
+    bool available() override { return !rx.empty(); }
+    std::size_t read(std::uint8_t* buffer, std::size_t maxLen) override
+    {
+        const std::size_t n = std::min(maxLen, rx.size());
+        std::memcpy(buffer, rx.data(), n);
+        rx.erase(rx.begin(), rx.begin() + static_cast<std::ptrdiff_t>(n));
+        return n;
+    }
+    void write(const std::uint8_t* buffer, std::size_t len) override { tx.insert(tx.end(), buffer, buffer + len); }
+
+    std::uint32_t baud_rate() const override { return baud; }
+    bool set_baud_rate(std::uint32_t b) override
+    {
+        baud = b;
+        rates.push_back(b);
+        return true;
+    }
+};
+
+struct CradleFixture {
+    std::uint64_t now{1000};
+    FakeLine* line{nullptr};
+    std::unique_ptr<CradleChannel> cradle;
+
+    CradleFixture()
+    {
+        auto owned = std::make_unique<FakeLine>();
+        line = owned.get();
+        CradleTiming timing;
+        timing.settleMs = 0;
+        cradle = std::make_unique<CradleChannel>(std::move(owned), *line, [this] { return now; }, timing);
+    }
+
+    // What FujiBus reads off the cradle now.
+    Bytes bus_read()
+    {
+        Bytes out;
+        std::uint8_t buf[64];
+        while (cradle->available()) {
+            const std::size_t n = cradle->read(buf, sizeof(buf));
+            out.insert(out.end(), buf, buf + n);
+        }
+        return out;
+    }
+};
+
+// A FujiBus packet: device 0x70, command 0x01, length 6, checksum 0x77.
+const Bytes kFujiBusFrame = {0xC0, 0x70, 0x01, 0x06, 0x00, 0x77, 0x00, 0xC0};
+
+} // namespace
+
+TEST_CASE("HotSync cradle: FujiBus traffic passes through and holds the line for a minute")
+{
+    CradleFixture f;
+    f.line->receive(kFujiBusFrame);
+    CHECK(f.bus_read() == kFujiBusFrame);
+    const std::uint8_t reply[] = {0xC0, 0x01, 0xC0};
+    f.cradle->write(reply, sizeof(reply));
+    CHECK(f.line->tx == Bytes(reply, reply + sizeof(reply)));
+
+    CHECK(f.cradle->host_active());
+    CHECK_FALSE(f.cradle->claim(9600));
+    f.now += 59999;
+    CHECK_FALSE(f.cradle->claim(9600));
+    f.now += 1;
+    CHECK(f.cradle->claim(9600));
+    CHECK(f.cradle->stats().refused == 2);
+    CHECK(f.cradle->stats().frames == 1);
+}
+
+TEST_CASE("HotSync cradle: stray bytes away from any frame end the hold early")
+{
+    CradleFixture f;
+    f.line->receive(kFujiBusFrame);
+    f.bus_read();
+
+    // Close behind a frame they are line noise, not a Palm.
+    f.now += 500;
+    f.line->receive({0x00, 0xF8});
+    f.bus_read();
+    CHECK(f.cradle->host_active());
+
+    // A 9600-baud WAKEUP read at the bus rate, with no frame near it.
+    f.now += 1500;
+    f.line->receive({0x00, 0x80, 0xF8, 0x00});
+    f.bus_read();
+    CHECK_FALSE(f.cradle->host_active());
+    CHECK(f.cradle->claim(9600));
+    CHECK(f.cradle->stats().strayBytes == 6);
+}
+
+TEST_CASE("HotSync cradle: a Palm's WAKEUP holds SLIP END bytes but is not FujiBus")
+{
+    // Captured on the emulator rig: two WAKEUPs (their PADP flags byte is
+    // 0xC0), then a Palm app's FujiBus request.
+    CradleFixture f;
+    const Bytes wakeup = hex("beefed030302000effaf01c0000a0100010200000001c20086b1");
+    f.line->receive(wakeup);
+    f.line->receive(wakeup);
+    f.bus_read();
+    CHECK(f.cradle->stats().frames == 0);
+    CHECK_FALSE(f.cradle->host_active());
+
+    f.line->receive(hex("c070e806005f00c0"));
+    f.bus_read();
+    CHECK(f.cradle->stats().frames == 1);
+    CHECK(f.cradle->host_active());
+}
+
+TEST_CASE("HotSync cradle: escaped bytes are decoded before the length and checksum check")
+{
+    // Length 7, one payload byte 0xC0 sent as DB DC; checksum 0x39.
+    CradleFixture f;
+    f.line->receive({0xC0, 0x70, 0x01, 0x07, 0x00, 0x39, 0x00, 0xDB, 0xDC, 0xC0});
+    f.bus_read();
+    CHECK(f.cradle->stats().frames == 1);
+    CHECK(f.cradle->stats().strayBytes == 0);
+}
+
+TEST_CASE("HotSync cradle: a request still waiting at claim time keeps the line and reaches FujiBus")
+{
+    CradleFixture f;
+    f.line->receive(kFujiBusFrame);
+    CHECK_FALSE(f.cradle->claim(9600));
+    CHECK(f.line->rates.empty());
+    CHECK(f.bus_read() == kFujiBusFrame);
+}
+
+TEST_CASE("HotSync cradle: a lent line is silent to FujiBus, and release restores the rate")
+{
+    CradleFixture f;
+    f.line->receive({0x00, 0x00}); // stray bytes left at claim time are dropped
+    REQUIRE(f.cradle->claim(9600));
+    CHECK(f.cradle->lent());
+    CHECK(f.line->baud == 9600);
+    CHECK(f.line->rx.empty());
+
+    // FujiBus neither reads what the Palm sends nor writes over it.
+    f.line->receive({0xBE, 0xEF, 0xED});
+    CHECK_FALSE(f.cradle->available());
+    std::uint8_t buf[8];
+    CHECK(f.cradle->read(buf, sizeof(buf)) == 0);
+    const std::uint8_t reply[] = {0xC0, 0x01, 0xC0};
+    f.cradle->write(reply, sizeof(reply));
+    CHECK(f.line->tx.empty());
+    CHECK(f.cradle->stats().droppedWrites == 1);
+
+    // The lent link sees the Palm and writes to it.
+    CHECK(f.cradle->link().read(buf, sizeof(buf), 0) == 3);
+    CHECK(f.cradle->link().write(reply, sizeof(reply)) == 3);
+    CHECK(f.line->tx.size() == 3);
+    f.cradle->link().set_baud_rate(57600);
+    CHECK(f.line->baud == 57600);
+
+    // Bytes left at the Palm's rate are dropped; the bus rate comes back.
+    f.line->receive({0x12, 0x34});
+    f.cradle->release();
+    CHECK_FALSE(f.cradle->lent());
+    CHECK(f.line->baud == 115200);
+    CHECK(f.line->rates == std::vector<std::uint32_t>{9600, 57600, 115200});
+    CHECK(f.line->rx.empty());
+    CHECK(f.cradle->link().read(buf, sizeof(buf), 0) == -1);
+
+    f.line->receive(kFujiBusFrame);
+    CHECK(f.bus_read() == kFujiBusFrame);
+}
+
+TEST_CASE("HotSync cradle: a WAKEUP inside a window is answered on the lent line at the Palm's rate")
+{
+    CradleFixture f;
+    REQUIRE(f.cradle->claim(kCmpInitialBaud));
+    f.line->receive(hex(kPalmWakeup));
+    f.line->receive(hex(kPalmAckOfInit));
+
+    PadpTransport padp(f.cradle->link());
+    REQUIRE(padp.wait_for_wakeup(100));
+    REQUIRE(padp.answer_wakeup());
+    Bytes expected = hex(kHostAckOfWakeup);
+    const Bytes init = hex(kHostCmpInit);
+    expected.insert(expected.end(), init.begin(), init.end());
+    CHECK(f.line->tx == expected);
+    CHECK(f.line->baud == 115200);
+
+    f.cradle->release();
+    CHECK(f.line->rates == std::vector<std::uint32_t>{9600, 115200, 115200});
+}
+
+TEST_CASE("HotSync cradle: a window with no WAKEUP gives the line back")
+{
+    CradleFixture f;
+    REQUIRE(f.cradle->claim(kCmpInitialBaud));
+    PadpTransport padp(f.cradle->link());
+    CHECK_FALSE(padp.wait_for_wakeup(20));
+    f.cradle->release();
+    CHECK(f.line->baud == 115200);
+    CHECK(f.line->tx.empty());
+}
+
+TEST_CASE("HotSync service: cradle windows alternate with the bus and stop while an app is active")
+{
+    CradleFixture f;
+    ProbeSocketOps ops;
+    fujinet::tests::MemoryFileSystem fs("host");
+    HotSyncSettings settings;
+    settings.port = 0; // cradle only
+    CradleWindow window;
+    window.listenMs = 20;
+    window.gapMs = 0;
+    HotSyncService service(ops, fs, settings, nullptr, f.cradle.get(), window);
+
+    CHECK(service.poll());
+    HotSyncStatus s = service.status();
+    CHECK(s.cradle == "idle");
+    CHECK(s.cradleWindows == 1);
+    CHECK_FALSE(s.listening);
+    CHECK(s.syncs == 0);
+    CHECK(f.line->rates == std::vector<std::uint32_t>{9600, 115200});
+
+    // A Palm app talks FujiBus: no window opens.
+    f.line->receive(kFujiBusFrame);
+    f.bus_read();
+    CHECK_FALSE(service.poll());
+    s = service.status();
+    CHECK(s.cradle == "app");
+    CHECK(s.cradleWindows == 1);
+    CHECK(f.line->rates.size() == 2);
 }

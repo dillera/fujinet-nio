@@ -63,11 +63,12 @@ idf_component_register(
         lib/host_service.cpp
         lib/host_service_init.cpp
         lib/host_state.cpp
+        lib/hotsync/cradle_channel.cpp
         lib/hotsync/dlp.cpp
         lib/hotsync/dlp_client.cpp
         lib/hotsync/fs_storage.cpp
         lib/hotsync/hotsync_init.cpp
-        lib/hotsync/netsync_service.cpp
+        lib/hotsync/hotsync_service.cpp
         lib/hotsync/netsync_transport.cpp
         lib/hotsync/padp_transport.cpp
         lib/hotsync/palm_database.cpp

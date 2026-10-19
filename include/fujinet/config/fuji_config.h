@@ -130,7 +130,8 @@ struct ContentTranslationConfig {
 /// takes effect after a restart.
 struct HotSyncConfig {
     bool          enabled{false};
-    std::uint16_t port{14238};            // NetSync TCP port
+    std::uint16_t port{14238};            // NetSync TCP port; 0 turns NetSync off
+    bool          cradle{false};          // a Palm cradle shares the FujiBus serial line
     std::string   root{"/hotsync"};       // folder on the persistent filesystem
     std::string   userName{"FujiNet"};    // given to a Palm that has never synced
     std::string   backup{"flagged"};      // none | flagged | all

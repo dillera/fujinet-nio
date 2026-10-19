@@ -335,6 +335,19 @@ extern "C" void fujinet_core_task(void* arg)
         if (uartChannelDiag) diagRegistry.add_provider(*uartChannelDiag);
         packetLinkDiag = fujinet::diag::create_packet_link_diagnostic_provider(channel.get(), services.fuji);
         if (packetLinkDiag) diagRegistry.add_provider(*packetLinkDiag);
+    }
+
+    // Palm HotSync over the network, and through a cradle on the FujiBus line
+    // (hotsync.cradle). Its task waits for the network itself. The UART
+    // diagnostics above keep the line beneath the cradle; the transports
+    // below must get the cradle, which owns the line.
+    fujinet::hotsync::CradleChannel* cradle = nullptr;
+    channel = fujinet::hotsync::attach_cradle(std::move(channel), config.hotsync, cradle);
+    auto hotsync = fujinet::hotsync::start_hotsync_service(core.storageManager(), config.hotsync, cradle);
+    auto hotsyncDiag = fujinet::diag::create_hotsync_diagnostic_provider(hotsync, services.fuji);
+    diagRegistry.add_provider(*hotsyncDiag);
+
+    if (channel) {
         core::setup_transports(core, *channel, profile, &config);
         FN_ELOG("transport initialized");
     }
@@ -342,10 +355,6 @@ extern "C" void fujinet_core_task(void* arg)
     // Not tied to a Channel: the Atari SIO profile has none, and still needs boot.* on the console.
     bootDiag = fujinet::diag::create_boot_diagnostic_provider(services.fuji);
     if (bootDiag) diagRegistry.add_provider(*bootDiag);
-    // Palm HotSync over the network. Its task waits for the network itself.
-    auto hotsync = fujinet::hotsync::start_netsync_service(core.storageManager(), config.hotsync);
-    auto hotsyncDiag = fujinet::diag::create_hotsync_diagnostic_provider(hotsync, services.fuji);
-    diagRegistry.add_provider(*hotsyncDiag);
 
     // If we load config at this point to find out if the services should be enabled or not, it adds 80ms before the main loop starts
     fujinet::core::register_host_service(core);

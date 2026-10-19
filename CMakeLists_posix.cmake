@@ -169,11 +169,12 @@ set(FUJINET_NIO_SOURCES
         src/lib/host_service.cpp
         src/lib/host_service_init.cpp
         src/lib/host_state.cpp
+        src/lib/hotsync/cradle_channel.cpp
         src/lib/hotsync/dlp.cpp
         src/lib/hotsync/dlp_client.cpp
         src/lib/hotsync/fs_storage.cpp
         src/lib/hotsync/hotsync_init.cpp
-        src/lib/hotsync/netsync_service.cpp
+        src/lib/hotsync/hotsync_service.cpp
         src/lib/hotsync/netsync_transport.cpp
         src/lib/hotsync/padp_transport.cpp
         src/lib/hotsync/palm_database.cpp

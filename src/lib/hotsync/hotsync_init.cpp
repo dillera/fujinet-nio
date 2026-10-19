@@ -3,12 +3,17 @@
 #include "fujinet/config/fuji_config.h"
 #include "fujinet/core/logging.h"
 #include "fujinet/fs/storage_manager.h"
-#include "fujinet/hotsync/netsync_service.h"
+#include "fujinet/hotsync/cradle_channel.h"
+#include "fujinet/hotsync/hotsync_service.h"
+#include "fujinet/io/core/baud_control.h"
+#include "fujinet/io/core/channel.h"
 #include "fujinet/platform/service_task.h"
 #include "fujinet/platform/tcp_socket_ops.h"
 #include "fujinet/platform/time.h"
 
 #include <ctime>
+#include <memory>
+#include <string>
 
 namespace fujinet::hotsync {
 
@@ -40,7 +45,7 @@ DlpDateTime local_now()
 
 void run_service(void* ctx)
 {
-    auto* service = static_cast<std::shared_ptr<NetSyncService>*>(ctx);
+    auto* service = static_cast<std::shared_ptr<HotSyncService>*>(ctx);
     (*service)->run();
     delete service;
 }
@@ -71,8 +76,27 @@ const char* backup_policy_name(BackupPolicy policy)
     return "flagged";
 }
 
-std::shared_ptr<NetSyncService> start_netsync_service(fs::StorageManager& storage,
-                                                      const config::HotSyncConfig& config)
+std::unique_ptr<io::Channel> attach_cradle(std::unique_ptr<io::Channel> line,
+                                           const config::HotSyncConfig& config, CradleChannel*& cradle)
+{
+    cradle = nullptr;
+    if (!config.enabled || !config.cradle || !line) {
+        return line;
+    }
+    auto* baud = dynamic_cast<io::BaudControl*>(line.get());
+    if (baud == nullptr) {
+        FN_LOGW(TAG, "hotsync.cradle needs a serial line that can change rate; no cradle");
+        return line;
+    }
+    auto wrapped = std::make_unique<CradleChannel>(std::move(line), *baud);
+    cradle = wrapped.get();
+    FN_LOGI(TAG, "Palm cradle shares the FujiBus line");
+    return wrapped;
+}
+
+std::shared_ptr<HotSyncService> start_hotsync_service(fs::StorageManager& storage,
+                                                      const config::HotSyncConfig& config,
+                                                      CradleChannel* cradle)
 {
     if (!config.enabled) {
         return nullptr;
@@ -83,7 +107,7 @@ std::shared_ptr<NetSyncService> start_netsync_service(fs::StorageManager& storag
         return nullptr;
     }
 
-    NetSyncSettings settings;
+    HotSyncSettings settings;
     settings.port = config.port;
     settings.root = config.root.empty() ? "/hotsync" : config.root;
     settings.userName = config.userName.empty() ? "FujiNet" : config.userName;
@@ -91,16 +115,17 @@ std::shared_ptr<NetSyncService> start_netsync_service(fs::StorageManager& storag
         FN_LOGW(TAG, "unknown hotsync.backup '%s'; using flagged", config.backup.c_str());
     }
 
-    auto service = std::make_shared<NetSyncService>(platform::default_tcp_socket_ops(), *fs, settings,
-                                                    &local_now);
-    auto* taskRef = new std::shared_ptr<NetSyncService>(service);
+    auto service = std::make_shared<HotSyncService>(platform::default_tcp_socket_ops(), *fs, settings,
+                                                    &local_now, cradle);
+    auto* taskRef = new std::shared_ptr<HotSyncService>(service);
     if (!platform::start_service_task("fn_hotsync", kTaskStackBytes, &run_service, taskRef)) {
         FN_LOGE(TAG, "cannot start the HotSync task");
         delete taskRef;
         return nullptr;
     }
-    FN_LOGI(TAG, "HotSync on %s:%s, backup %s", fs->name().c_str(), settings.root.c_str(),
-            backup_policy_name(settings.backup));
+    FN_LOGI(TAG, "HotSync on %s:%s, backup %s, NetSync %s, cradle %s", fs->name().c_str(),
+            settings.root.c_str(), backup_policy_name(settings.backup),
+            settings.port != 0 ? std::to_string(settings.port).c_str() : "off", cradle ? "on" : "off");
     return service;
 }
 

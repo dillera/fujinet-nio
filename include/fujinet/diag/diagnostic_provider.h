@@ -16,7 +16,7 @@ class FujiDevice;
 }
 
 namespace fujinet::net { class INetworkLink; }
-namespace fujinet::hotsync { class NetSyncService; }
+namespace fujinet::hotsync { class HotSyncService; }
 
 namespace fujinet::diag {
 
@@ -83,7 +83,7 @@ std::unique_ptr<IDiagnosticProvider> create_uart_channel_diagnostic_provider(
 // stored settings through `fuji` (may be null). service is null when HotSync
 // is off.
 std::unique_ptr<IDiagnosticProvider> create_hotsync_diagnostic_provider(
-    std::shared_ptr<::fujinet::hotsync::NetSyncService> service,
+    std::shared_ptr<::fujinet::hotsync::HotSyncService> service,
     ::fujinet::io::FujiDevice* fuji);
 
 } // namespace fujinet::diag

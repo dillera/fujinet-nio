@@ -1,9 +1,11 @@
-#include "fujinet/hotsync/netsync_service.h"
+#include "fujinet/hotsync/hotsync_service.h"
 
 #include "fujinet/core/logging.h"
+#include "fujinet/hotsync/cradle_channel.h"
 #include "fujinet/fs/filesystem.h"
 #include "fujinet/hotsync/fs_storage.h"
 #include "fujinet/hotsync/netsync_transport.h"
+#include "fujinet/hotsync/padp_transport.h"
 #include "fujinet/hotsync/tcp_link.h"
 #include "fujinet/net/tcp_socket_ops.h"
 
@@ -36,22 +38,24 @@ std::uint32_t new_user_id()
 
 } // namespace
 
-NetSyncService::NetSyncService(net::ITcpSocketOps& ops, fs::IFileSystem& fs, NetSyncSettings settings,
-                               Clock clock)
-    : _ops(ops), _fs(fs), _settings(std::move(settings)), _clock(std::move(clock))
+HotSyncService::HotSyncService(net::ITcpSocketOps& ops, fs::IFileSystem& fs, HotSyncSettings settings,
+                               Clock clock, CradleChannel* cradle, CradleWindow window)
+    : _ops(ops), _fs(fs), _settings(std::move(settings)), _clock(std::move(clock)), _cradle(cradle),
+      _window(window)
 {
     _status.port = _settings.port;
+    _status.cradle = _cradle ? "idle" : "off";
     FsStorage(_fs, _settings.root).create_install_folder();
 }
 
-NetSyncService::~NetSyncService()
+HotSyncService::~HotSyncService()
 {
     if (_listenFd >= 0) {
         _ops.close(_listenFd);
     }
 }
 
-bool NetSyncService::start_listening()
+bool HotSyncService::start_listening()
 {
     const std::string port = std::to_string(_settings.port);
     net::AddrInfo* res = nullptr;
@@ -90,8 +94,20 @@ bool NetSyncService::start_listening()
     return true;
 }
 
-bool NetSyncService::poll()
+bool HotSyncService::poll()
 {
+    bool worked = poll_network();
+    if (_cradle) {
+        worked = poll_cradle() || worked;
+    }
+    return worked;
+}
+
+bool HotSyncService::poll_network()
+{
+    if (_settings.port == 0) {
+        return false;
+    }
     if (_listenFd < 0) {
         const std::uint64_t now = _ops.now_ms();
         if (now < _nextListenAttemptMs) {
@@ -113,7 +129,49 @@ bool NetSyncService::poll()
     return true;
 }
 
-void NetSyncService::run()
+bool HotSyncService::poll_cradle()
+{
+    if (_ops.now_ms() < _nextWindowMs) {
+        return false;
+    }
+    if (!_cradle->claim(kCmpInitialBaud)) {
+        set_cradle_state("app");
+        _nextWindowMs = _ops.now_ms() + _window.gapMs;
+        return false;
+    }
+    set_cradle_state("listening");
+    {
+        std::lock_guard<std::mutex> lock(_statusMutex);
+        ++_status.cradleWindows;
+    }
+
+    // The window bounds only the wait for WAKEUP; once a Palm has woken, the
+    // line stays lent for the whole sync, rate change included.
+    PadpTransport transport(_cradle->link());
+    if (transport.wait_for_wakeup(_window.listenMs)) {
+        FN_LOGI(TAG, "cradle: Palm WAKEUP");
+        set_cradle_state("syncing");
+        if (transport.answer_wakeup()) {
+            run_session(transport, "cradle");
+        } else {
+            FN_LOGW(TAG, "cradle: Palm did not accept the rate");
+            std::lock_guard<std::mutex> lock(_statusMutex);
+            ++_status.rejected;
+        }
+    }
+    _cradle->release();
+    set_cradle_state("idle");
+    _nextWindowMs = _ops.now_ms() + _window.gapMs;
+    return true;
+}
+
+void HotSyncService::set_cradle_state(const char* state)
+{
+    std::lock_guard<std::mutex> lock(_statusMutex);
+    _status.cradle = state;
+}
+
+void HotSyncService::run()
 {
     while (!_stop.load()) {
         if (!poll()) {
@@ -122,7 +180,7 @@ void NetSyncService::run()
     }
 }
 
-void NetSyncService::serve(int fd)
+void HotSyncService::serve(int fd)
 {
     TcpLink link(_ops, fd);
     NetSyncTransport transport(link);
@@ -133,12 +191,17 @@ void NetSyncService::serve(int fd)
         ++_status.rejected;
         return;
     }
+    FN_LOGI(TAG, "NetSync connection");
+    run_session(transport, "network");
+}
+
+void HotSyncService::run_session(DlpTransport& transport, const char* source)
+{
     {
         std::lock_guard<std::mutex> lock(_statusMutex);
         _status.syncing = true;
         ++_status.syncs;
     }
-    FN_LOGI(TAG, "NetSync connection");
 
     FsStorage storage(_fs, _settings.root);
     SessionOptions options;
@@ -156,6 +219,7 @@ void NetSyncService::serve(int fd)
     if (report.error != DlpError::None) {
         ++_status.failures;
     }
+    _status.lastSource = source;
     _status.lastTime = now_text();
     _status.lastUser = report.userName;
     _status.lastResult = report.error == DlpError::None ? "ok" : dlp_error_name(report.error);
@@ -165,7 +229,7 @@ void NetSyncService::serve(int fd)
     _status.lastBackupFailures = report.backupFailures;
 }
 
-std::string NetSyncService::now_text() const
+std::string HotSyncService::now_text() const
 {
     if (!_clock) {
         return {};
@@ -180,7 +244,7 @@ std::string NetSyncService::now_text() const
     return text;
 }
 
-NetSyncStatus NetSyncService::status() const
+HotSyncStatus HotSyncService::status() const
 {
     std::lock_guard<std::mutex> lock(_statusMutex);
     return _status;

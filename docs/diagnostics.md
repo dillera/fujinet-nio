@@ -155,12 +155,14 @@ Pair it with `disk.stats` to see whether sector requests reach the disk.
 Created with `fujinet::diag::create_hotsync_diagnostic_provider(service, fuji)`
 on POSIX and ESP32; `service` is null when HotSync is off. It exposes:
 
-- `hotsync.status` — whether the NetSync service is on and listening, its
-  settings, sync counts, and the user, time and result of the last sync
+- `hotsync.status` — whether NetSync is listening, the cradle's state and
+  counters, the settings, sync counts, and the source, user, time and result
+  of the last sync
 - `hotsync.get` — the stored `hotsync:` settings
-- `hotsync.set <enabled|port|root|user_name|backup> <value...>` — change a
-  stored setting (`enabled` is `0` or `1`; `backup` is `none`, `flagged` or
-  `all`; `user_name` may contain spaces, up to 40 characters)
+- `hotsync.set <enabled|port|cradle|root|user_name|backup> <value...>` —
+  change a stored setting (`enabled` and `cradle` are `0` or `1`; `port` 0
+  turns NetSync off; `backup` is `none`, `flagged` or `all`; `user_name` may
+  contain spaces, up to 40 characters)
 - `hotsync.save` — write the `hotsync:` settings into `fujinet.yaml`
 
 `get`, `set` and `save` need the FujiDevice. The service reads its settings at

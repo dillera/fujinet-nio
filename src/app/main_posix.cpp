@@ -303,8 +303,11 @@ int main()
         diagRegistry.add_provider(*bootDiag);
     }
 
-    // Palm HotSync over the network, on a thread of its own.
-    auto hotsync = fujinet::hotsync::start_netsync_service(core.storageManager(), config.hotsync);
+    // Palm HotSync over the network, and through a cradle on the FujiBus line
+    // (hotsync.cradle), on a thread of its own.
+    fujinet::hotsync::CradleChannel* cradle = nullptr;
+    channel = fujinet::hotsync::attach_cradle(std::move(channel), config.hotsync, cradle);
+    auto hotsync = fujinet::hotsync::start_hotsync_service(core.storageManager(), config.hotsync, cradle);
     auto hotsyncDiag = fujinet::diag::create_hotsync_diagnostic_provider(hotsync, fujiConcrete);
     diagRegistry.add_provider(*hotsyncDiag);
     core::setup_transports(core, *channel, profile, &config);

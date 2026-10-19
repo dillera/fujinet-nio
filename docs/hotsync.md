@@ -4,17 +4,19 @@ FujiNet NIO can be the desktop end of a Palm OS HotSync. A Palm syncs with it
 to receive queued apps and to have its databases backed up, the jobs Palm
 Desktop used to do.
 
-What works today:
+A Palm can sync two ways:
 
+- **Cradle:** a Palm in a serial cradle on the FujiBus serial line (the
+  FN-RS232 DB-9, or a POSIX serial port), by pressing its HotSync button. The
+  same line carries FujiBus for Palm apps; see [Cradle](#cradle).
 - **Network HotSync (NetSync)** on TCP 14238, from a Palm's Network HotSync or
-  from `scripts/fake_palm.py`, on POSIX and ESP32.
-- A sync identifies the Palm's user (a Palm that has never synced is given a
-  name and a new user ID), installs queued `.prc`, `.pdb` and `.pqa` files,
-  backs up databases, and stamps the Palm as last synced with FujiNet.
+  from `scripts/fake_palm.py`.
 
-Not yet: HotSync from a Palm in a serial cradle (the SLP, PADP and CMP layers
-are in place and tested, but the cradle must share the bus line with FujiBus
-apps first), and copying a calendar into the Date Book.
+A sync identifies the Palm's user (a Palm that has never synced is given a
+name and a new user ID), installs queued `.prc`, `.pdb` and `.pqa` files,
+backs up databases, and stamps the Palm as last synced with FujiNet.
+
+Not yet: copying a calendar into the Date Book.
 
 ## Turning it on
 
@@ -23,7 +25,8 @@ HotSync is off by default. Add a `hotsync:` block to `fujinet.yaml` and restart:
 ```yaml
 hotsync:
   enabled: true
-  port: 14238          # NetSync TCP port
+  port: 14238          # NetSync TCP port; 0 turns NetSync off
+  cradle: true         # a Palm cradle shares the FujiBus serial line
   root: /hotsync       # folder on the persistent filesystem
   user_name: FujiNet   # given to a Palm that has never synced
   backup: flagged      # none | flagged | all
@@ -33,6 +36,7 @@ Or from the diagnostics console:
 
 ```
 hotsync.set enabled 1
+hotsync.set cradle 1
 hotsync.set user_name Andy D
 hotsync.save
 ```
@@ -69,8 +73,54 @@ has to be held in memory. On ESP32 buffers that large come from PSRAM.
 
 ## Syncing a Palm
 
-On the Palm, open HotSync, choose **Modem Sync Prefs** → **Network**, set the
-primary PC address to the FujiNet's IP address, and tap the Modem Sync icon.
+In a cradle: press the cradle's HotSync button, or open HotSync and tap the
+Local Sync icon (Direct Serial). The sync starts within a few seconds.
+
+Over the network: open HotSync, choose **Modem Sync Prefs** → **Network**, set
+the primary PC address to the FujiNet's IP address, and tap the Modem Sync
+icon.
+
+## Cradle
+
+A HotSync opens at 9600 baud; FujiBus runs at the bus rate, 115200 by default.
+At the wrong rate the UART cannot see a HotSync start, so FujiNet listens for
+one now and then, and FujiBus is off the line while it does:
+
+- With `hotsync.cradle` on, `hotsync::CradleChannel` owns the FujiBus line.
+  FujiBus reads and writes it as before; the HotSync service borrows it.
+- Every 3 seconds the service opens a window: the line drops to 9600 baud for
+  1.5 s while it listens for a Palm's WAKEUP, then goes back to the bus rate.
+  A WAKEUP keeps the line for the whole sync, including the change to the
+  faster rate the Palm accepts; afterwards the bus rate is restored and bytes
+  left at the other rate are dropped.
+- A Palm running an app is not HotSyncing: each FujiBus packet (a SLIP frame
+  whose length and checksum hold) keeps windows closed for 60 s.
+- Bytes that are not FujiBus, with no packet in the last second, end that wait
+  at once: a Palm whose HotSync button was pressed sends a WAKEUP, which reads
+  as such bytes at the bus rate.
+- While the line is lent FujiBus requests get no answer, and the request after
+  a sync can be lost to the Palm's leftover WAKEUP bytes; Palm apps retry.
+
+The line must be able to change rate: the ESP32 UART (FN-RS232) or a POSIX
+serial port (`fujibus-rs232-*` presets). A Palm cradle never grants RTS/CTS
+flow control, so leave `channel.uart.flow_control` off. On the FN-RS232 the
+cradle goes on the DB-9 through a null-modem adapter.
+
+### Testing with an emulator
+
+CloudpilotEmu can bridge its cradle serial port to a host pty. A socat pty pair
+joins it to a POSIX build:
+
+```sh
+socat -d -d -x pty,raw,echo=0,link=palm-tty pty,raw,echo=0,link=fn-tty &
+FN_SERIAL_PORT=$PWD/fn-tty FN_SERIAL_BAUD=115200 build/fujibus-rs232-debug/fujinet-nio &
+cloudpilot-emu palm.img --serial $PWD/palm-tty
+```
+
+with `hotsync.enabled` and `hotsync.cradle` on in `fujinet-data/fujinet.yaml`.
+Press the emulated cradle button (`button cradle click` on CloudpilotEmu's
+command line). A pty carries bytes whatever the baud rate, so this checks the
+hand-off and the protocol, not the rate changes.
 
 Without a Palm, `scripts/fake_palm.py` plays one:
 
@@ -86,13 +136,23 @@ so the first sync with `backup: flagged` backs it up.
 
 `hotsync.status` shows whether the service is on and listening, its settings,
 how many syncs have run, and the result of the last one. `rejected` counts
-connections that never completed the NetSync handshake, such as a port scan;
-they are not syncs:
+connections that never completed the NetSync handshake, such as a port scan,
+and Palms that woke but did not finish the cradle handshake; they are not
+syncs. With a cradle it adds the cradle's state (`app` while a FujiBus host
+holds the line, `listening` during a window, `syncing`, `idle`) and counters:
+windows opened, FujiBus packets seen, stray bytes, windows refused while an
+app was active, and FujiBus writes dropped while the line was lent:
 
 ```
 enabled: 1
 listening: 1
 port: 14238
+cradle: listening
+cradle_windows: 18
+cradle_fujibus_packets: 2
+cradle_stray_bytes: 273
+cradle_refused: 2
+cradle_dropped_writes: 0
 root: /hotsync
 user_name: FujiNet
 backup: flagged
@@ -100,6 +160,7 @@ syncing: 0
 syncs: 1
 failures: 0
 rejected: 0
+last_source: cradle
 last_time: 2026-10-18 13:02:12
 last_user: Test Palm
 last_result: ok
@@ -118,15 +179,22 @@ last_backup_failures: 0
   - `DlpClient`: Desktop Link Protocol commands.
   - `PalmDatabase`: `.pdb` and `.prc` files.
   - `Session`: one sync, over injected `DlpTransport` and `Storage` interfaces.
-- `NetSyncService` listens through `net::ITcpSocketOps` and runs one session
-  per connection. A sync waits on the Palm for seconds at a time and runs for
-  minutes, so the service runs on a task of its own
-  (`platform::start_service_task`), never in `core.tick()`.
-  `hotsync::start_netsync_service()` starts it from the platform `main`.
+  - `CradleChannel`: the `io::Channel` adapter that shares the FujiBus line
+    (above). It changes rate through `io::BaudControl`, which the ESP32
+    `UartChannel` and the POSIX serial channel implement beside
+    `io::Channel`; HotSync code never touches the UART itself.
+- `HotSyncService` listens for NetSync through `net::ITcpSocketOps` and runs
+  the cradle windows, one sync at a time. A sync waits on the Palm for seconds
+  at a time and runs for minutes, so the service runs on a task of its own
+  (`platform::start_service_task`), never in `core.tick()`. The platform
+  `main` wraps the bus channel with `hotsync::attach_cradle()` and starts the
+  service with `hotsync::start_hotsync_service()`.
 - `FsStorage` keeps the folders above on an `fs::IFileSystem`.
 - Tests: `tests/test_hotsync.cpp` replays bytes captured from a Palm OS 3.3
-  device and palm-sync's NetSync recording, and runs whole syncs against a
-  fake Palm.
+  device, palm-sync's NetSync recording and the emulator rig, runs whole
+  syncs against a fake Palm, and covers the cradle hand-off: app traffic
+  holding the line, stray bytes ending the hold, a WAKEUP inside a window, a
+  window with none, and the rate restored.
 
 ## Licence
 

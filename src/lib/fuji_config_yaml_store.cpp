@@ -233,6 +233,7 @@ static void from_yaml(const YAML::Node& node, HotSyncConfig& out)
 {
     out.enabled  = get_or<bool>(node, "enabled", out.enabled);
     out.port     = static_cast<std::uint16_t>(get_or<int>(node, "port", out.port));
+    out.cradle   = get_or<bool>(node, "cradle", out.cradle);
     out.root     = get_or<std::string>(node, "root", out.root);
     out.userName = get_or<std::string>(node, "user_name", out.userName);
     out.backup   = yaml_lower_ascii(get_or<std::string>(node, "backup", out.backup));
@@ -386,6 +387,7 @@ static void to_yaml(YAML::Emitter& out, const FujiConfig& cfg)
     out << YAML::Key << "hotsync" << YAML::Value << YAML::BeginMap;
     out << YAML::Key << "enabled"   << YAML::Value << cfg.hotsync.enabled;
     out << YAML::Key << "port"      << YAML::Value << cfg.hotsync.port;
+    out << YAML::Key << "cradle"    << YAML::Value << cfg.hotsync.cradle;
     out << YAML::Key << "root"      << YAML::Value << cfg.hotsync.root;
     out << YAML::Key << "user_name" << YAML::Value << cfg.hotsync.userName;
     out << YAML::Key << "backup"    << YAML::Value << cfg.hotsync.backup;
