@@ -1048,14 +1048,18 @@ boot:
   readonly: true
 ```
 
-At startup, platform bootstrap loads config, registers `DiskDevice`, restores
-the persisted live drive mappings, then projects the boot/config disk into the
-bootstrap-selected active disk unit when `boot.mode` is `config` and that unit
-was not already restored. The boot unit is not a catalogue slot or host drive
-name. Host-side drive selection remains client-specific: Atari sees the first
-SIO disk unit as `D1:`, the MS-DOS driver exposes its first block unit as the
-next DOS drive assigned by DOS, and BBC tooling maps a sparse Slot Catalog
-entry to a bounded active drive explicitly.
+At startup, platform bootstrap loads config and registers `DiskDevice`. It
+restores persisted live drive mappings; in normal mode those are the active
+mapping. In config mode it temporarily projects the boot/config disk into the
+bootstrap-selected active disk unit, including when that unit has a persisted
+user mapping. The overlay is not written to persisted runtime-mount state, so a
+later normal-mode restart restores the user's mapping. A failed configuration
+projection is reported; it must not silently fall back to the persisted active
+unit. The boot unit is not a catalogue slot or host drive name. Host-side drive
+selection remains client-specific: Atari sees the first SIO disk unit as `D1:`,
+the MS-DOS driver exposes its first block unit as the next DOS drive assigned by
+DOS, and BBC tooling maps a sparse Slot Catalog entry to a bounded active drive
+explicitly.
 
 ---
 

@@ -21,16 +21,22 @@ std::size_t apply_boot_mount(
         return 0;
     }
 
-    if (boot.configUri.empty()) {
-        FN_LOGW(TAG, "Boot mode is config but boot config_uri is empty");
-        return 0;
-    }
-
     if (activeDiskUnit >= diskService.slot_count()) {
         FN_LOGW(TAG,
                 "Boot active disk unit %zu exceeds maximum units %zu",
                 activeDiskUnit,
                 diskService.slot_count());
+        return 0;
+    }
+
+    // Config mode owns the active boot projection, not the persisted runtime
+    // mapping. Drop the restored pending D1 projection before validating the
+    // config URI so an invalid configuration cannot silently boot the user's
+    // persisted D1 image. The persisted DiskDevice record is untouched.
+    diskService.clear_pending_mount(activeDiskUnit);
+
+    if (boot.configUri.empty()) {
+        FN_LOGW(TAG, "Boot mode is config but boot config_uri is empty");
         return 0;
     }
 

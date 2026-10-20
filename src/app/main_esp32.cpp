@@ -312,16 +312,8 @@ extern "C" void fujinet_core_task(void* arg)
             if (config.boot.mode == fujinet::config::BootMode::Config) {
                 diskDev->configure_boot_mount(config.boot.configUri, config.boot.readOnly);
             }
-            const std::vector<std::size_t> restoredRuntimeSlots = diskDev->restore_runtime_mounts();
-            bool bootUnitRestored = false;
-            for (const auto slot : restoredRuntimeSlots) {
-                if (slot == activeBootDiskUnit) {
-                    bootUnitRestored = true;
-                    break;
-                }
-            }
-
-            std::size_t bootApplied = bootUnitRestored ? 0 : fujinet::apply_boot_mount(
+            diskDev->restore_runtime_mounts();
+            std::size_t bootApplied = fujinet::apply_boot_mount(
                     diskDev->disk_service(),
                     core.storageManager(),
                     config.boot,

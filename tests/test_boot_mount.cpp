@@ -7,6 +7,7 @@
 #include "fujinet/disk/image_registry.h"
 #include "fujinet/fs/boot_mount.h"
 #include "fujinet/fs/storage_manager.h"
+#include "fujinet/io/devices/disk_device.h"
 
 #include <cstdint>
 #include <memory>
@@ -71,6 +72,84 @@ TEST_CASE("apply_boot_mount skips missing config disk")
 
     CHECK(fujinet::apply_boot_mount(disk, storage, boot, 0) == 0);
     CHECK(!disk.get_pending_mount(0).has_value());
+}
+
+TEST_CASE("apply_boot_mount config overlay removes a restored active projection on failure")
+{
+    fujinet::fs::StorageManager storage;
+    REQUIRE(storage.registerFileSystem(make_host_fs_with_boot()));
+    fujinet::disk::DiskService disk(storage, fujinet::disk::ImageRegistry{});
+    disk.set_pending_mount(0, "host:/user/d1.atr", "rw", true);
+    disk.set_pending_mount(1, "host:/user/d2.atr", "r", true);
+
+    fujinet::config::BootConfig boot{};
+    boot.mode = fujinet::config::BootMode::Config;
+    boot.configUri = "persist:/boot/missing.atr";
+
+    CHECK(fujinet::apply_boot_mount(disk, storage, boot, 0) == 0);
+    CHECK_FALSE(disk.get_pending_mount(0).has_value());
+    const auto d2 = disk.get_pending_mount(1);
+    REQUIRE(d2.has_value());
+    CHECK(d2->uri == "host:/user/d2.atr");
+    CHECK(d2->mode == "r");
+}
+
+TEST_CASE("apply_boot_mount config overlay replaces active D1 but leaves other slots")
+{
+    fujinet::fs::StorageManager storage;
+    REQUIRE(storage.registerFileSystem(make_host_fs_with_boot()));
+    fujinet::disk::DiskService disk(storage, fujinet::disk::ImageRegistry{});
+    disk.set_pending_mount(0, "host:/user/d1.atr", "rw", true);
+    disk.set_pending_mount(1, "host:/user/d2.atr", "r", true);
+
+    fujinet::config::BootConfig boot{};
+    boot.mode = fujinet::config::BootMode::Config;
+    boot.configUri = "persist:/boot/autorun.atr";
+    boot.readOnly = true;
+
+    CHECK(fujinet::apply_boot_mount(disk, storage, boot, 0) == 1);
+    const auto d1 = disk.get_pending_mount(0);
+    REQUIRE(d1.has_value());
+    CHECK(d1->uri == "persist:/boot/autorun.atr");
+    CHECK(d1->mode == "r");
+    const auto d2 = disk.get_pending_mount(1);
+    REQUIRE(d2.has_value());
+    CHECK(d2->uri == "host:/user/d2.atr");
+    CHECK(d2->mode == "r");
+}
+
+TEST_CASE("config overlay does not persist over a restored user D1")
+{
+    fujinet::fs::StorageManager storage;
+    auto fs = make_host_fs_with_boot();
+    REQUIRE(fs->create_file("/fujinet-runtime-mounts.tsv",
+                            std::vector<std::uint8_t>{
+                                'v', '1', '\n',
+                                '0', '\t', '0', '\t', 'r', 'w', '\t',
+                                'h', 'o', 's', 't', ':', '/', 'u', 's', 'e', 'r', '/', 'd', '1', '.', 'a', 't', 'r', '\n',
+                                '1', '\t', '0', '\t', 'r', '\t',
+                                'h', 'o', 's', 't', ':', '/', 'u', 's', 'e', 'r', '/', 'd', '2', '.', 'a', 't', 'r', '\n'}));
+    REQUIRE(storage.registerFileSystem(std::move(fs)));
+
+    fujinet::io::DiskDevice configBoot(storage);
+    REQUIRE(configBoot.restore_runtime_mounts().size() == 2);
+    fujinet::config::BootConfig boot{};
+    boot.mode = fujinet::config::BootMode::Config;
+    boot.configUri = "host:/boot/autorun.atr";
+    boot.readOnly = true;
+    REQUIRE(fujinet::apply_boot_mount(configBoot.disk_service(), storage, boot, 0) == 1);
+    REQUIRE(configBoot.disk_service().get_pending_mount(0)->uri == "host:/boot/autorun.atr");
+
+    fujinet::io::DiskDevice normalBoot(storage);
+    REQUIRE(normalBoot.restore_runtime_mounts().size() == 2);
+    const auto d1 = normalBoot.disk_service().get_pending_mount(0);
+    const auto d2 = normalBoot.disk_service().get_pending_mount(1);
+    REQUIRE(d1.has_value());
+    REQUIRE(d2.has_value());
+    CHECK(d1->uri == "host:/user/d1.atr");
+    CHECK(d1->mode == "rw");
+    CHECK(d2->uri == "host:/user/d2.atr");
+    CHECK(d2->mode == "r");
 }
 
 TEST_CASE("apply_boot_mount stages a network config disk without probing it")
