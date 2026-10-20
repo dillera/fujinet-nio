@@ -30,6 +30,9 @@ extern "C" {
 #include "fujinet/platform/esp32/fs_init.h"
 #include "fujinet/platform/esp32/sntp_service.h"
 #include "fujinet/platform/esp32/wifi_link.h"
+#if defined(FN_BUILD_ATARI_FUJIBUS_SIO)
+#include "fujinet/platform/esp32/atari_sio_ingress.h"
+#endif
 #include "fujinet/platform/fuji_config_store_factory.h"
 #include "fujinet/platform/fuji_device_factory.h"
 
@@ -269,26 +272,25 @@ extern "C" void fujinet_core_task(void* arg)
         }
     }
 
-    // Create a Channel appropriate for this profile (TinyUSB CDC, etc.).
-    auto channel = platform::create_channel_for_profile(profile, config);
-    if (!channel) {
+    // Atari disk SIO is a direct DiskService ingress, not a Channel/transport.
+    std::unique_ptr<fujinet::io::Channel> channel;
+    if (profile.primaryTransport != fujinet::build::TransportKind::None) {
+        channel = platform::create_channel_for_profile(profile, config);
+    }
+    if (profile.primaryTransport != fujinet::build::TransportKind::None && !channel) {
         FN_LOGE(TAG, "Failed to create Channel for profile");
         vTaskDelete(nullptr);
         return;
     }
 
-    uartChannelDiag = fujinet::diag::create_uart_channel_diagnostic_provider(channel.get(), services.fuji);
-    if (uartChannelDiag) {
-        diagRegistry.add_provider(*uartChannelDiag);
+    if (channel) {
+        uartChannelDiag = fujinet::diag::create_uart_channel_diagnostic_provider(channel.get(), services.fuji);
+        if (uartChannelDiag) diagRegistry.add_provider(*uartChannelDiag);
+        packetLinkDiag = fujinet::diag::create_packet_link_diagnostic_provider(channel.get(), services.fuji);
+        if (packetLinkDiag) diagRegistry.add_provider(*packetLinkDiag);
+        core::setup_transports(core, *channel, profile, &config);
+        FN_ELOG("transport initialized");
     }
-    packetLinkDiag = fujinet::diag::create_packet_link_diagnostic_provider(channel.get(), services.fuji);
-    if (packetLinkDiag) {
-        diagRegistry.add_provider(*packetLinkDiag);
-    }
-
-    // Set up transports based on profile (FujiBus, SIO, etc.).
-    core::setup_transports(core, *channel, profile, &config);
-    FN_ELOG("transport initialized");
 
     // If we load config at this point to find out if the services should be enabled or not, it adds 80ms before the main loop starts
     fujinet::core::register_host_service(core);
@@ -296,6 +298,9 @@ extern "C" void fujinet_core_task(void* arg)
     fujinet::core::register_application_state_services(core);
     fujinet::core::register_disk_device(core);
 
+#if defined(FN_BUILD_ATARI_FUJIBUS_SIO)
+    std::unique_ptr<fujinet::platform::esp32::AtariSioIngress> atariSioIngress;
+#endif
     // Restore live drive mappings and then apply the configured boot disk.
     // This must happen after DiskDevice is registered.
     {
@@ -325,6 +330,13 @@ extern "C" void fujinet_core_task(void* arg)
             }
             FN_LOGI(TAG, "Applied %zu boot config mount", bootApplied);
 
+#if defined(FN_BUILD_ATARI_FUJIBUS_SIO)
+            if (profile.primaryChannel == fujinet::build::ChannelKind::SioGpio) {
+                atariSioIngress = std::make_unique<fujinet::platform::esp32::AtariSioIngress>(config, diskDev->disk_service());
+                core.addWorkSource(atariSioIngress.get());
+            }
+#endif
+
         } else {
             FN_LOGW(TAG, "Could not get DiskDevice to restore runtime or boot mounts");
         }
@@ -337,6 +349,9 @@ extern "C" void fujinet_core_task(void* arg)
 
     // Run the core loop forever.
     for (;;) {
+#if defined(FN_BUILD_ATARI_FUJIBUS_SIO)
+        if (atariSioIngress) atariSioIngress->poll();
+#endif
         core.tick();
 
         // start phase-1 services after a small delay

@@ -5,6 +5,7 @@
 
 #include "fujinet/io/core/io_message.h"
 #include "fujinet/io/core/request_handler.h"
+#include "fujinet/io/core/work_source.h"
 #include "fujinet/io/transport/transport.h"
 
 namespace fujinet::io {
@@ -23,6 +24,10 @@ public:
         }
     }
 
+    void addWorkSource(IWorkSource* source) {
+        if (source) _workSources.push_back(source);
+    }
+
     // One "tick" of the service loop.
     // - Let transports poll
     // - Pull all available requests
@@ -39,6 +44,7 @@ public:
 private:
     IRequestHandler&              _handler;
     std::vector<ITransport*>      _transports;
+    std::vector<IWorkSource*>      _workSources;
 };
 
 } // namespace fujinet::io

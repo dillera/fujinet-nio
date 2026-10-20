@@ -1548,3 +1548,12 @@ hardware provider; POSIX uses a host-managed, deterministic simulated, or
 explicitly unavailable provider selected by `FN_POSIX_WIFI_BACKEND`. Capability
 flags and backend kind in `GET_STATUS` allow the same client to work across all
 of these modes, including BBC and other emulators connected over PTY.
+# Atari standard SIO disk ingress
+
+On the ESP32 Atari profile, `AtariSioIngress` is the sole CMD/UART/GPIO owner.
+It dispatches `D1:`–`D8:` sector commands to `AtariSioDiskFrontend`, which
+uses the registered `DiskDevice`'s shared `DiskService` directly. This path is
+not a `Channel`, `ITransport`, FujiBus, SLIP, or legacy SIO transport. Its
+non-transport work source waits on the existing UART event queue. The native
+`0x7F` endpoint is only a registration seam here and remains unimplemented
+until Story 2.2.

@@ -49,6 +49,7 @@ public:
 
     // Helper to add transports to the IOService.
     void addTransport(io::ITransport* transport);
+    void addWorkSource(io::IWorkSource* source);
 
 private:
     std::uint64_t _tickCount{0};

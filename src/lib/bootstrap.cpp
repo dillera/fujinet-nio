@@ -33,6 +33,8 @@ io::ITransport* setup_transports(FujinetCore& core,
     io::ITransport* primary = nullptr;
 
     switch (profile.primaryTransport) {
+    case TransportKind::None:
+        break;
     case TransportKind::FujiBusSlip: {
         auto* framer = new io::SlipFramer();
         auto* t = new io::FujiBusTransport(channel, *framer);

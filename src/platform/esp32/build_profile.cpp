@@ -22,9 +22,9 @@ BuildProfile current_build_profile()
 #elif defined(FN_BUILD_ATARI_FUJIBUS_SIO)
     profile = BuildProfile{
         .machine          = Machine::Atari8Bit,
-        .primaryTransport = TransportKind::FujiBusSlip,
+        .primaryTransport = TransportKind::None,
         .primaryChannel   = ChannelKind::SioGpio,
-        .name             = "Atari + FujiBus over SIO GPIO",
+        .name             = "Atari standard disks over SIO GPIO",
         .hw               = {},
     };
 #elif defined(FN_BUILD_ESP32_USB_CDC)

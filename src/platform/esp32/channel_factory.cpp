@@ -7,9 +7,6 @@
 #include "fujinet/io/core/packet_link.h"
 #include "fujinet/build/profile.h"
 #include "fujinet/config/fuji_config.h"
-#if defined(FN_BUILD_ATARI_FUJIBUS_SIO)
-#include "fujinet/platform/esp32/atari_sio_fujibus_channel.h"
-#endif
 #include "fujinet/platform/esp32/usb_cdc_channel.h"
 #include "fujinet/platform/esp32/uart_channel.h"
 
@@ -75,8 +72,10 @@ create_channel_for_profile(const build::BuildProfile& profile, const config::Fuj
 
     case ChannelKind::SioGpio:
 #if defined(FN_BUILD_ATARI_FUJIBUS_SIO)
-        FN_ELOG("Using Atari SIO FujiBus channel for SioGpio");
-        return esp32::create_atari_sio_fujibus_channel(config);
+        // Atari SIO is not a stream Channel.  AtariSioIngress is constructed
+        // after DiskDevice so it can directly own the shared DiskService.
+        FN_ELOG("Atari SIO ingress owns SioGpio; no Channel is created");
+        return nullptr;
 #else
         FN_LOGE(TAG, "SioGpio selected but FN_BUILD_ATARI_FUJIBUS_SIO is not enabled");
         return nullptr;

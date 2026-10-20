@@ -14,6 +14,7 @@ idf_component_register(
         lib/app_store.cpp
         lib/app_store_service.cpp
         lib/application_state_service_init.cpp
+        lib/atari_sio_disk_frontend.cpp
         lib/boot_mount.cpp
         lib/bootstrap.cpp
         platform/esp32/build_profile.cpp
@@ -109,6 +110,7 @@ idf_component_register(
         lib/wifi_service.cpp
         lib/wifi_service_init.cpp
         platform/esp32/atari_sio_fujibus_channel.cpp
+        platform/esp32/atari_sio_ingress.cpp
         platform/esp32/button_manager.cpp
         platform/esp32/channel_factory.cpp
         platform/esp32/console_transport_default.cpp

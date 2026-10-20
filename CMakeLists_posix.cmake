@@ -120,6 +120,7 @@ set(FUJINET_NIO_SOURCES
         src/lib/app_store.cpp
         src/lib/app_store_service.cpp
         src/lib/application_state_service_init.cpp
+        src/lib/atari_sio_disk_frontend.cpp
         src/lib/boot_mount.cpp
         src/lib/bootstrap.cpp
         # build_profile/*.cpp selected below via if/elseif/else

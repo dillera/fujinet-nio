@@ -83,15 +83,19 @@ public:
         }
 
         const std::uint64_t dataBytes = static_cast<std::uint64_t>(paragraphs) * 16ull;
-        if (dataBytes + ATR_HEADER_BYTES > sizeBytes) {
-            // Header claims more data than file contains
+        if (dataBytes + ATR_HEADER_BYTES != sizeBytes) {
+            // ATR paragraphs describe the complete payload, not merely a
+            // prefix.  Accepting trailing bytes invents sectors/layout.
             return DiskResult{DiskError::BadImage};
         }
 
-        std::uint32_t sectorCount = static_cast<std::uint32_t>(dataBytes / baseSectorSize);
+        std::uint32_t sectorCount = 0;
         if (baseSectorSize == 256) {
-            // First three sectors are 128, so the logical sector count increases by 2.
-            sectorCount += 2;
+            if (dataBytes < 384 || ((dataBytes - 384) % 256) != 0) return DiskResult{DiskError::BadImage};
+            sectorCount = static_cast<std::uint32_t>(3 + ((dataBytes - 384) / 256));
+        } else {
+            if ((dataBytes % baseSectorSize) != 0) return DiskResult{DiskError::BadImage};
+            sectorCount = static_cast<std::uint32_t>(dataBytes / baseSectorSize);
         }
         if (sectorCount == 0) return DiskResult{DiskError::BadImage};
 

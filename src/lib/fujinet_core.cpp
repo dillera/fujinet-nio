@@ -37,4 +37,9 @@ void FujinetCore::addTransport(io::ITransport* transport)
     _ioService.addTransport(transport);
 }
 
+void FujinetCore::addWorkSource(io::IWorkSource* source)
+{
+    _ioService.addWorkSource(source);
+}
+
 } // namespace fujinet::core

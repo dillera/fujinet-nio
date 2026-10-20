@@ -75,7 +75,7 @@ enum class ChannelKind {
     TcpSocket,    // TCP/IP serial channel for emulators/QEMU
     UdpSocket,    // UDP socket (for NetSIO protocol)
     UartGpio,     // ESP32 GPIO-based UART (RS232, etc.)
-    SioGpio,      // ESP32 Atari SIO connector as a raw FujiBus byte pipe
+    SioGpio,      // ESP32 Atari SIO connector owned by the disk/NIO ingress
     SerialPort,   // POSIX serial port (RS-232 via /dev/ttyS* or /dev/ttyUSB*)
 };
 
@@ -324,11 +324,12 @@ E.g. FujiBus over USB, or FujiBus over TCP.
 
 Atari has two intentionally separate profile families:
 
-- **Atari NIO FujiBus over SIO** is selected by
-  `FN_BUILD_ATARI_FUJIBUS_SIO`. It uses `TransportKind::FujiBusSlip` with
-  `ChannelKind::SioGpio`. In this mode, the Atari SIO connector is just the
-  physical byte pipe for the same FujiBus protocol used by BBC, MSDOS, Amiga,
-  Python, PTY/TCP, and USB CDC clients.
+- **Atari standard disk SIO** is selected by `FN_BUILD_ATARI_FUJIBUS_SIO`.
+  It uses `TransportKind::None` with `ChannelKind::SioGpio`; one
+  `AtariSioIngress` owns UART/GPIO transaction boundaries and composes the
+  DiskDevice-owned `DiskService` directly for `D1:` through `D8:`.  It is not
+  a SLIP byte pipe and creates neither a Channel nor a FujiBus transport.
+  Native `0x7F` attachment is reserved for Story 2.2.
 - **Atari legacy SIO compatibility** is selected by `FN_BUILD_ATARI_SIO`,
   `FN_BUILD_ATARI_PTY`, or `FN_BUILD_ATARI_NETSIO`. It uses
   `TransportKind::SIO` and the legacy transport layer so unmodified Atari
@@ -414,9 +415,9 @@ Currently supported profiles:
 
 - `FN_BUILD_ATARI_FUJIBUS_SIO`
   - `machine          = Machine::Atari8Bit`
-  - `primaryTransport = TransportKind::FujiBusSlip`
+  - `primaryTransport = TransportKind::None`
   - `primaryChannel   = ChannelKind::SioGpio`
-  - Used for ESP32 builds where Atari hosts speak the NIO/FujiBus protocol over the SIO connector.
+  - Used for ESP32 standard ATR drives on the SIO connector; native `0x7F` is not enabled until Story 2.2.
   - PlatformIO environment for official 16 MB hardware: `atari-nio-fujibus-sio-gpio-fujinet-v1-16mb`
   - Custom 8 MB builds can use `atari-nio-fujibus-sio-gpio-fujinet-v1-8mb`.
 

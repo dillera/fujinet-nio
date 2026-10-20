@@ -17,6 +17,7 @@ enum class Machine {
 
 // Logical protocol / framing on the link.
 enum class TransportKind {
+    None,           // physical ingress owns a non-FujiBus protocol plane
     FujiBusSlip,   // FujiBus over SLIP framing (byte-stream channels)
     FujiBusNative, // FujiBus over packet-native channels (Zorro, SPI, floppy/Pico)
     SIO,
@@ -32,7 +33,7 @@ enum class ChannelKind {
     TcpSocket,
     UdpSocket,    // UDP socket (for NetSIO protocol)
     UartGpio,     // ESP32 GPIO-based UART (RS232, etc.)
-    SioGpio,      // ESP32 Atari SIO connector used as a raw FujiBus byte pipe
+    SioGpio,      // ESP32 Atari SIO connector owned by the dual-plane ingress
     SerialPort,   // POSIX serial port (RS-232 via /dev/ttyS* or /dev/ttyUSB*)
     // Future: SpiBridge, etc.
 };

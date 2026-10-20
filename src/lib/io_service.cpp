@@ -32,6 +32,9 @@ bool IOService::hasWaitableWorkSource() const
             return true;
         }
     }
+    for (auto* source : _workSources) {
+        if (source && source->supports_work_wait()) return true;
+    }
     return false;
 }
 
@@ -43,10 +46,18 @@ bool IOService::waitForWork(std::chrono::milliseconds timeout)
         }
     }
 
+    for (auto* source : _workSources) {
+        if (source && source->supports_work_wait() && source->wait_for_work(std::chrono::milliseconds(0))) return true;
+    }
+
     for (auto* t : _transports) {
         if (t && t->supports_work_wait()) {
             return t->wait_for_work(timeout);
         }
+    }
+
+    for (auto* source : _workSources) {
+        if (source && source->supports_work_wait()) return source->wait_for_work(timeout);
     }
 
     return false;
