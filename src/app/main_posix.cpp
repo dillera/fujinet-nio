@@ -267,7 +267,11 @@ int main()
 
     // Create a Channel appropriate for this profile (PTY, FujiBus, etc.).
     // and set up transports based on profile.
-    auto channel = platform::create_channel_for_profile(profile, config);
+    auto* diskDev = dynamic_cast<fujinet::io::DiskDevice*>(
+        core.deviceManager().getDevice(fujinet::io::protocol::to_device_id(
+            fujinet::io::protocol::WireDeviceId::DiskService)));
+    auto channel = platform::create_channel_for_profile(
+        profile, config, diskDev ? &diskDev->disk_service() : nullptr);
     if (!channel) {
         FN_LOGE(TAG, "Failed to create Channel for profile");
         return 1;

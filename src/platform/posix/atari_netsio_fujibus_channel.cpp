@@ -1,9 +1,11 @@
 #include "fujinet/platform/posix/atari_netsio_fujibus_channel.h"
 
 #include "fujinet/core/logging.h"
+#include "fujinet/io/atari_sio_disk_frontend.h"
 #include "fujinet/io/transport/legacy/netsio_protocol.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -17,8 +19,10 @@ static constexpr const char* TAG = "netsio-fb";
 
 class AtariNetSioFujiBusChannel : public fujinet::io::Channel {
 public:
-    explicit AtariNetSioFujiBusChannel(std::unique_ptr<fujinet::io::Channel> udp)
+    explicit AtariNetSioFujiBusChannel(std::unique_ptr<fujinet::io::Channel> udp,
+                                       fujinet::disk::DiskService* disks)
         : _udp(std::move(udp))
+        , _disk(disks ? std::make_unique<fujinet::io::AtariSioDiskFrontend>(*disks) : nullptr)
     {
         _netsio.sendDeviceConnect();
         write_netsio();
@@ -250,6 +254,25 @@ private:
         const std::uint8_t command = frame[1];
         const std::uint16_t aux = aux_word(frame);
 
+        if (_disk && device >= 0x31 && device <= 0x38) {
+            if (frame.size() != fujinet::io::AtariSioDiskFrontend::command_bytes) {
+                _diskReply = {0x4e};
+            } else {
+                std::array<std::uint8_t, fujinet::io::AtariSioDiskFrontend::command_bytes> commandFrame{};
+                std::copy_n(frame.begin(), commandFrame.size(), commandFrame.begin());
+                const auto result = _disk->begin(commandFrame);
+                _diskReply = result.bytes;
+                if (result.expected_write_bytes != 0) {
+                    _pendingDiskWriteBytes = result.expected_write_bytes;
+                    _diskWrite.clear();
+                    _pendingCommand = PendingCommand::DiskWrite;
+                    return true;
+                }
+            }
+            _pendingCommand = PendingCommand::DiskReply;
+            return true;
+        }
+
         if (!is_nio_sio_device(device)) {
             FN_LOGD(TAG,
                     "ignoring SIO command dev=0x%02X cmd=0x%02X aux=%u",
@@ -296,6 +319,22 @@ private:
 
     void handle_sync_request(std::uint8_t syncNum)
     {
+        if (_pendingCommand == PendingCommand::DiskReply) {
+            send_disk_reply(syncNum);
+            _diskReply.clear();
+            _pendingCommand = PendingCommand::None;
+            return;
+        }
+        if (_pendingCommand == PendingCommand::DiskWrite) {
+            // The initial reply returned by the shared frontend is the SIO
+            // command ACK.  Ask the NetSIO custom device for exactly the data
+            // bytes plus their Atari checksum; complete_write() owns the
+            // second ACK/terminal status just as it does on ESP32.
+            send_ack_sync(syncNum, _diskReply.empty() ? 0x4e : _diskReply.front(),
+                          static_cast<std::uint16_t>(_pendingDiskWriteBytes + 1));
+            _diskReply.clear();
+            return;
+        }
         if (_pendingCommand == PendingCommand::Write) {
             const std::uint16_t sioWriteSize = static_cast<std::uint16_t>(_pendingWriteSize + 1);
             send_ack_sync(syncNum, SIO_ACK, sioWriteSize);
@@ -345,6 +384,19 @@ private:
             return;
         }
 
+        if (_pendingCommand == PendingCommand::DiskWrite) {
+            const std::size_t remaining = _pendingDiskWriteBytes - _diskWrite.size();
+            const std::size_t accepted = std::min<std::size_t>(payload.size(), remaining);
+            _diskWrite.insert(_diskWrite.end(), payload.begin(), payload.begin() + static_cast<std::ptrdiff_t>(accepted));
+            if (_diskWrite.size() == _pendingDiskWriteBytes) {
+                _pendingCommand = PendingCommand::DiskWriteChecksum;
+            }
+            if (accepted < payload.size()) {
+                FN_LOGW(TAG, "discarding %zu extra disk write byte(s)", payload.size() - accepted);
+            }
+            return;
+        }
+
         _rx.insert(_rx.end(), payload.begin(), payload.end());
         FN_LOGD(TAG, "accepted raw NetSIO data block: %zu bytes", payload.size());
     }
@@ -359,6 +411,16 @@ private:
 
     void handle_data_checksum(std::uint8_t checksum, std::uint8_t syncNum)
     {
+        if (_pendingCommand == PendingCommand::DiskWriteChecksum) {
+            _diskWrite.push_back(checksum);
+            _diskReply = _disk->complete_write(_diskWrite.data(), _diskWrite.size()).bytes;
+            send_disk_reply(syncNum);
+            _diskReply.clear();
+            _diskWrite.clear();
+            _pendingDiskWriteBytes = 0;
+            _pendingCommand = PendingCommand::None;
+            return;
+        }
         if (_pendingCommand != PendingCommand::WriteChecksum) {
             _rx.push_back(checksum);
             send_empty_sync(syncNum);
@@ -379,6 +441,36 @@ private:
         _pendingWriteSize = 0;
         _pendingWriteRemaining = 0;
         _pendingWriteChecksum = 0;
+    }
+
+    void send_disk_reply(std::uint8_t syncNum)
+    {
+        if (_diskReply.empty()) {
+            send_empty_sync(syncNum);
+            return;
+        }
+        send_ack_sync(syncNum, _diskReply.front(), 0);
+        if (_diskReply.size() > 1) {
+            // The NetSIO custom device consumes the synchronous command ACK
+            // before it releases the Atari COMMAND line.  Match the existing
+            // legacy read path's gap so C/data/checksum cannot be discarded
+            // while that line is still asserted.
+            ::usleep(5000);
+            _netsio.sendDataByte(_diskReply[1]);
+            write_netsio();
+            if (_diskReply.size() > 3) {
+                // `C` is a real SIO byte, not metadata: allow the existing
+                // custom device to put it on the bus before asking it to start
+                // the following sector transfer.
+                ::usleep(5000);
+                _netsio.sendDataBlock(_diskReply.data() + 2, _diskReply.size() - 3);
+                write_netsio();
+            }
+            if (_diskReply.size() > 2) {
+                _netsio.sendDataByte(_diskReply.back());
+                write_netsio();
+            }
+        }
     }
 
     void pump()
@@ -464,6 +556,7 @@ private:
     }
 
     std::unique_ptr<fujinet::io::Channel> _udp;
+    std::unique_ptr<fujinet::io::AtariSioDiskFrontend> _disk;
     fujinet::io::transport::legacy::NetSIOProtocol _netsio;
     std::vector<std::uint8_t> _rx;
     std::vector<std::uint8_t> _tx;
@@ -472,6 +565,9 @@ private:
         Write,
         Read,
         WriteChecksum,
+        DiskReply,
+        DiskWrite,
+        DiskWriteChecksum,
     };
     static constexpr std::uint8_t NIO_SIO_DEVICE = 0x7F;
     static constexpr std::uint8_t NETSIO_NETWORK_DEVICE = 0x71;
@@ -492,13 +588,17 @@ private:
     std::uint16_t _pendingWriteRemaining{0};
     std::uint16_t _pendingReadSize{0};
     std::uint8_t _pendingWriteChecksum{0};
+    std::vector<std::uint8_t> _diskReply;
+    std::vector<std::uint8_t> _diskWrite;
+    std::size_t _pendingDiskWriteBytes{0};
     std::chrono::steady_clock::time_point _lastAlive{};
 };
 
 std::unique_ptr<fujinet::io::Channel>
-create_atari_netsio_fujibus_channel(std::unique_ptr<fujinet::io::Channel> udp)
+create_atari_netsio_fujibus_channel(std::unique_ptr<fujinet::io::Channel> udp,
+                                    fujinet::disk::DiskService* disks)
 {
-    return std::make_unique<AtariNetSioFujiBusChannel>(std::move(udp));
+    return std::make_unique<AtariNetSioFujiBusChannel>(std::move(udp), disks);
 }
 
 } // namespace fujinet::platform::posix

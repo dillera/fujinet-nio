@@ -52,8 +52,11 @@ std::size_t apply_boot_mount(
     }
 
     // Boot mounts are applied before the network link is up, so a network
-    // filesystem can't be probed yet; the lazy mount opens the image on first
-    // use, and retries if it is still unreachable.
+    // filesystem can't be probed yet; leave those for the first data
+    // operation.  A local Atari boot ATR is different: the OS asks D1 STATUS
+    // before its first read, and STATUS deliberately does not lazy-mount.
+    // Materialize a local projection here so STATUS can report its real
+    // geometry (including the 256-byte sectors after the three boot sectors).
     if (fs::is_network_kind(fs->kind())) {
         FN_LOGI(TAG, "Boot config_uri '%s' is on a network filesystem; staging without probing",
                 boot.configUri.c_str());
@@ -73,6 +76,16 @@ std::size_t apply_boot_mount(
             mode.c_str());
 
     diskService.set_pending_mount(activeDiskUnit, boot.configUri, mode, true, 0);
+    if (activeDiskUnit == 0 && !fs::is_network_kind(fs->kind())) {
+        const auto mounted = diskService.ensure_mounted(activeDiskUnit);
+        if (!mounted.ok()) {
+            FN_LOGE(TAG,
+                    "Failed to mount local boot config_uri '%s' on active_unit=%zu",
+                    boot.configUri.c_str(), activeDiskUnit);
+            diskService.clear_pending_mount(activeDiskUnit);
+            return 0;
+        }
+    }
     return 1;
 }
 

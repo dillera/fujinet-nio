@@ -34,7 +34,8 @@ with_packet_link(const build::BuildProfile& profile, const config::FujiConfig& c
 }
 
 std::unique_ptr<fujinet::io::Channel>
-create_channel_for_profile(const build::BuildProfile& profile, const config::FujiConfig& config)
+create_channel_for_profile(const build::BuildProfile& profile, const config::FujiConfig& config,
+                           disk::DiskService* disks)
 {
     using build::ChannelKind;
 
@@ -65,7 +66,7 @@ create_channel_for_profile(const build::BuildProfile& profile, const config::Fuj
         if (profile.machine == build::Machine::Atari8Bit &&
             profile.primaryTransport == build::TransportKind::FujiBusSlip) {
             std::cout << "[ChannelFactory] Wrapping UDP channel as FujiBus over NetSIO.\n";
-            return posix::create_atari_netsio_fujibus_channel(std::move(udp));
+            return posix::create_atari_netsio_fujibus_channel(std::move(udp), disks);
         }
         return udp;
     }
