@@ -34,7 +34,8 @@ with_packet_link(const build::BuildProfile& profile, const config::FujiConfig& c
 }
 
 std::unique_ptr<fujinet::io::Channel>
-create_channel_for_profile(const build::BuildProfile& profile, const config::FujiConfig& config)
+create_channel_for_profile(const build::BuildProfile& profile, const config::FujiConfig& config,
+                           disk::DiskService* /*disks*/)
 {
     using build::ChannelKind;
 
