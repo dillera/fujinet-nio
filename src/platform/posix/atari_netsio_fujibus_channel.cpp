@@ -451,18 +451,16 @@ private:
         }
         send_ack_sync(syncNum, _diskReply.front(), 0);
         if (_diskReply.size() > 1) {
-            // The NetSIO custom device consumes the synchronous command ACK
-            // before it releases the Atari COMMAND line.  Match the existing
-            // legacy read path's gap so C/data/checksum cannot be discarded
-            // while that line is still asserted.
-            ::usleep(5000);
+            // The NetSIO hub's READY/credit handshake serializes delivery to
+            // the custom device.  The working legacy implementation sends
+            // the complete/data/checksum sequence immediately after the
+            // synchronous ACK; do the same rather than layering fixed sleeps
+            // above the existing flow control.
             _netsio.sendDataByte(_diskReply[1]);
             write_netsio();
             if (_diskReply.size() > 3) {
-                // `C` is a real SIO byte, not metadata: allow the existing
-                // custom device to put it on the bus before asking it to start
-                // the following sector transfer.
-                ::usleep(5000);
+                // `C` is a real SIO byte, followed by the exact frontend
+                // payload.  The final byte below remains its Atari checksum.
                 _netsio.sendDataBlock(_diskReply.data() + 2, _diskReply.size() - 3);
                 write_netsio();
             }
