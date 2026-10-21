@@ -64,6 +64,11 @@ void AtariSioIngressRouter::consume(std::uint8_t byte)
     if (_command_used == _command.size()) begin_command();
 }
 
+std::size_t AtariSioIngressRouter::pending_write_bytes() const noexcept
+{
+    return _pending == PendingWrite::None ? 0 : _write_expected;
+}
+
 void AtariSioIngressRouter::reset_command_collection()
 {
     // A new command aborts only an incomplete W data phase.  Once a response

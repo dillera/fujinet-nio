@@ -29,7 +29,9 @@
 #include "fujinet/io/protocol/wire_device_ids.h"
 #include "fujinet/platform/channel_factory.h"
 #include "fujinet/platform/fuji_device_factory.h"
+#include "fujinet/platform/posix/atari_netsio_fujibus_channel.h"
 #include "fujinet/platform/posix/fs_factory.h"
+#include "fujinet/platform/posix/udp_channel.h"
 #include "fujinet/platform/posix/wifi_link.h"
 #include "fujinet/core/version.h"
 
@@ -270,6 +272,21 @@ int main()
     auto* diskDev = dynamic_cast<fujinet::io::DiskDevice*>(
         core.deviceManager().getDevice(fujinet::io::protocol::to_device_id(
             fujinet::io::protocol::WireDeviceId::DiskService)));
+    std::unique_ptr<fujinet::platform::posix::AtariNetSioIngress> atariNetSioIngress;
+#if defined(FN_BUILD_ATARI_FUJIBUS_NETSIO)
+    if (!diskDev) {
+        FN_LOGE(TAG, "Atari NetSIO ingress requires DiskService");
+        return 1;
+    }
+    auto udp = platform::create_udp_channel(config.netsio.host, config.netsio.port);
+    if (!udp) {
+        FN_LOGE(TAG, "Failed to create NetSIO UDP channel");
+        return 1;
+    }
+    atariNetSioIngress = fujinet::platform::posix::create_atari_netsio_ingress(
+        std::move(udp), diskDev->disk_service(), core.routingManager());
+    core.addWorkSource(atariNetSioIngress.get());
+#else
     auto channel = platform::create_channel_for_profile(
         profile, config, diskDev ? &diskDev->disk_service() : nullptr);
     if (!channel) {
@@ -281,6 +298,7 @@ int main()
         diagRegistry.add_provider(*packetLinkDiag);
     }
     core::setup_transports(core, *channel, profile, &config);
+#endif
 
     const auto idleDelay = posix_idle_delay(profile);
     FN_LOGI(TAG,
@@ -291,6 +309,7 @@ int main()
     // Run core loop until the process is terminated (Ctrl+C, kill, etc.).
     bool running = true;
     while (running) {
+        if (atariNetSioIngress) atariNetSioIngress->poll();
         core.tick();
 
         running = console.step(0);

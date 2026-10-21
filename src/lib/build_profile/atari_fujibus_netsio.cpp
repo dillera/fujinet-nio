@@ -6,9 +6,9 @@ BuildProfile current_build_profile()
 {
     BuildProfile profile{
         .machine          = Machine::Atari8Bit,
-        .primaryTransport = TransportKind::FujiBusSlip,
+        .primaryTransport = TransportKind::None,
         .primaryChannel   = ChannelKind::UdpSocket,
-        .name             = "Atari + FujiBus over NetSIO (POSIX)",
+        .name             = "Atari packet-native NIO over NetSIO (POSIX)",
         .hw               = {},
     };
     profile.hw = detect_hardware_capabilities();

@@ -108,8 +108,10 @@ TEST_CASE("FujinetCore can be embedded with a custom Channel")
 
     // 2) Decide on a build profile (host may override this if it wants).
     build::BuildProfile profile = build::current_build_profile();
-    // For the purposes of this test we don’t really care which machine/
-    // channel it claims to be, only that FujiBus transport can be set up.
+    // This is a byte-channel embedding smoke test.  Direct SIO ingress
+    // profiles intentionally have no FujiBusTransport, so select the channel
+    // contract being exercised instead of inheriting that unrelated profile.
+    profile.primaryTransport = build::TransportKind::FujiBusSlip;
 
     // 3) Provide our own Channel implementation. A byte channel carries
     //    native packets only through a packet link.

@@ -1,14 +1,36 @@
 #pragma once
 
 #include "fujinet/io/core/channel.h"
+#include "fujinet/io/core/request_handler.h"
+#include "fujinet/io/core/work_source.h"
 #include "fujinet/disk/disk_service.h"
 
+#include <chrono>
 #include <memory>
 
 namespace fujinet::platform::posix {
 
-std::unique_ptr<fujinet::io::Channel>
-create_atari_netsio_fujibus_channel(std::unique_ptr<fujinet::io::Channel> udp,
-                                    fujinet::disk::DiskService* disks = nullptr);
+// The POSIX side of the one Atari SIO ingress.  NetSIO is only its virtual
+// wire carrier; raw FujiBus packets never become a Channel/SLIP stream here.
+class AtariNetSioIngress final : public fujinet::io::IWorkSource {
+public:
+    AtariNetSioIngress(std::unique_ptr<fujinet::io::Channel> udp,
+                       fujinet::disk::DiskService& disks,
+                       fujinet::io::IRequestHandler& routing);
+    ~AtariNetSioIngress() override;
+
+    void poll();
+    bool supports_work_wait() const override;
+    bool wait_for_work(std::chrono::milliseconds timeout) override;
+
+private:
+    class Impl;
+    std::unique_ptr<Impl> _impl;
+};
+
+std::unique_ptr<AtariNetSioIngress>
+create_atari_netsio_ingress(std::unique_ptr<fujinet::io::Channel> udp,
+                            fujinet::disk::DiskService& disks,
+                            fujinet::io::IRequestHandler& routing);
 
 } // namespace fujinet::platform::posix

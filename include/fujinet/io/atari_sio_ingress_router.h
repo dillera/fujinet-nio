@@ -21,6 +21,9 @@ public:
     AtariSioIngressRouter(AtariSioDiskFrontend& disk, AtariSioNioFrontend& nio, Send send);
 
     void consume(std::uint8_t byte);
+    // Exact accepted data bytes, excluding the SIO checksum.  Virtual SIO
+    // carriers use this to request precisely the same write frame as UART.
+    std::size_t pending_write_bytes() const noexcept;
     // Called by the physical CMD edge boundary.  It cancels only an incomplete
     // native write data phase; a ready NIO response deliberately survives.
     void reset_command_collection();

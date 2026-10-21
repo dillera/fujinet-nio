@@ -298,16 +298,15 @@ configuration and QEMU/MS-DOS usage notes.
 
 ### Atari FujiBus and packet-native SIO paths
 
-POSIX Atari virtual-SIO uses `FujiBusTransport` like BBC, MS-DOS, Amiga,
-Python, PTY/TCP, and USB CDC clients. Physical Atari SIO is intentionally
-different: it routes complete packet-native transactions directly through the
-core rather than presenting a byte channel to that transport.
+Both POSIX virtual-SIO and physical Atari SIO route complete packet-native
+transactions directly through the core rather than presenting a byte channel
+to `FujiBusTransport`.
 
-- **POSIX + AltirraSDL** uses `ChannelKind::UdpSocket` plus the
-  `AtariNetSioFujiBusChannel` adapter. Altirra talks to `netsio.atdevice`,
-  `netsiohub` forwards NetSIO packets over UDP, and the adapter unwraps the
-  NetSIO/SIO command flow back into a raw FujiBus byte stream for
-  `FujiBusTransport`.
+- **POSIX + NetSIO/AltirraSDL** uses `ChannelKind::UdpSocket` as the virtual
+  wire carrier. `AtariNetSioIngress` owns the NetSIO/SIO framing and delegates
+  `D1:`--`D8:` to `AtariSioDiskFrontend` and native `$7F` Q/W/P/R to the
+  shared `AtariSioIngressRouter`/`AtariSioNioFrontend` and `RoutingManager`.
+  It is not a SLIP/FujiBus byte channel and has no `$71` alias or padded read.
 - **ESP32 + Atari SIO GPIO** uses `FN_BUILD_ATARI_FUJIBUS_SIO`, selecting
   `TransportKind::None` with `ChannelKind::SioGpio`. The one
   `AtariSioIngress` owns the UART and control pins, sends `D1:`--`D8:`

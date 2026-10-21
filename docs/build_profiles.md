@@ -451,9 +451,10 @@ Currently supported profiles:
 
 - `FN_BUILD_ATARI_FUJIBUS_NETSIO`
   - `machine          = Machine::Atari8Bit`
-  - `primaryTransport = TransportKind::FujiBusSlip`
+  - `primaryTransport = TransportKind::None`
   - `primaryChannel   = ChannelKind::UdpSocket`
-  - POSIX build where an Atari host speaks FujiBus (not legacy SIO) over a NetSIO bridge.
+  - POSIX virtual SIO ingress over NetSIO/UDP. It carries direct D1--D8 disk
+    and packet-native `$7F` Q/W/P/R traffic, not SLIP or padded FujiBus reads.
   - CMake preset: `atari-fujibus-netsio-debug`
 
 - `FN_BUILD_FUJIBUS_LINK_TCP`

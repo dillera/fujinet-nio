@@ -4,7 +4,6 @@
 #include "fujinet/config/fuji_config.h"
 #include "fujinet/io/core/channel.h"
 #include "fujinet/io/core/packet_link.h"
-#include "fujinet/platform/posix/atari_netsio_fujibus_channel.h"
 #include "fujinet/platform/posix/pty_channel.h"
 #include "fujinet/platform/posix/serial_channel.h"
 #include "fujinet/platform/posix/tcp_server_channel.h"
@@ -61,14 +60,8 @@ create_channel_for_profile(const build::BuildProfile& profile, const config::Fuj
 
         std::cout << "[ChannelFactory] Using UDP channel (NetSIO) to " << host << ":" << port << std::endl;
 
-        auto udp = create_udp_channel(host, port);
-        // FujiBusNative (Zorro) will use its own ChannelKind when available; not handled here.
-        if (profile.machine == build::Machine::Atari8Bit &&
-            profile.primaryTransport == build::TransportKind::FujiBusSlip) {
-            std::cout << "[ChannelFactory] Wrapping UDP channel as FujiBus over NetSIO.\n";
-            return posix::create_atari_netsio_fujibus_channel(std::move(udp), disks);
-        }
-        return udp;
+        (void)disks;
+        return create_udp_channel(host, port);
     }
 
     case ChannelKind::UartGpio:
