@@ -439,14 +439,18 @@ void UartChannel::write(const std::uint8_t* buffer, std::size_t len)
     }
 
     auto write_bytes = [this](const std::uint8_t* data, std::size_t n) -> bool {
-        int bytes_written = uart_write_bytes(_uart_port, data, n);
-        if (bytes_written < 0) {
-            FN_LOGE(TAG, "uart_write_bytes failed: %d", bytes_written);
-            return false;
-        }
-        if (static_cast<std::size_t>(bytes_written) != n) {
-            FN_LOGW(TAG, "Partial write: %d of %zu bytes", bytes_written, n);
-            return false;
+        std::size_t offset = 0;
+        while (offset < n) {
+            const int bytes_written = uart_write_bytes(_uart_port, data + offset, n - offset);
+            if (bytes_written < 0) {
+                FN_LOGE(TAG, "uart_write_bytes failed: %d", bytes_written);
+                return false;
+            }
+            if (bytes_written == 0) {
+                FN_LOGW(TAG, "uart_write_bytes made no progress with %zu bytes remaining", n - offset);
+                return false;
+            }
+            offset += static_cast<std::size_t>(bytes_written);
         }
         return true;
     };

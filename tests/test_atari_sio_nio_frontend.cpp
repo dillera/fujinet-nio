@@ -3,6 +3,7 @@
 #include "fujinet/core/core.h"
 #include "fujinet/io/atari_sio_nio_frontend.h"
 #include "fujinet/io/devices/virtual_device.h"
+#include "fujinet/io/protocol/fuji_bus_packet.h"
 
 #include "../third_party/cjson/cJSON.h"
 
@@ -62,6 +63,10 @@ Scenario fixture(const char* id)
     return out;
 }
 
+// `dcb_count` in nio_v1.json is a client-side 6502 assertion.  It is not
+// available in a physical SIO command frame, so these endpoint tests use only
+// the literal frame AUX and payload/checksum fields visible to firmware.
+
 std::array<std::uint8_t, AtariSioNioFrontend::command_bytes>
 command(std::uint8_t op, std::uint16_t aux)
 {
@@ -92,13 +97,22 @@ public:
     {
         requests.push_back(request);
         auto response = fujinet::io::make_success_response(request);
-        response.payload = oversized ? std::vector<std::uint8_t>(600, 0x5a)
-                                     : std::vector<std::uint8_t>{0xaa, 0x55};
+        if (oversized) {
+            response.payload.assign(600, 0x5a);
+        } else if (full_response) {
+            response.payload.resize(505);
+            for (std::size_t i = 0; i < response.payload.size(); ++i) {
+                response.payload[i] = static_cast<std::uint8_t>((i ^ (i >> 8U) ^ 0xa5U) & 0xffU);
+            }
+        } else {
+            response.payload = {0xaa, 0x55};
+        }
         return response;
     }
 
     std::vector<fujinet::io::IORequest> requests;
     bool oversized{false};
+    bool full_response{false};
 };
 
 struct Harness {
@@ -123,6 +137,17 @@ void send_valid_write(Harness& harness, const Scenario& write)
     const auto complete = harness.frontend.complete_write(data_frame(write.payload).data(), write.payload.size() + 1);
     REQUIRE(complete.accepted);
     REQUIRE(complete.bytes == std::vector<std::uint8_t>{'A', 'C'});
+}
+
+std::vector<std::uint8_t> full_size_request()
+{
+    fujinet::io::protocol::FujiBusPacket packet{
+        static_cast<fujinet::io::protocol::WireDeviceId>(1), 2};
+    fujinet::io::protocol::ByteBuffer payload(506);
+    for (std::size_t i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<std::uint8_t>((i ^ (i >> 8U) ^ 0xa5U) & 0xffU);
+    }
+    return packet.setData(std::move(payload)).serializeRaw();
 }
 
 } // namespace
@@ -227,4 +252,34 @@ TEST_CASE("Atari native NIO frontend preserves Q and reset boundaries and bounds
     const auto response = oversized.frontend.begin(command('R', 7));
     CHECK(response.bytes == data_reply({1, 2, 7, 0, 0x12, 1, 7}));
     CHECK(oversized.device->requests.size() == 1);
+}
+
+TEST_CASE("Atari native NIO frontend exchanges a full 512-byte FujiBus packet")
+{
+    Harness harness;
+    harness.device->full_response = true;
+    const auto write = fixture("w-512");
+    const auto poll = fixture("p-ready-512");
+    const auto read = fixture("r-ready-512");
+    const auto request = full_size_request();
+    REQUIRE(request.size() == AtariSioNioFrontend::capacity);
+
+    const auto accepted = harness.frontend.begin(write.frame);
+    REQUIRE(accepted.accepted);
+    CHECK(accepted.bytes == std::vector<std::uint8_t>{'A'});
+    CHECK(accepted.expected_write_bytes == request.size());
+    const auto complete = harness.frontend.complete_write(data_frame(request).data(), request.size() + 1);
+    REQUIRE(complete.accepted);
+    CHECK(complete.bytes == std::vector<std::uint8_t>{'A', 'C'});
+    REQUIRE(harness.device->requests.size() == 1);
+
+    CHECK(harness.frontend.begin(poll.frame).bytes == data_reply({2, 0, 2}));
+    const auto terminal = harness.frontend.begin(read.frame);
+    REQUIRE(terminal.accepted);
+    REQUIRE(terminal.bytes.size() == 2 + AtariSioNioFrontend::capacity + 1);
+    CHECK(terminal.bytes[0] == 'A');
+    CHECK(terminal.bytes[1] == 'C');
+    CHECK(AtariSioNioFrontend::checksum(terminal.bytes.data() + 2,
+                                        AtariSioNioFrontend::capacity) == terminal.bytes.back());
+    CHECK(harness.frontend.begin(fixture("reset-clears").frame).bytes == data_reply({0, 0, 0}));
 }

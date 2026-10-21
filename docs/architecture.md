@@ -1559,5 +1559,6 @@ It dispatches `D1:`–`D8:` sector commands to `AtariSioDiskFrontend`, which
 uses the registered `DiskDevice`'s shared `DiskService` directly. This path is
 not a `Channel`, `ITransport`, FujiBus, SLIP, or legacy SIO transport. Its
 non-transport work source waits on the existing UART event queue. The native
-`0x7F` endpoint is only a registration seam here and remains unimplemented
-until Story 2.2.
+`0x7F` endpoint is the same ingress's packet-native `AtariSioNioFrontend`;
+it dispatches complete Q/W/P/R FujiBus packets through `RoutingManager`
+without affecting disk routing.
