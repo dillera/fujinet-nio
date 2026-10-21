@@ -42,17 +42,22 @@ public:
         // The literal raw fixture is decoded by the production shared codec
         // before it gets here.  Keep this guard so an accidental different
         // packet cannot look like a successful fixture execution.
-        if (request.deviceId != fixture_device_id || request.command != 2 ||
+        if (request.deviceId != fixture_device_id ||
+            (request.command != 2 && request.command != 3) ||
             !request.params.empty() || !request.payload.empty()) {
             return fujinet::io::make_base_response(request, fujinet::io::StatusCode::InvalidRequest);
         }
         ++dispatches;
         FN_LOGI(TAG, "core-dispatch fixture route invocation %u", dispatches);
-        if (dispatches != 1) {
+        if (dispatches > 2) {
             return fujinet::io::make_base_response(request, fujinet::io::StatusCode::DeviceBusy);
         }
         auto response = fujinet::io::make_success_response(request);
-        response.payload = {0xaa, 0x55};
+        if (request.command == 2) {
+            response.payload = {0xaa, 0x55};
+        } else {
+            response.payload = {0x33, 0xcc};
+        }
         return response;
     }
 
