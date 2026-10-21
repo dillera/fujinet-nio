@@ -121,6 +121,7 @@ set(FUJINET_NIO_SOURCES
         src/lib/app_store_service.cpp
         src/lib/application_state_service_init.cpp
         src/lib/atari_sio_disk_frontend.cpp
+        src/lib/atari_sio_ingress_router.cpp
         src/lib/atari_sio_nio_frontend.cpp
         src/lib/boot_mount.cpp
         src/lib/bootstrap.cpp

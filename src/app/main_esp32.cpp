@@ -324,7 +324,8 @@ extern "C" void fujinet_core_task(void* arg)
 
 #if defined(FN_BUILD_ATARI_FUJIBUS_SIO)
             if (profile.primaryChannel == fujinet::build::ChannelKind::SioGpio) {
-                atariSioIngress = std::make_unique<fujinet::platform::esp32::AtariSioIngress>(config, diskDev->disk_service());
+                atariSioIngress = std::make_unique<fujinet::platform::esp32::AtariSioIngress>(
+                    config, diskDev->disk_service(), core.routingManager());
                 core.addWorkSource(atariSioIngress.get());
             }
 #endif

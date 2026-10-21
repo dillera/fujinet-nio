@@ -42,8 +42,12 @@ void IRAM_ATTR cmd_edge_isr(void* arg)
 }
 }
 
-AtariSioIngress::AtariSioIngress(const config::FujiConfig& config, disk::DiskService& disks)
+AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
+                                 disk::DiskService& disks,
+                                 io::IRequestHandler& routing)
     : _disk(disks)
+    , _nio(routing)
+    , _router(_disk, _nio, [this](const std::vector<std::uint8_t>& bytes) { send(bytes); })
 {
     const auto& pins = pinmap();
     configure_sio_lines(pins);
@@ -81,51 +85,18 @@ void AtariSioIngress::note_cmd_edge() noexcept
     _boundary.note_cmd_edge();
 }
 
-void AtariSioIngress::reset_transaction()
-{
-    _commandUsed = 0;
-    _writeExpected = 0;
-    _write.clear();
-}
-
-void AtariSioIngress::consume(std::uint8_t byte)
-{
-    if (_writeExpected) {
-        _write.push_back(byte);
-        if (_write.size() == _writeExpected + 1) {
-            send(_disk.complete_write(_write.data(), _write.size()).bytes);
-            _writeExpected = 0;
-            _write.clear();
-        }
-        return;
-    }
-    _command[_commandUsed++] = byte;
-    if (_commandUsed != _command.size()) return;
-    _commandUsed = 0;
-    if (_command[0] == 0x7f) {
-        if (_nativeHandler) _nativeHandler({_command.begin(), _command.end()});
-        return;
-    }
-    auto reply = _disk.begin(_command);
-    send(reply.bytes);
-    if (reply.expected_write_bytes) {
-        _writeExpected = reply.expected_write_bytes;
-        _write.clear();
-    }
-}
-
 void AtariSioIngress::poll()
 {
     if (!_uart) return;
-    if (_boundary.consume()) reset_transaction();
+    if (_boundary.consume()) _router.reset_command_collection();
     std::uint8_t bytes[256];
     while (_uart->available()) {
         const std::size_t count = _uart->read(bytes, sizeof(bytes));
         for (std::size_t i = 0; i < count; ++i) {
             // An edge can arrive while draining an event batch.  Bound the
             // next byte to the newly-recorded command transaction.
-            if (_boundary.consume()) reset_transaction();
-            consume(bytes[i]);
+            if (_boundary.consume()) _router.reset_command_collection();
+            _router.consume(bytes[i]);
         }
     }
 }

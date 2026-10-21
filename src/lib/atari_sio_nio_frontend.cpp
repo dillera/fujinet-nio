@@ -133,6 +133,11 @@ AtariSioNioFrontend::Result AtariSioNioFrontend::complete_write(const std::uint8
     return Result{{ack, complete}, 0, true};
 }
 
+void AtariSioNioFrontend::abort_write()
+{
+    if (_state == State::Receiving) reset();
+}
+
 void AtariSioNioFrontend::reset()
 {
     _state = State::Idle;

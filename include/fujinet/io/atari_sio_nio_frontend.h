@@ -26,6 +26,9 @@ public:
 
     Result begin(const std::array<std::uint8_t, command_bytes>& command);
     Result complete_write(const std::uint8_t* data, std::size_t data_bytes);
+    // An ingress CMD edge interrupted an accepted W before its data frame.
+    // This must not discard a response already waiting for terminal R.
+    void abort_write();
     void reset();
 
     static std::uint8_t checksum(const std::uint8_t* data, std::size_t len);

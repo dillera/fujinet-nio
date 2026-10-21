@@ -15,6 +15,7 @@ idf_component_register(
         lib/app_store_service.cpp
         lib/application_state_service_init.cpp
         lib/atari_sio_disk_frontend.cpp
+        lib/atari_sio_ingress_router.cpp
         lib/atari_sio_nio_frontend.cpp
         lib/boot_mount.cpp
         lib/bootstrap.cpp
