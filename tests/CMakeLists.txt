@@ -19,6 +19,18 @@ target_link_libraries(fujinet-nio-native-test
         fujinet-nio
 )
 
+# Story 2.3 integration peer: it exposes no SIO protocol of its own.  The
+# emulator reaches the production NetSIO ingress and AtariSioNioFrontend;
+# this process supplies only a deterministic real-core VirtualDevice for the
+# independent core-dispatch fixture.
+add_executable(fujinet-nio-atari-netsio-projection
+    atari_netsio_projection_runner.cpp
+)
+target_link_libraries(fujinet-nio-atari-netsio-projection
+    PRIVATE
+        fujinet-nio
+)
+
 add_executable(fujinet-nio-tests
     run_main.cpp       # contains doctest main
     ${TEST_SOURCES}    # test_smoke.cpp, test_fujipacket.cpp, etc.
@@ -47,7 +59,7 @@ target_include_directories(fujinet-nio-tests
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-add_dependencies(fujinet-nio-tests fujinet-nio-native-test)
+add_dependencies(fujinet-nio-tests fujinet-nio-native-test fujinet-nio-atari-netsio-projection)
 target_compile_definitions(fujinet-nio-tests
     PRIVATE
         FUJINET_NIO_NATIVE_TEST_RUNNER="$<TARGET_FILE:fujinet-nio-native-test>"
