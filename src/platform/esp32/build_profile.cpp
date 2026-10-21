@@ -24,7 +24,7 @@ BuildProfile current_build_profile()
         .machine          = Machine::Atari8Bit,
         .primaryTransport = TransportKind::None,
         .primaryChannel   = ChannelKind::SioGpio,
-        .name             = "Atari standard disks over SIO GPIO",
+        .name             = "Atari packet-native NIO over SIO GPIO",
         .hw               = {},
     };
 #elif defined(FN_BUILD_ESP32_USB_CDC)

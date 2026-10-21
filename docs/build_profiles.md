@@ -329,7 +329,8 @@ Atari has two intentionally separate profile families:
   `AtariSioIngress` owns UART/GPIO transaction boundaries and composes the
   DiskDevice-owned `DiskService` directly for `D1:` through `D8:`.  It is not
   a SLIP byte pipe and creates neither a Channel nor a FujiBus transport.
-  Native `0x7F` attachment is reserved for Story 2.2.
+  Native device `0x7F` Q/W/P/R is packet-native and routes through
+  `AtariSioNioFrontend` to the existing `RoutingManager`.
 - **Atari legacy SIO compatibility** is selected by `FN_BUILD_ATARI_SIO`,
   `FN_BUILD_ATARI_PTY`, or `FN_BUILD_ATARI_NETSIO`. It uses
   `TransportKind::SIO` and the legacy transport layer so unmodified Atari
@@ -417,7 +418,8 @@ Currently supported profiles:
   - `machine          = Machine::Atari8Bit`
   - `primaryTransport = TransportKind::None`
   - `primaryChannel   = ChannelKind::SioGpio`
-  - Used for ESP32 standard ATR drives on the SIO connector; native `0x7F` is not enabled until Story 2.2.
+  - Used for ESP32 standard ATR drives and packet-native `0x7F` NIO on the
+    SIO connector. It has no SLIP byte-channel adapter.
   - PlatformIO environment for official 16 MB hardware: `atari-nio-fujibus-sio-gpio-fujinet-v1-16mb`
   - Custom 8 MB builds can use `atari-nio-fujibus-sio-gpio-fujinet-v1-8mb`.
 

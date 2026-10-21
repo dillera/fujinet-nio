@@ -183,3 +183,25 @@ class TestPlatformIOBoardConfig(unittest.TestCase):
                 sdkconfig_map = _read_sdkconfig_map()
                 self.assertIn("fujibus-gpio", sdkconfig_map[name])
                 self.assertNotIn("spiram-oct80", sdkconfig_map[name])
+
+    def test_atari_nio_profile_has_no_legacy_padded_slip_sio_adapter(self) -> None:
+        obsolete_paths = (
+            "include/fujinet/io/transport/atari_sio_fujibus_framer.h",
+            "include/fujinet/platform/esp32/atari_sio_fujibus_channel.h",
+            "src/lib/transport/atari_sio_fujibus_framer.cpp",
+            "src/platform/esp32/atari_sio_fujibus_channel.cpp",
+            "tests/test_atari_sio_fujibus_framer.cpp",
+        )
+        for path in obsolete_paths:
+            with self.subTest(path=path):
+                self.assertFalse((REPO_ROOT / path).exists())
+
+        build_profile = (REPO_ROOT / "src/platform/esp32/build_profile.cpp").read_text()
+        native_branch = build_profile.split("#elif defined(FN_BUILD_ATARI_FUJIBUS_SIO)", 1)[1].split("#elif", 1)[0]
+        self.assertIn("TransportKind::None", native_branch)
+        self.assertIn("ChannelKind::SioGpio", native_branch)
+        self.assertNotIn("TransportKind::FujiBusSlip", native_branch)
+
+        for source_list in ("CMakeLists_posix.cmake", "src/CMakeLists.txt"):
+            with self.subTest(source_list=source_list):
+                self.assertNotIn("atari_sio_fujibus", (REPO_ROOT / source_list).read_text())

@@ -96,7 +96,6 @@ idf_component_register(
         lib/time_platform.cpp
         lib/tnfs/tnfs_tcp_client.cpp
         lib/tnfs/tnfs_udp_client.cpp
-        lib/transport/atari_sio_fujibus_framer.cpp
         lib/transport/legacy/byte_based_legacy_transport.cpp
         lib/transport/legacy/iwm_traits.cpp
         lib/transport/legacy/iwm_transport.cpp
@@ -112,7 +111,6 @@ idf_component_register(
         lib/wifi_controller.cpp
         lib/wifi_service.cpp
         lib/wifi_service_init.cpp
-        platform/esp32/atari_sio_fujibus_channel.cpp
         platform/esp32/atari_sio_ingress.cpp
         platform/esp32/button_manager.cpp
         platform/esp32/channel_factory.cpp

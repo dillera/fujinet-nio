@@ -296,11 +296,12 @@ disconnects. FujiBus/SLIP framing remains entirely in `FujiBusTransport`.
 See [`docs/posix_tcp_serial_channel.md`](posix_tcp_serial_channel.md) for
 configuration and QEMU/MS-DOS usage notes.
 
-### Atari FujiBus channel paths
+### Atari FujiBus and packet-native SIO paths
 
-The Atari NIO/FujiBus path uses the same `FujiBusTransport` as BBC, MS-DOS,
-Amiga, Python, POSIX PTY/TCP, and USB CDC clients. The platform difference is
-only how raw bytes reach the transport:
+POSIX Atari virtual-SIO uses `FujiBusTransport` like BBC, MS-DOS, Amiga,
+Python, PTY/TCP, and USB CDC clients. Physical Atari SIO is intentionally
+different: it routes complete packet-native transactions directly through the
+core rather than presenting a byte channel to that transport.
 
 - **POSIX + AltirraSDL** uses `ChannelKind::UdpSocket` plus the
   `AtariNetSioFujiBusChannel` adapter. Altirra talks to `netsio.atdevice`,
@@ -308,13 +309,11 @@ only how raw bytes reach the transport:
   NetSIO/SIO command flow back into a raw FujiBus byte stream for
   `FujiBusTransport`.
 - **ESP32 + Atari SIO GPIO** uses `FN_BUILD_ATARI_FUJIBUS_SIO`, selecting
-  `TransportKind::FujiBusSlip` with `ChannelKind::SioGpio`. The ESP32 channel
-  factory maps this to `AtariSioFujiBusChannel`. That channel owns the
-  `UartChannel` using `pinmap().sio.uart`, configures the Atari SIO control
-  pins, and uses `AtariSioFujiBusFramer` to translate Atari SIO `W`/`R`
-  command/data/checksum traffic into the raw FujiBus byte stream consumed by
-  `FujiBusTransport`. This keeps SIO as a channel adapter; the core transport
-  remains FujiBus, not legacy SIO.
+  `TransportKind::None` with `ChannelKind::SioGpio`. The one
+  `AtariSioIngress` owns the UART and control pins, sends `D1:`--`D8:`
+  directly to the shared `DiskService`, and delegates native device `0x7F`
+  Q/W/P/R packets to `AtariSioNioFrontend` and `RoutingManager`. It is not a
+  SLIP byte channel and does not construct `FujiBusTransport`.
 - **BBC/MS-DOS-style paths** use RS-232/TCP/PTY/USB CDC byte channels directly.
   They do not need the NetSIO adapter because their channel already presents
   raw FujiBus bytes to the common transport.
@@ -819,10 +818,11 @@ BuildProfile current_build_profile();
 
 There are two distinct Atari tracks:
 
-- **Atari NIO mode** uses `TransportKind::FujiBusSlip` over
-  `ChannelKind::SioGpio`. SIO is only the Atari physical connector/UART byte
-  path. The protocol remains the same FujiBus protocol used by BBC, Amiga,
-  MSDOS, Python, POSIX PTY/TCP, and USB CDC clients.
+- **Atari NIO mode** uses `TransportKind::None` with
+  `ChannelKind::SioGpio`. `AtariSioIngress` owns physical SIO frames: it
+  dispatches `D1:`--`D8:` directly to `DiskService` and native device `0x7F`
+  Q/W/P/R packets through `AtariSioNioFrontend` to the common core. It is not
+  a padded SLIP byte channel.
 - **Atari legacy mode** uses `TransportKind::SIO` and the legacy transport
   layer. That path is for future compatibility with unmodified applications
   written against existing Atari FujiNet firmware behavior.
@@ -1503,10 +1503,10 @@ network availability, time synchronization, or other cross-cutting conditions.
    - IWM and IEC transports
    - More complete Atari legacy SIO compatibility profiles beyond the current POSIX PTY/NetSIO paths
 
-2. **Atari NIO FujiBus over SIO**
-   - Complete the `FN_BUILD_ATARI_FUJIBUS_SIO` ESP32 profile
-   - Use `TransportKind::FujiBusSlip` over `ChannelKind::SioGpio`
-   - Keep this separate from Atari legacy SIO compatibility mode
+2. **Atari NIO guest and virtual-SIO parity**
+   - Keep the packet-native `FN_BUILD_ATARI_FUJIBUS_SIO` ingress separate
+     from Atari legacy SIO compatibility mode
+   - Extend matching behavior to the planned virtual NetSIO/Altirra paths
 
 3. **Expanded device set and protocol depth**
    - Printer device

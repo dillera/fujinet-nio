@@ -495,9 +495,10 @@ opaque packet boundaries in one bounded receive slot. Receive, send and local
 reset outcomes are observable separately; ambiguous completion remains blocked
 across local reset. See the [native packet contract](native-packet-contract.md)
 for ownership, bounds and deferred recovery/hardware gates. The Zorro profile
-still uses a byte-only placeholder channel, so native bootstrap fails closed. `AtariSioFujiBusFramer` operates beneath
-Channel, not at the IFramer boundary, and continues carrying SLIP bytes in its
-SIO envelopes. Its composition regression uses the real transport and SlipFramer.
+still uses a byte-only placeholder channel, so native bootstrap fails closed.
+Physical Atari native SIO is deliberately outside `IFramer`: its one ingress
+owns Q/W/P/R transaction framing and routes complete raw packets directly to
+the core; the retired padded SLIP SIO adapter is not built.
 
 Packet and transport mapping/framing tests retain serial coverage. Independent
 literal raw/SLIP expectations in `tests/fujibus_wire_fixtures.h` verify raw
