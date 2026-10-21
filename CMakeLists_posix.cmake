@@ -121,6 +121,7 @@ set(FUJINET_NIO_SOURCES
         src/lib/app_store_service.cpp
         src/lib/application_state_service_init.cpp
         src/lib/atari_sio_disk_frontend.cpp
+        src/lib/atari_sio_nio_frontend.cpp
         src/lib/boot_mount.cpp
         src/lib/bootstrap.cpp
         # build_profile/*.cpp selected below via if/elseif/else
@@ -153,6 +154,7 @@ set(FUJINET_NIO_SOURCES
         src/lib/fuji_bus_packet.cpp
         src/lib/fuji_config_yaml_store.cpp
         src/lib/fuji_device.cpp
+        src/lib/fujibus_packet_codec.cpp
         src/lib/fujibus_transport.cpp
         src/lib/fujinet_core.cpp
         src/lib/fujinet_init.cpp

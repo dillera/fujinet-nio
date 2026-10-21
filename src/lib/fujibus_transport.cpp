@@ -1,6 +1,6 @@
 #include "fujinet/io/transport/fujibus_transport.h"
 #include "fujinet/io/protocol/fuji_bus_packet.h"
-#include "fujinet/io/protocol/wire_device_ids.h"
+#include "fujinet/io/protocol/fujibus_packet_codec.h"
 
 #include "fujinet/core/logging.h"
 #include "fujinet/core/utils.h"
@@ -12,7 +12,6 @@ static constexpr const char* TAG = "fujibus";
 using fujinet::core::log_hexdump;
 using fujinet::io::protocol::FujiBusPacket;
 using fujinet::io::protocol::ByteBuffer;
-using fujinet::io::protocol::WireDeviceId;
 
 void FujiBusTransport::poll()
 {
@@ -33,8 +32,7 @@ bool FujiBusTransport::wait_for_work(std::chrono::milliseconds timeout)
 //
 //  - poll() delegates to _framer which accumulates raw bytes from the Channel.
 //  - receive() asks _framer for the next complete packet.
-//  - FujiBusPacket::fromRaw() parses that into a FujiBusPacket.
-//  - We then map FujiBusPacket → IORequest.
+//  - The shared packet codec parses the raw bytes into an IORequest.
 bool FujiBusTransport::receive(IORequest& outReq)
 {
     ByteBuffer frame;
@@ -43,8 +41,7 @@ bool FujiBusTransport::receive(IORequest& outReq)
         return false;
     }
 
-    auto packetPtr = FujiBusPacket::fromRaw(frame);
-    if (!packetPtr) {
+    if (!protocol::decode_fujibus_request(frame, _nextRequestId, outReq)) {
         FN_LOGW(TAG, "invalid FujiBus frame (response), dropped");
         if (!frame.empty()) {
             FN_LOGW(TAG, "  raw frame (%zu bytes):", frame.size());
@@ -53,24 +50,7 @@ bool FujiBusTransport::receive(IORequest& outReq)
         return false;
     }
 
-    const FujiBusPacket& packet = *packetPtr;
-
-    // Map FujiBusPacket → IORequest.
-    outReq.id        = _nextRequestId++;
-    outReq.deviceId  = static_cast<DeviceID>(packet.device());
-    outReq.type      = RequestType::Command; // FujiBus operations are all "commands" at this level.
-    outReq.command   = static_cast<std::uint16_t>(packet.command());
-
-    outReq.params.clear();
-    outReq.params.reserve(packet.paramCount());
-    for (unsigned int i = 0; i < packet.paramCount(); ++i) {
-        outReq.params.push_back(packet.param(i));
-    }
-
-    outReq.payload.clear();
-    if (const auto& dataOpt = packet.data()) {
-        outReq.payload.insert(outReq.payload.end(), dataOpt->begin(), dataOpt->end());
-    }
+    ++_nextRequestId;
 
     // TODO: change to LOGD to reduce noise after initial debugging
     FN_LOGI(TAG,
@@ -113,21 +93,7 @@ void FujiBusTransport::send(const IOResponse& resp)
     }
 #endif
 
-    // Payload is the device-specific protocol blob.
-    ByteBuffer data(resp.payload.begin(), resp.payload.end());
-
-    // FujiBus uses an 8-bit command on-wire.
-    const auto dev = static_cast<WireDeviceId>(resp.deviceId);
-    const auto cmd = static_cast<std::uint8_t>(resp.command & 0xFF);
-
-    // Convention (transport-local):
-    //  - param[0] = status (u8)
-    //  - data     = device payload (opaque to transport)
-    FujiBusPacket packet(dev, cmd);
-    packet.addParamU8(static_cast<std::uint8_t>(resp.status))
-          .setData(std::move(data));
-
-    ByteBuffer serialized = packet.serializeRaw();
+    ByteBuffer serialized = protocol::encode_fujibus_response(resp);
     // Native framers must observe serialization failure too (empty raw output).
     // Byte-stream framers retain their existing empty-packet no-op behavior.
     _framer.sendPacket(_channel, serialized);

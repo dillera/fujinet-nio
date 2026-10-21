@@ -15,6 +15,7 @@ idf_component_register(
         lib/app_store_service.cpp
         lib/application_state_service_init.cpp
         lib/atari_sio_disk_frontend.cpp
+        lib/atari_sio_nio_frontend.cpp
         lib/boot_mount.cpp
         lib/bootstrap.cpp
         platform/esp32/build_profile.cpp
@@ -47,6 +48,7 @@ idf_component_register(
         lib/fuji_bus_packet.cpp
         lib/fuji_config_yaml_store.cpp
         lib/fuji_device.cpp
+        lib/fujibus_packet_codec.cpp
         lib/fujibus_transport.cpp
         lib/fujinet_core.cpp
         lib/fujinet_init.cpp
