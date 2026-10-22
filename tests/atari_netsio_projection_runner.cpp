@@ -43,7 +43,7 @@ public:
         // before it gets here.  Keep this guard so an accidental different
         // packet cannot look like a successful fixture execution.
         if (request.deviceId != fixture_device_id ||
-            (request.command != 2 && request.command != 3) ||
+            (request.command != 2 && request.command != 3 && request.command != 4) ||
             !request.params.empty() || !request.payload.empty()) {
             return fujinet::io::make_base_response(request, fujinet::io::StatusCode::InvalidRequest);
         }
@@ -55,8 +55,10 @@ public:
         auto response = fujinet::io::make_success_response(request);
         if (request.command == 2) {
             response.payload = {0xaa, 0x55};
-        } else {
+        } else if (request.command == 3) {
             response.payload = {0x33, 0xcc};
+        } else {
+            response.payload = {0x5a, 0xa5};
         }
         return response;
     }
