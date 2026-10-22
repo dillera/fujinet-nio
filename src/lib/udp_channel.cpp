@@ -2,11 +2,38 @@
 #include "fujinet/core/logging.h"
 #include "fujinet/core/utils.h"
 
+#include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace fujinet::net {
 
 static constexpr const char* TAG = "udp";
+
+void log_datagram(const char* direction, const std::uint8_t* data, std::size_t len)
+{
+    if (std::getenv("FUJINET_FULL_PACKET_LOG") != nullptr) {
+        std::string hex;
+        hex.reserve(len * 3U);
+        static constexpr char digits[] = "0123456789ABCDEF";
+        for (std::size_t index = 0; index < len; ++index) {
+            const auto value = data[index];
+            hex.push_back(digits[value >> 4U]);
+            hex.push_back(digits[value & 0x0fU]);
+            if (index + 1U != len) hex.push_back(' ');
+        }
+        FN_LOGD(TAG, "%s %zu bytes: %s", direction, len, hex.c_str());
+        return;
+    }
+
+    char hex_prefix[64];
+    core::format_hex_prefix(data, len, hex_prefix, sizeof(hex_prefix));
+    if (len > 16) {
+        FN_LOGD(TAG, "%s %zu bytes: %s ...", direction, len, hex_prefix);
+    } else {
+        FN_LOGD(TAG, "%s %zu bytes: %s", direction, len, hex_prefix);
+    }
+}
 
 UdpChannel::UdpChannel(IUdpSocketOps& socket_ops, const std::string& host, uint16_t port)
     : socket_ops_(socket_ops)
@@ -120,13 +147,7 @@ std::size_t UdpChannel::read(std::uint8_t* buffer, std::size_t max_len)
         return 0;
     }
 
-    char hex_prefix[64];
-    core::format_hex_prefix(buffer, static_cast<std::size_t>(bytes_read), hex_prefix, sizeof(hex_prefix));
-    if (bytes_read > 16) {
-        FN_LOGD(TAG, "Received %zd bytes: %s ...", bytes_read, hex_prefix);
-    } else {
-        FN_LOGD(TAG, "Received %zd bytes: %s", bytes_read, hex_prefix);
-    }
+    log_datagram("Received", buffer, static_cast<std::size_t>(bytes_read));
 
     return static_cast<std::size_t>(bytes_read);
 }
@@ -137,13 +158,7 @@ void UdpChannel::write(const std::uint8_t* buffer, std::size_t len)
         return;
     }
 
-    char hex_prefix[64];
-    core::format_hex_prefix(buffer, len, hex_prefix, sizeof(hex_prefix));
-    if (len > 16) {
-        FN_LOGD(TAG, "Sending %zu bytes: %s ...", len, hex_prefix);
-    } else {
-        FN_LOGD(TAG, "Sending %zu bytes: %s", len, hex_prefix);
-    }
+    log_datagram("Sending", buffer, len);
 
     const SSize bytes_sent = socket_ops_.sendto(socket_fd_, buffer, len, reinterpret_cast<const struct sockaddr*>(&peer_addr_), peer_addr_len_);
     if (bytes_sent < 0) {

@@ -14,6 +14,7 @@
 #include "fujinet/platform/posix/udp_channel.h"
 
 #include <atomic>
+#include <cstddef>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
@@ -23,12 +24,26 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 namespace {
 
 constexpr const char* TAG = "atari-projection";
 constexpr std::uint8_t fixture_device_id = 1;
 std::atomic_bool stop_requested{false};
+
+std::uint8_t capacity_pattern(std::size_t packet_offset)
+{
+    return static_cast<std::uint8_t>(packet_offset ^ (packet_offset >> 8U) ^ 0xa5U);
+}
+
+bool is_capacity_payload(const std::vector<std::uint8_t>& payload, std::size_t packet_offset)
+{
+    for (std::size_t index = 0; index < payload.size(); ++index) {
+        if (payload[index] != capacity_pattern(packet_offset + index)) return false;
+    }
+    return true;
+}
 
 void request_stop(int)
 {
@@ -42,14 +57,23 @@ public:
         // The literal raw fixture is decoded by the production shared codec
         // before it gets here.  Keep this guard so an accidental different
         // packet cannot look like a successful fixture execution.
+        const bool small_request = request.command >= 2 && request.command <= 4 &&
+                                   request.params.empty() && request.payload.empty();
+        const bool request_511 = request.command == 5 && request.params.empty() &&
+                                 request.payload.size() == 505 &&
+                                 is_capacity_payload(request.payload, 6);
+        const bool request_512 = request.command == 6 && request.params.empty() &&
+                                 request.payload.size() == 506 &&
+                                 is_capacity_payload(request.payload, 6);
+        const bool oversize_response_request = request.command == 7 && request.params.empty() &&
+                                               request.payload.empty();
         if (request.deviceId != fixture_device_id ||
-            (request.command != 2 && request.command != 3 && request.command != 4) ||
-            !request.params.empty() || !request.payload.empty()) {
+            !(small_request || request_511 || request_512 || oversize_response_request)) {
             return fujinet::io::make_base_response(request, fujinet::io::StatusCode::InvalidRequest);
         }
         ++dispatches;
         FN_LOGI(TAG, "core-dispatch fixture route invocation %u", dispatches);
-        if (dispatches > 2) {
+        if (dispatches > 3) {
             return fujinet::io::make_base_response(request, fujinet::io::StatusCode::DeviceBusy);
         }
         auto response = fujinet::io::make_success_response(request);
@@ -57,8 +81,21 @@ public:
             response.payload = {0xaa, 0x55};
         } else if (request.command == 3) {
             response.payload = {0x33, 0xcc};
-        } else {
+        } else if (request.command == 4) {
             response.payload = {0x5a, 0xa5};
+        } else if (request.command == 6) {
+            response.payload.resize(505);
+            for (std::size_t index = 0; index < response.payload.size(); ++index) {
+                response.payload[index] = capacity_pattern(7 + index);
+            }
+        } else if (request.command == 7) {
+            // This intentionally serializes to 513 raw FujiBus bytes.  The
+            // production AtariSioNioFrontend must replace it with its bounded
+            // InternalError response rather than pad, split, or truncate it.
+            response.payload.resize(506);
+            for (std::size_t index = 0; index < response.payload.size(); ++index) {
+                response.payload[index] = capacity_pattern(7 + index);
+            }
         }
         return response;
     }
