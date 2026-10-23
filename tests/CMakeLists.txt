@@ -31,6 +31,22 @@ target_link_libraries(fujinet-nio-atari-netsio-projection
         fujinet-nio
 )
 
+# Story 2.4 public cc65 API guest route.  The production ClockDevice runs
+# against a deterministic test-only POSIX clock; its Atari SIO ingress remains
+# the normal NetSIO/AtariSioNioFrontend implementation.
+add_executable(fujinet-nio-atari-netsio-clock-acceptance
+    atari_netsio_clock_acceptance_runner.cpp
+    ${CMAKE_SOURCE_DIR}/src/platform/posix/time.cpp
+)
+target_compile_definitions(fujinet-nio-atari-netsio-clock-acceptance
+    PRIVATE
+        FN_POSIX_TEST_CLOCK=1
+)
+target_link_libraries(fujinet-nio-atari-netsio-clock-acceptance
+    PRIVATE
+        fujinet-nio
+)
+
 add_executable(fujinet-nio-tests
     run_main.cpp       # contains doctest main
     ${TEST_SOURCES}    # test_smoke.cpp, test_fujipacket.cpp, etc.
@@ -59,7 +75,8 @@ target_include_directories(fujinet-nio-tests
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-add_dependencies(fujinet-nio-tests fujinet-nio-native-test fujinet-nio-atari-netsio-projection)
+add_dependencies(fujinet-nio-tests fujinet-nio-native-test fujinet-nio-atari-netsio-projection
+    fujinet-nio-atari-netsio-clock-acceptance)
 target_compile_definitions(fujinet-nio-tests
     PRIVATE
         FUJINET_NIO_NATIVE_TEST_RUNNER="$<TARGET_FILE:fujinet-nio-native-test>"
