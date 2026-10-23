@@ -13,6 +13,7 @@
 #include "fujinet/io/devices/disk_device.h"
 #include "fujinet/io/devices/network_protocol.h"
 #include "fujinet/io/protocol/wire_device_ids.h"
+#include "fujinet/disk/disk_types.h"
 #include "fujinet/platform/posix/atari_netsio_fujibus_channel.h"
 #include "fujinet/platform/posix/fs_factory.h"
 #include "fujinet/platform/posix/udp_channel.h"
@@ -43,6 +44,10 @@ constexpr std::uint64_t kClockUnixSeconds = 0x0102030405060708ULL;
 constexpr std::string_view kNetworkFixtureUri = "fixture://nio-accept";
 constexpr std::string_view kNetworkWriteMarker = "NET-WRITE-24";
 constexpr std::string_view kNetworkReply = "NET-REPLY-24";
+constexpr std::string_view kDiskFixturePath = "/fnaccept-disk.atr";
+constexpr std::size_t kDiskFixtureSlot = 1; // Public DiskDevice slot 2.
+constexpr std::uint16_t kDiskFixtureSectorSize = 128;
+constexpr std::uint32_t kDiskFixtureSectorCount = 16;
 std::atomic_bool stop_requested{false};
 
 void request_stop(int)
@@ -75,6 +80,11 @@ public:
             FN_LOGI(TAG, "NetworkDevice routed request %u command=%u",
                     _network_dispatches, static_cast<unsigned>(request.command));
         }
+        if (request.deviceId == to_device_id(WireDeviceId::DiskService)) {
+            ++_disk_dispatches;
+            FN_LOGI(TAG, "DiskDevice routed request %u command=%u",
+                    _disk_dispatches, static_cast<unsigned>(request.command));
+        }
         return _target.handleRequest(request);
     }
 
@@ -83,6 +93,7 @@ private:
     std::uint32_t _clock_dispatches{};
     std::uint32_t _file_dispatches{};
     std::uint32_t _network_dispatches{};
+    std::uint32_t _disk_dispatches{};
 };
 
 struct NetworkFixtureState {
@@ -243,6 +254,27 @@ int main(int argc, char** argv)
         FN_LOGE(TAG, "Clock acceptance requires the real DiskDevice for the shared ingress");
         return 1;
     }
+    const auto create_disk = disk->disk_service().create_image(
+        "host", std::string(kDiskFixturePath), fujinet::disk::ImageType::Atr,
+        kDiskFixtureSectorSize, kDiskFixtureSectorCount, true);
+    if (!create_disk.ok()) {
+        FN_LOGE(TAG, "failed to create writable acceptance ATR error=%u",
+                static_cast<unsigned>(create_disk.error));
+        return 1;
+    }
+    fujinet::disk::MountOptions disk_options{};
+    disk_options.readOnlyRequested = false;
+    const auto mount_disk = disk->disk_service().mount(
+        kDiskFixtureSlot, "host", std::string(kDiskFixturePath), disk_options);
+    if (!mount_disk.ok()) {
+        FN_LOGE(TAG, "failed to mount writable acceptance ATR error=%u",
+                static_cast<unsigned>(mount_disk.error));
+        return 1;
+    }
+    FN_LOGI(TAG, "Disk fixture mounted slot=%u path=%s sector_bytes=%u sectors=%u",
+            static_cast<unsigned>(kDiskFixtureSlot + 1), kDiskFixturePath.data(),
+            static_cast<unsigned>(kDiskFixtureSectorSize),
+            static_cast<unsigned>(kDiskFixtureSectorCount));
 
     CountingAcceptanceRoute route(core.routingManager());
     auto udp = fujinet::platform::create_udp_channel(host, static_cast<std::uint16_t>(parsed_port));
@@ -253,7 +285,7 @@ int main(int argc, char** argv)
     auto ingress = fujinet::platform::posix::create_atari_netsio_ingress(
         std::move(udp), disk->disk_service(), route);
 
-    std::cout << "Atari public-API Clock/File/Network acceptance initialized time=0807060504030201"
+    std::cout << "Atari public-API Clock/File/Network/Disk acceptance initialized time=0807060504030201"
               << " storage=" << storage_root << '\n' << std::flush;
     while (!stop_requested.load()) {
         ingress->poll();
