@@ -11,11 +11,13 @@
 #include "fujinet/core/logging.h"
 #include "fujinet/io/core/request_handler.h"
 #include "fujinet/io/devices/disk_device.h"
+#include "fujinet/io/devices/network_protocol.h"
 #include "fujinet/io/protocol/wire_device_ids.h"
 #include "fujinet/platform/posix/atari_netsio_fujibus_channel.h"
 #include "fujinet/platform/posix/fs_factory.h"
 #include "fujinet/platform/posix/udp_channel.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -23,10 +25,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 namespace fujinet::platform {
 void set_test_unix_time_seconds(std::optional<std::uint64_t> frozen);
@@ -36,6 +40,9 @@ namespace {
 
 constexpr const char* TAG = "atari-clock-acceptance";
 constexpr std::uint64_t kClockUnixSeconds = 0x0102030405060708ULL;
+constexpr std::string_view kNetworkFixtureUri = "fixture://nio-accept";
+constexpr std::string_view kNetworkWriteMarker = "NET-WRITE-24";
+constexpr std::string_view kNetworkReply = "NET-REPLY-24";
 std::atomic_bool stop_requested{false};
 
 void request_stop(int)
@@ -63,6 +70,11 @@ public:
             FN_LOGI(TAG, "FileDevice routed request %u command=%u",
                     _file_dispatches, static_cast<unsigned>(request.command));
         }
+        if (request.deviceId == to_device_id(WireDeviceId::NetworkService)) {
+            ++_network_dispatches;
+            FN_LOGI(TAG, "NetworkDevice routed request %u command=%u",
+                    _network_dispatches, static_cast<unsigned>(request.command));
+        }
         return _target.handleRequest(request);
     }
 
@@ -70,6 +82,87 @@ private:
     fujinet::io::IRequestHandler& _target;
     std::uint32_t _clock_dispatches{};
     std::uint32_t _file_dispatches{};
+    std::uint32_t _network_dispatches{};
+};
+
+struct NetworkFixtureState {
+    std::uint32_t opens{};
+    std::uint32_t writes{};
+    std::uint32_t closes{};
+    std::vector<std::uint8_t> last_write;
+};
+
+// This is a deterministic protocol backend registered with the production
+// NetworkDevice. It is deliberately not a replacement device or a protocol
+// transport: the normal NetworkDevice parses all requests, owns the handle,
+// and dispatches to this implementation through ProtocolRegistry.
+class AcceptanceNetworkProtocol final : public fujinet::io::INetworkProtocol {
+public:
+    explicit AcceptanceNetworkProtocol(std::shared_ptr<NetworkFixtureState> state)
+        : _state(std::move(state))
+    {}
+
+    fujinet::io::StatusCode open(const fujinet::io::NetworkOpenRequest& request) override
+    {
+        ++_state->opens;
+        FN_LOGI(TAG, "Network fixture open count=%u method=%u url=%s",
+                _state->opens, static_cast<unsigned>(request.method), request.url.c_str());
+        return request.method == 2 && request.url == kNetworkFixtureUri
+            ? fujinet::io::StatusCode::Ok : fujinet::io::StatusCode::InvalidRequest;
+    }
+
+    fujinet::io::StatusCode write_body(std::uint32_t offset,
+                                       const std::uint8_t* data,
+                                       std::size_t length,
+                                       std::uint16_t& written) override
+    {
+        ++_state->writes;
+        _state->last_write.assign(data, data + length);
+        const bool valid = offset == 0 && length == kNetworkWriteMarker.size() &&
+            std::equal(_state->last_write.begin(), _state->last_write.end(),
+                       kNetworkWriteMarker.begin());
+        FN_LOGI(TAG, "Network fixture write count=%u bytes=%u valid=%u",
+                _state->writes, static_cast<unsigned>(length), valid ? 1u : 0u);
+        written = valid ? static_cast<std::uint16_t>(length) : 0;
+        return valid ? fujinet::io::StatusCode::Ok : fujinet::io::StatusCode::InvalidRequest;
+    }
+
+    fujinet::io::StatusCode read_body(std::uint32_t offset,
+                                      std::uint8_t* out,
+                                      std::size_t capacity,
+                                      std::uint16_t& read,
+                                      bool& eof,
+                                      bool& more_available) override
+    {
+        if (offset > kNetworkReply.size()) {
+            return fujinet::io::StatusCode::InvalidRequest;
+        }
+        const std::size_t available = kNetworkReply.size() - static_cast<std::size_t>(offset);
+        const std::size_t count = std::min(available, capacity);
+        std::copy_n(reinterpret_cast<const std::uint8_t*>(kNetworkReply.data()) + offset,
+                    count, out);
+        read = static_cast<std::uint16_t>(count);
+        eof = count == available;
+        more_available = !eof;
+        return fujinet::io::StatusCode::Ok;
+    }
+
+    fujinet::io::StatusCode info(fujinet::io::NetworkInfo& out) override
+    {
+        out = fujinet::io::NetworkInfo{};
+        return fujinet::io::StatusCode::Ok;
+    }
+
+    void poll() override {}
+
+    void close() override
+    {
+        ++_state->closes;
+        FN_LOGI(TAG, "Network fixture close count=%u", _state->closes);
+    }
+
+private:
+    std::shared_ptr<NetworkFixtureState> _state;
 };
 
 bool option_value(int argc, char** argv, std::string_view name, std::string& out)
@@ -133,6 +226,15 @@ int main(int argc, char** argv)
     }
     fujinet::core::register_clock_device(core);
     fujinet::core::register_file_device(core);
+    auto network_state = std::make_shared<NetworkFixtureState>();
+    fujinet::io::ProtocolRegistry network_registry;
+    if (!network_registry.register_scheme("fixture", [network_state] {
+            return std::make_unique<AcceptanceNetworkProtocol>(network_state);
+        })) {
+        FN_LOGE(TAG, "failed to register deterministic NetworkDevice fixture protocol");
+        return 1;
+    }
+    fujinet::core::register_network_device(core, std::move(network_registry), {});
     fujinet::core::register_disk_device(core);
     auto* disk = dynamic_cast<fujinet::io::DiskDevice*>(
         core.deviceManager().getDevice(
@@ -151,7 +253,7 @@ int main(int argc, char** argv)
     auto ingress = fujinet::platform::posix::create_atari_netsio_ingress(
         std::move(udp), disk->disk_service(), route);
 
-    std::cout << "Atari public-API Clock/File acceptance initialized time=0807060504030201"
+    std::cout << "Atari public-API Clock/File/Network acceptance initialized time=0807060504030201"
               << " storage=" << storage_root << '\n' << std::flush;
     while (!stop_requested.load()) {
         ingress->poll();
