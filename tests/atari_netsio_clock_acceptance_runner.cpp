@@ -13,6 +13,7 @@
 #include "fujinet/io/devices/disk_device.h"
 #include "fujinet/io/protocol/wire_device_ids.h"
 #include "fujinet/platform/posix/atari_netsio_fujibus_channel.h"
+#include "fujinet/platform/posix/fs_factory.h"
 #include "fujinet/platform/posix/udp_channel.h"
 
 #include <atomic>
@@ -20,6 +21,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -41,9 +43,9 @@ void request_stop(int)
     stop_requested.store(true);
 }
 
-class CountingClockRoute final : public fujinet::io::IRequestHandler {
+class CountingAcceptanceRoute final : public fujinet::io::IRequestHandler {
 public:
-    explicit CountingClockRoute(fujinet::io::IRequestHandler& target)
+    explicit CountingAcceptanceRoute(fujinet::io::IRequestHandler& target)
         : _target(target)
     {}
 
@@ -56,12 +58,18 @@ public:
             FN_LOGI(TAG, "ClockDevice routed request %u command=%u",
                     _clock_dispatches, static_cast<unsigned>(request.command));
         }
+        if (request.deviceId == to_device_id(WireDeviceId::FileService)) {
+            ++_file_dispatches;
+            FN_LOGI(TAG, "FileDevice routed request %u command=%u",
+                    _file_dispatches, static_cast<unsigned>(request.command));
+        }
         return _target.handleRequest(request);
     }
 
 private:
     fujinet::io::IRequestHandler& _target;
     std::uint32_t _clock_dispatches{};
+    std::uint32_t _file_dispatches{};
 };
 
 bool option_value(int argc, char** argv, std::string_view name, std::string& out)
@@ -87,8 +95,10 @@ int main(int argc, char** argv)
 {
     std::string host = "127.0.0.1";
     std::string port_text = "9997";
+    std::string storage_root;
     (void)option_value(argc, argv, "--host", host);
     (void)option_value(argc, argv, "--port", port_text);
+    (void)option_value(argc, argv, "--storage-root", storage_root);
 
     unsigned long parsed_port = 0;
     try {
@@ -107,7 +117,22 @@ int main(int argc, char** argv)
 
     fujinet::platform::set_test_unix_time_seconds(kClockUnixSeconds);
     fujinet::core::FujinetCore core;
+    if (storage_root.empty()) {
+        storage_root = (std::filesystem::current_path() / "fujinet-data").string();
+    }
+    std::error_code storage_error;
+    std::filesystem::create_directories(storage_root, storage_error);
+    if (storage_error) {
+        FN_LOGE(TAG, "failed to create persistent FileDevice root: %s", storage_root.c_str());
+        return 1;
+    }
+    auto host_filesystem = fujinet::platform::posix::create_host_filesystem(storage_root);
+    if (!host_filesystem || !core.storageManager().registerFileSystem(std::move(host_filesystem))) {
+        FN_LOGE(TAG, "failed to register persistent host filesystem");
+        return 1;
+    }
     fujinet::core::register_clock_device(core);
+    fujinet::core::register_file_device(core);
     fujinet::core::register_disk_device(core);
     auto* disk = dynamic_cast<fujinet::io::DiskDevice*>(
         core.deviceManager().getDevice(
@@ -117,7 +142,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    CountingClockRoute route(core.routingManager());
+    CountingAcceptanceRoute route(core.routingManager());
     auto udp = fujinet::platform::create_udp_channel(host, static_cast<std::uint16_t>(parsed_port));
     if (!udp) {
         FN_LOGE(TAG, "failed to create NetSIO UDP channel");
@@ -126,7 +151,8 @@ int main(int argc, char** argv)
     auto ingress = fujinet::platform::posix::create_atari_netsio_ingress(
         std::move(udp), disk->disk_service(), route);
 
-    std::cout << "Atari public-API Clock acceptance initialized time=0807060504030201\n" << std::flush;
+    std::cout << "Atari public-API Clock/File acceptance initialized time=0807060504030201"
+              << " storage=" << storage_root << '\n' << std::flush;
     while (!stop_requested.load()) {
         ingress->poll();
         core.tick();
