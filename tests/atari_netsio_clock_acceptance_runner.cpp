@@ -103,6 +103,9 @@ struct NetworkFixtureState {
     std::uint32_t writes{};
     std::uint32_t closes{};
     std::vector<std::uint8_t> last_write;
+    std::vector<std::uint8_t> resident_pending;
+    std::uint32_t resident_expected_commit_offset{};
+    std::uint32_t resident_commits{};
 };
 
 // This is a deterministic protocol backend registered with the production
@@ -144,7 +147,24 @@ public:
         for (std::size_t i = 0; resident_write && i < length; ++i) {
             resident_write = _state->last_write[i] == static_cast<std::uint8_t>('A');
         }
-        const bool valid = resident_write || (offset == 0 && length == kNetworkWriteMarker.size() &&
+        const bool resident_partial = offset == 0 && length == 3 &&
+            _state->last_write == std::vector<std::uint8_t>{'B', 'C', 'D'};
+        if (resident_write || resident_partial) {
+            _state->resident_pending = _state->last_write;
+            _state->resident_expected_commit_offset = static_cast<std::uint32_t>(length);
+        }
+        const bool resident_commit = length == 0 && !_state->resident_pending.empty() &&
+            offset == _state->resident_expected_commit_offset;
+        if (resident_commit) {
+            ++_state->resident_commits;
+            FN_LOGI(TAG, "Resident N: fixture committed body count=%u bytes=%u",
+                    _state->resident_commits,
+                    static_cast<unsigned>(_state->resident_pending.size()));
+            _state->resident_pending.clear();
+            _state->resident_expected_commit_offset = 0;
+        }
+        const bool valid = resident_write || resident_partial || resident_commit ||
+            (offset == 0 && length == kNetworkWriteMarker.size() &&
             std::equal(_state->last_write.begin(), _state->last_write.end(),
                        kNetworkWriteMarker.begin()));
         FN_LOGI(TAG, "Network fixture write count=%u offset=%u bytes=%u first=%02x second=%02x last=%02x valid=%u",
