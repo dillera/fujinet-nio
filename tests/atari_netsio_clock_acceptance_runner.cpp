@@ -42,6 +42,7 @@ namespace {
 constexpr const char* TAG = "atari-clock-acceptance";
 constexpr std::uint64_t kClockUnixSeconds = 0x0102030405060708ULL;
 constexpr std::string_view kNetworkFixtureUri = "fixture://nio-accept";
+constexpr std::string_view kResidentOpenFixtureUri = "fixture://resident-open";
 constexpr std::string_view kNetworkWriteMarker = "NET-WRITE-24";
 constexpr std::string_view kNetworkReply = "NET-REPLY-24";
 constexpr std::string_view kDiskFixturePath = "/fnaccept-disk.atr";
@@ -118,7 +119,12 @@ public:
         ++_state->opens;
         FN_LOGI(TAG, "Network fixture open count=%u method=%u url=%s",
                 _state->opens, static_cast<unsigned>(request.method), request.url.c_str());
-        return request.method == 2 && request.url == kNetworkFixtureUri
+        const bool public_acceptance_open = request.method == 2 && request.url == kNetworkFixtureUri;
+        const bool resident_open = request.method == 1 && request.url == kResidentOpenFixtureUri;
+        if (resident_open) {
+            FN_LOGI(TAG, "Resident N: fixture accepted GET open");
+        }
+        return public_acceptance_open || resident_open
             ? fujinet::io::StatusCode::Ok : fujinet::io::StatusCode::InvalidRequest;
     }
 
