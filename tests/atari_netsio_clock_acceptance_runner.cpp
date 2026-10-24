@@ -43,6 +43,7 @@ constexpr const char* TAG = "atari-clock-acceptance";
 constexpr std::uint64_t kClockUnixSeconds = 0x0102030405060708ULL;
 constexpr std::string_view kNetworkFixtureUri = "fixture://nio-accept";
 constexpr std::string_view kResidentOpenFixtureUri = "fixture://resident-open";
+constexpr std::string_view kResidentWriteFixtureUri = "fixture://resident-write";
 constexpr std::string_view kNetworkWriteMarker = "NET-WRITE-24";
 constexpr std::string_view kNetworkReply = "NET-REPLY-24";
 constexpr std::string_view kDiskFixturePath = "/fnaccept-disk.atr";
@@ -121,10 +122,14 @@ public:
                 _state->opens, static_cast<unsigned>(request.method), request.url.c_str());
         const bool public_acceptance_open = request.method == 2 && request.url == kNetworkFixtureUri;
         const bool resident_open = request.method == 1 && request.url == kResidentOpenFixtureUri;
+        const bool resident_write = request.method == 3 && request.url == kResidentWriteFixtureUri;
         if (resident_open) {
             FN_LOGI(TAG, "Resident N: fixture accepted GET open");
         }
-        return public_acceptance_open || resident_open
+        if (resident_write) {
+            FN_LOGI(TAG, "Resident N: fixture accepted PUT open");
+        }
+        return public_acceptance_open || resident_open || resident_write
             ? fujinet::io::StatusCode::Ok : fujinet::io::StatusCode::InvalidRequest;
     }
 
@@ -135,11 +140,18 @@ public:
     {
         ++_state->writes;
         _state->last_write.assign(data, data + length);
-        const bool valid = offset == 0 && length == kNetworkWriteMarker.size() &&
+        bool resident_write = offset == 0 && length == 128;
+        for (std::size_t i = 0; resident_write && i < length; ++i) {
+            resident_write = _state->last_write[i] == static_cast<std::uint8_t>('A');
+        }
+        const bool valid = resident_write || (offset == 0 && length == kNetworkWriteMarker.size() &&
             std::equal(_state->last_write.begin(), _state->last_write.end(),
-                       kNetworkWriteMarker.begin());
-        FN_LOGI(TAG, "Network fixture write count=%u bytes=%u valid=%u",
-                _state->writes, static_cast<unsigned>(length), valid ? 1u : 0u);
+                       kNetworkWriteMarker.begin()));
+        FN_LOGI(TAG, "Network fixture write count=%u offset=%u bytes=%u first=%02x second=%02x last=%02x valid=%u",
+                _state->writes, static_cast<unsigned>(offset), static_cast<unsigned>(length),
+                length ? _state->last_write.front() : 0u,
+                length > 1 ? _state->last_write[1] : 0u,
+                length ? _state->last_write.back() : 0u, valid ? 1u : 0u);
         written = valid ? static_cast<std::uint16_t>(length) : 0;
         return valid ? fujinet::io::StatusCode::Ok : fujinet::io::StatusCode::InvalidRequest;
     }
