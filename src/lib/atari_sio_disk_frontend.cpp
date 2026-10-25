@@ -106,7 +106,8 @@ AtariSioDiskFrontend::Result AtariSioDiskFrontend::begin(const std::array<std::u
     const std::uint16_t sector = static_cast<std::uint16_t>(command[2] | (static_cast<std::uint16_t>(command[3]) << 8));
     switch (command[1]) {
     case STATUS:
-        if (sector != 0) return Result{{NAK}, 0, false};
+        // STATUS has no sector argument. MyDOS 4.53/4 retains AUX $0028
+        // when polling the drive; ignore both AUX bytes for this command.
         return status(slot);
     case READ:
         return read(slot, sector);

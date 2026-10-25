@@ -1561,3 +1561,10 @@ non-transport work source waits on the existing UART event queue. The native
 `0x7F` endpoint is the same ingress's packet-native `AtariSioNioFrontend`;
 it dispatches complete Q/W/P/R FujiBus packets through `RoutingManager`
 without affecting disk routing.
+
+Disk STATUS (`0x53`) ignores AUX1/AUX2. They are not a sector argument;
+MyDOS 4.53/4 leaves `$0028` there while polling D1 during startup. This
+compatibility extension leaves the four-byte virtual-drive STATUS payload
+unchanged, including its `$0f` timeout byte. READ/PUT/WRITE still interpret
+AUX as a one-based sector number. The native NIO packet protocol and its
+Python/C clients are unaffected.

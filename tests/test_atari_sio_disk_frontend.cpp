@@ -127,6 +127,9 @@ TEST_CASE("Atari SIO disk frontend follows fixture command phases and classic-25
     auto invalid = frontend.begin(command(0x31, 0x52, 0));
     REQUIRE(invalid.bytes == std::vector<std::uint8_t>{0x41, 0x45});
     auto status = frontend.begin(command(0x31, 0x53, 0));
+    for (const auto aux : {0x0028, 0x0015, 0xffff}) {
+        REQUIRE(frontend.begin(command(0x31, 0x53, aux)).bytes == status.bytes);
+    }
     REQUIRE(status.bytes == std::vector<std::uint8_t>{0x41, 0x43, 0x24, 0xcf, 0x0f, 0x00,
         fujinet::io::AtariSioDiskFrontend::checksum(status.bytes.data() + 2, 4)});
 }
