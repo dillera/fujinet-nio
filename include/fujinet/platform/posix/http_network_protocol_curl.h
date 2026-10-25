@@ -2,6 +2,17 @@
 
 #include "fujinet/io/devices/network_protocol.h"
 
+#include <string_view>
+
+namespace fujinet::platform::posix {
+
+// True when curl's TLS library (curl_version_info()->ssl_version) is the
+// OpenSSL release opensslVersion names (OpenSSL_version()): only then can
+// curl's SSL_CTX be given to our OpenSSL calls.
+bool curl_tls_is_openssl(std::string_view curlSslVersion, std::string_view opensslVersion);
+
+} // namespace fujinet::platform::posix
+
 #if FN_WITH_CURL == 1
 
 #include <cstdint>

@@ -10,13 +10,14 @@ It is intended as a concise engineering reference and CI/local verification chec
   - Enables the POSIX HTTP/HTTPS backend (`HttpNetworkProtocolCurl`)
 - `FN_WITH_OPENSSL`
   - Enables the POSIX TLS stream backend (`TlsNetworkProtocolPosix`)
-  - Also enables POSIX additive FujiNet test-CA injection for the curl HTTPS backend
+  - Lets the curl HTTPS backend add the FujiNet test CA to curl's own `SSL_CTX`, when curl uses this same OpenSSL
 
 ## FujiNet Test CA Trust
 
 HTTPS/TLS trust for the FujiNet test CA is now built into the supported runtime paths:
 
 - POSIX: additive trust, alongside normal/public trust roots
+  - The curl HTTPS backend adds the test CA to curl's `SSL_CTX` only when curl's TLS library is the OpenSSL NIO links (`curl_version_info()->ssl_version` names the same release). Otherwise it hands curl a CA bundle (`CURLOPT_CAINFO_BLOB`): curl's default CA file followed by the test CA. macOS's system curl is the common case: it runs on LibreSSL, so its `SSL_CTX` cannot go to Homebrew OpenSSL.
 - ESP32: built-in test-CA trust path for local FujiNet test services
 - URL query hacks such as `?testca=1` are intentionally not part of the supported workflow
 
@@ -31,7 +32,7 @@ Useful compile combinations to keep healthy:
 2. `FN_WITH_CURL=1`, `FN_WITH_OPENSSL=0`
    - HTTP/HTTPS backend enabled
    - TLS stream backend disabled
-   - FujiNet test-CA additive injection for curl HTTPS is unavailable in this build
+   - curl HTTPS gets the FujiNet test CA as a CA bundle (`CURLOPT_CAINFO_BLOB`, curl 7.84+)
 
 3. `FN_WITH_CURL=0`, `FN_WITH_OPENSSL=1`
    - No POSIX HTTP/HTTPS backend
