@@ -150,7 +150,13 @@ public:
         }
         const bool resident_partial = offset == 0 && length == 3 &&
             _state->last_write == std::vector<std::uint8_t>{'B', 'C', 'D'};
-        if (resident_write || resident_partial) {
+        const bool basic_partial = offset == 0 &&
+            _state->last_write == std::vector<std::uint8_t>{'B', 'C', 'D', 0x9b};
+        const bool basic_boundary = offset == 0 && length == 128 &&
+            _state->last_write.back() == 0x9b &&
+            std::all_of(_state->last_write.begin(), _state->last_write.end() - 1,
+                        [](std::uint8_t byte) { return byte == 'A'; });
+        if (resident_write || resident_partial || basic_partial || basic_boundary) {
             _state->resident_pending = _state->last_write;
             _state->resident_expected_commit_offset = static_cast<std::uint32_t>(length);
         }
@@ -164,7 +170,7 @@ public:
             _state->resident_pending.clear();
             _state->resident_expected_commit_offset = 0;
         }
-        const bool valid = resident_write || resident_partial || resident_commit ||
+        const bool valid = resident_write || resident_partial || basic_partial || basic_boundary || resident_commit ||
             (offset == 0 && length == kNetworkWriteMarker.size() &&
             std::equal(_state->last_write.begin(), _state->last_write.end(),
                        kNetworkWriteMarker.begin()));
