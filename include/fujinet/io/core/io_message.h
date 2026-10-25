@@ -43,6 +43,10 @@ struct IORequest
     // For FujiBus, this is derived from the WireDeviceId on the wire.
     DeviceID    deviceId{}; 
 
+    // In-process ingress identity; never encoded on the wire. A transport
+    // that can detect a host reset uses this to reclaim only its sessions.
+    const void* clientOwner{nullptr};
+
     // Broad operation type; may be ignored by some protocols/devices.
     RequestType type{RequestType::Command};
 

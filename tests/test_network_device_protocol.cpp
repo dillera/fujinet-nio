@@ -9,6 +9,46 @@
 
 using namespace fujinet::tests::netdev;
 
+TEST_CASE("NetworkDevice reset reclaims only sessions owned by the resetting ingress")
+{
+    NetworkDevice dev(make_stub_registry_http_only());
+    const auto deviceId = to_device_id(WireDeviceId::NetworkService);
+    int clientA = 0, clientB = 0;
+    auto open = [&](const void* owner, std::uint8_t method, std::uint8_t flags) {
+        IORequest req{};
+        req.deviceId = deviceId;
+        req.clientOwner = owner;
+        req.command = 1;
+        req.payload = to_vec(open_payload("http://example.com/reset", method, flags, 0, {}));
+        auto resp = dev.handle(req);
+        REQUIRE(resp.status == StatusCode::Ok);
+        REQUIRE(resp.payload.size() >= 6);
+        return static_cast<std::uint16_t>(resp.payload[4] | (resp.payload[5] << 8));
+    };
+    const auto readA = open(&clientA, 1, 0);
+    const auto outputA = open(&clientA, 3, 4);
+    const auto readB = open(&clientB, 1, 0);
+    const auto unowned = open(nullptr, 1, 0);
+    dev.resetClient(nullptr);
+    CHECK(info_req(dev, deviceId, readA).status == StatusCode::Ok);
+    dev.resetClient(&clientA);
+    CHECK(info_req(dev, deviceId, readA).status == StatusCode::InvalidRequest);
+    CHECK(info_req(dev, deviceId, outputA).status == StatusCode::InvalidRequest);
+    CHECK(info_req(dev, deviceId, readB).status == StatusCode::Ok);
+    CHECK(info_req(dev, deviceId, unowned).status == StatusCode::Ok);
+    dev.resetClient(&clientA);
+    CHECK(info_req(dev, deviceId, readB).status == StatusCode::Ok);
+    const auto replacement = open(&clientB, 1, 0);
+    dev.resetClient(&clientA);
+    CHECK(info_req(dev, deviceId, replacement).status == StatusCode::Ok);
+    for (unsigned i = 0; i < 8; ++i) {
+        const auto next = open(&clientA, 1, 0);
+        dev.resetClient(&clientA);
+        CHECK(info_req(dev, deviceId, next).status == StatusCode::InvalidRequest);
+        CHECK(info_req(dev, deviceId, readB).status == StatusCode::Ok);
+    }
+}
+
 TEST_CASE("NetworkDevice v1: Open -> Info -> Read -> Close (stub backend)")
 {
     auto reg = make_stub_registry_http_only();

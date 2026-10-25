@@ -95,6 +95,14 @@ void NetworkDevice::poll()
     }
 }
 
+void NetworkDevice::resetClient(const void* owner)
+{
+    if (!owner) return;
+    for (auto& session : _sessions) {
+        if (session.active && session.clientOwner == owner) close_and_free(session);
+    }
+}
+
 static void write_common_prefix(std::string& out, std::uint8_t version, std::uint8_t flags)
 {
     netproto::write_u8(out, version);
@@ -637,6 +645,7 @@ IOResponse NetworkDevice::handle(const IORequest& request)
         
             // Fill the reserved session now that open succeeded.
             slot->method = method;
+            slot->clientOwner = request.clientOwner;
             slot->flags = flags;
             slot->url = openReq.url;
             slot->proto = std::move(proto);

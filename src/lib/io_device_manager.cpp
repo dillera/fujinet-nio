@@ -53,6 +53,13 @@ IOResponse IODeviceManager::handleRequest(const IORequest& request)
     return devResp;
 }
 
+void IODeviceManager::resetClient(DeviceID id, const void* owner)
+{
+    if (owner) {
+        if (auto* device = getDevice(id)) device->resetClient(owner);
+    }
+}
+
 void IODeviceManager::pollDevices()
 {
     for (auto& [id, dev] : _devices) {

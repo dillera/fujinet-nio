@@ -23,6 +23,9 @@ public:
     };
 
     explicit AtariSioNioFrontend(IRequestHandler& handler) : _handler(handler) {}
+    ~AtariSioNioFrontend();
+    AtariSioNioFrontend(const AtariSioNioFrontend&) = delete;
+    AtariSioNioFrontend& operator=(const AtariSioNioFrontend&) = delete;
 
     Result begin(const std::array<std::uint8_t, command_bytes>& command);
     Result complete_write(const std::uint8_t* data, std::size_t data_bytes);
@@ -30,6 +33,9 @@ public:
     // This must not discard a response already waiting for terminal R.
     void abort_write();
     void reset();
+    // A host reset abandons the Atari client's network sessions. This is
+    // distinct from clearing an interrupted W/P/R transaction.
+    void reset_host();
 
     static std::uint8_t checksum(const std::uint8_t* data, std::size_t len);
 

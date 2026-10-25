@@ -152,6 +152,40 @@ std::vector<std::uint8_t> full_size_request()
 
 } // namespace
 
+TEST_CASE("Atari host reset reclaims its ingress owner without treating transaction reset as host reset")
+{
+    struct Route final : fujinet::io::IRequestHandler {
+        const void* openedOwner = nullptr;
+        const void* resetOwner = nullptr;
+        fujinet::io::DeviceID resetDevice = 0;
+        unsigned resets = 0;
+        fujinet::io::IOResponse handleRequest(const fujinet::io::IORequest& request) override {
+            openedOwner = request.clientOwner;
+            return fujinet::io::make_success_response(request);
+        }
+        void resetClient(fujinet::io::DeviceID device, const void* owner) override {
+            resetDevice = device;
+            resetOwner = owner;
+            ++resets;
+        }
+    } route;
+    {
+        AtariSioNioFrontend frontend(route);
+        const auto write = fixture("w-core-dispatch");
+        REQUIRE(frontend.begin(write.frame).accepted);
+        const auto frame = data_frame(write.payload);
+        REQUIRE(frontend.complete_write(frame.data(), frame.size()).accepted);
+        REQUIRE(route.openedOwner != nullptr);
+        frontend.reset();
+        CHECK(route.resets == 0);
+        frontend.reset_host();
+        CHECK(route.resets == 1);
+        CHECK(route.resetDevice == 0xfd);
+        CHECK(route.resetOwner == route.openedOwner);
+    }
+    CHECK(route.resets == 2); // Destruction cannot leave an owner identity behind.
+}
+
 TEST_CASE("Atari native NIO frontend dispatches the literal core packet once and consumes R safely")
 {
     Harness harness;

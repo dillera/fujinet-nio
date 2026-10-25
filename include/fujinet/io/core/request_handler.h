@@ -12,6 +12,7 @@ public:
     // Handle a single request and return a response.
     // Implementations may route to devices, modes, etc.
     virtual IOResponse handleRequest(const IORequest& request) = 0;
+    virtual void resetClient(DeviceID, const void*) {}
 };
 
 } // namespace fujinet::io

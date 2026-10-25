@@ -15,4 +15,10 @@ IOResponse RoutingManager::handleRequest(const IORequest& request)
     return _deviceManager.handleRequest(request);
 }
 
+void RoutingManager::resetClient(DeviceID id, const void* owner)
+{
+    if (_overrideHandler) _overrideHandler->resetClient(id, owner);
+    _deviceManager.resetClient(id, owner);
+}
+
 } // namespace fujinet::io

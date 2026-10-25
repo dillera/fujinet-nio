@@ -32,6 +32,7 @@ public:
 
     // IRequestHandler implementation.
     IOResponse handleRequest(const IORequest& request) override;
+    void resetClient(DeviceID id, const void* owner) override;
 
     // Called periodically by higher-level code (e.g. IOService)
     // to let devices do background work.

@@ -16,6 +16,7 @@ public:
 
     // Handle a single request from the host.
     virtual IOResponse handle(const IORequest& request) = 0;
+    virtual void resetClient(const void*) {}
 
     // Called periodically by IODeviceManager / IOService.
     // Devices that don't need polling can ignore this (default no-op).

@@ -15,6 +15,11 @@ constexpr std::uint8_t feature_flags = 0;
 
 } // namespace
 
+AtariSioNioFrontend::~AtariSioNioFrontend()
+{
+    reset_host();
+}
+
 std::uint8_t AtariSioNioFrontend::checksum(const std::uint8_t* data, std::size_t len)
 {
     std::uint8_t result = 0;
@@ -116,6 +121,7 @@ AtariSioNioFrontend::Result AtariSioNioFrontend::complete_write(const std::uint8
         return reject();
     }
     ++_next_request_id;
+    request.clientOwner = this;
 
     std::vector<std::uint8_t> response =
         protocol::encode_fujibus_response(_handler.handleRequest(request));
@@ -143,6 +149,12 @@ void AtariSioNioFrontend::reset()
     _state = State::Idle;
     _write_bytes = 0;
     _response.clear();
+}
+
+void AtariSioNioFrontend::reset_host()
+{
+    reset();
+    _handler.resetClient(protocol::to_device_id(protocol::WireDeviceId::NetworkService), this);
 }
 
 } // namespace fujinet::io

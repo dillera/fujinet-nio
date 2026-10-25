@@ -237,7 +237,7 @@ private:
     void reset_device()
     {
         router.reset_command_collection();
-        nio.reset();
+        nio.reset_host();
         command_frame.clear();
         pending_write.clear();
         pending_write_bytes = 0;

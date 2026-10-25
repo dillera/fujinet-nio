@@ -112,6 +112,12 @@ public:
         return _target.handleRequest(request);
     }
 
+    void resetClient(fujinet::io::DeviceID id, const void* owner) override
+    {
+        FN_LOGI(TAG, "Atari host reset reclaiming NetworkDevice sessions");
+        _target.resetClient(id, owner);
+    }
+
 private:
     fujinet::io::IRequestHandler& _target;
     fujinet::io::NetworkDevice* _network;

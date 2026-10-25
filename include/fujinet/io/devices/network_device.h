@@ -45,6 +45,7 @@ public:
 
     IOResponse handle(const IORequest& request) override;
     void poll() override;
+    void resetClient(const void* owner) override;
 
 private:
     // Allow out-of-band diagnostics (console) without polluting the on-wire API surface.
@@ -59,6 +60,7 @@ private:
 
     struct Session {
         bool active{false};
+        const void* clientOwner{nullptr};
         std::uint8_t generation{0};
 
         std::uint8_t method{0};
@@ -135,6 +137,7 @@ private:
             s.proto.reset();
         }
         s.active = false;
+        s.clientOwner = nullptr;
         s.method = 0;
         s.flags = 0;
         s.url.clear();
