@@ -43,6 +43,7 @@ constexpr const char* TAG = "atari-clock-acceptance";
 constexpr std::uint64_t kClockUnixSeconds = 0x0102030405060708ULL;
 constexpr std::string_view kNetworkFixtureUri = "fixture://nio-accept";
 constexpr std::string_view kResidentOpenFixtureUri = "fixture://resident-open";
+constexpr std::string_view kResidentPostFixtureUri = "fixture://resident-post";
 constexpr std::string_view kResidentWriteFixtureUri = "fixture://resident-write";
 constexpr std::string_view kNetworkWriteMarker = "NET-WRITE-24";
 constexpr std::string_view kNetworkReply = "NET-REPLY-24";
@@ -127,13 +128,19 @@ public:
         const bool public_acceptance_open = request.method == 2 && request.url == kNetworkFixtureUri;
         const bool resident_open = request.method == 1 && request.url == kResidentOpenFixtureUri;
         const bool resident_write = request.method == 3 && request.url == kResidentWriteFixtureUri;
+        const bool resident_post = request.method == 2 && request.flags == 4 && request.url == kResidentPostFixtureUri;
+        _resident_post = resident_post;
         if (resident_open) {
             FN_LOGI(TAG, "Resident N: fixture accepted GET open");
         }
         if (resident_write) {
             FN_LOGI(TAG, "Resident N: fixture accepted PUT open");
+            FN_LOGI(TAG, "Resident N: PUT flags=%02x", static_cast<unsigned>(request.flags));
         }
-        return public_acceptance_open || resident_open || resident_write
+        if (resident_post) {
+            FN_LOGI(TAG, "Resident N: fixture accepted POST open flags=04");
+        }
+        return public_acceptance_open || resident_open || resident_write || resident_post
             ? fujinet::io::StatusCode::Ok : fujinet::io::StatusCode::InvalidRequest;
     }
 
@@ -156,7 +163,9 @@ public:
             _state->last_write.back() == 0x9b &&
             std::all_of(_state->last_write.begin(), _state->last_write.end() - 1,
                         [](std::uint8_t byte) { return byte == 'A'; });
-        if (resident_write || resident_partial || basic_partial || basic_boundary) {
+        const bool basic_post = _resident_post && offset == 0 &&
+            _state->last_write == std::vector<std::uint8_t>{'P', 'O', 'S', 'T', 0x9b};
+        if (resident_write || resident_partial || basic_partial || basic_boundary || basic_post) {
             _state->resident_pending = _state->last_write;
             _state->resident_expected_commit_offset = static_cast<std::uint32_t>(length);
         }
@@ -170,7 +179,7 @@ public:
             _state->resident_pending.clear();
             _state->resident_expected_commit_offset = 0;
         }
-        const bool valid = resident_write || resident_partial || basic_partial || basic_boundary || resident_commit ||
+        const bool valid = resident_write || resident_partial || basic_partial || basic_boundary || basic_post || resident_commit ||
             (offset == 0 && length == kNetworkWriteMarker.size() &&
             std::equal(_state->last_write.begin(), _state->last_write.end(),
                        kNetworkWriteMarker.begin()));
@@ -190,6 +199,10 @@ public:
                                       bool& eof,
                                       bool& more_available) override
     {
+        if (_resident_post) {
+            FN_LOGI(TAG, "Resident N: POST response read offset=%u commits=%u", static_cast<unsigned>(offset), _state->resident_commits);
+            if (_state->resident_commits != 1 || offset != 0) return fujinet::io::StatusCode::InvalidRequest;
+        }
         if (offset > kNetworkReply.size()) {
             return fujinet::io::StatusCode::InvalidRequest;
         }
@@ -219,6 +232,7 @@ public:
 
 private:
     std::shared_ptr<NetworkFixtureState> _state;
+    bool _resident_post = false;
 };
 
 bool option_value(int argc, char** argv, std::string_view name, std::string& out)
@@ -357,9 +371,17 @@ int main(int argc, char** argv)
 
     std::cout << "Atari public-API Clock/File/Network/Disk acceptance initialized time=0807060504030201"
               << " storage=" << storage_root << '\n' << std::flush;
+    auto next_device_poll = std::chrono::steady_clock::now();
     while (!stop_requested.load()) {
         ingress->poll();
-        core.tick();
+        // NetworkDevice's upload timeout is expressed in 50 ms poll ticks.
+        // Keep servicing NetSIO promptly without aging sessions on every
+        // iteration of this runner's much faster ingress loop.
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= next_device_poll) {
+            core.tick();
+            next_device_poll = now + std::chrono::milliseconds(50);
+        }
         if (!ingress->wait_for_work(std::chrono::milliseconds(2))) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
