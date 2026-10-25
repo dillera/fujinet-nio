@@ -47,6 +47,7 @@ constexpr std::string_view kResidentWriteFixtureUri = "fixture://resident-write"
 constexpr std::string_view kNetworkWriteMarker = "NET-WRITE-24";
 constexpr std::string_view kNetworkReply = "NET-REPLY-24";
 constexpr std::string_view kDiskFixturePath = "/fnaccept-disk.atr";
+constexpr std::string_view kBootAtrPath = "/boot/atari/autorun.atr";
 constexpr std::size_t kDiskFixtureSlot = 1; // Public DiskDevice slot 2.
 constexpr std::uint16_t kDiskFixtureSectorSize = 128;
 constexpr std::uint32_t kDiskFixtureSectorCount = 16;
@@ -231,6 +232,14 @@ bool option_value(int argc, char** argv, std::string_view name, std::string& out
     return false;
 }
 
+bool has_option(int argc, char** argv, std::string_view name)
+{
+    for (int index = 1; index < argc; ++index) {
+        if (std::string_view(argv[index]) == name) return true;
+    }
+    return false;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -291,6 +300,23 @@ int main(int argc, char** argv)
     if (!disk) {
         FN_LOGE(TAG, "Clock acceptance requires the real DiskDevice for the shared ingress");
         return 1;
+    }
+    // The public-API fixture normally only needs its writable slot.  The
+    // resident BASIC acceptance additionally LOADs a tokenized program from
+    // D1, through the same production DiskService used by the NetSIO boot
+    // path.  Mount it here rather than bypassing SIO with a host-path load.
+    if (has_option(argc, argv, "--boot-atr")) {
+        fujinet::disk::MountOptions boot_options{};
+        boot_options.readOnlyRequested = true;
+        const auto mount_boot = disk->disk_service().mount(
+            0, "host", std::string(kBootAtrPath), boot_options);
+        if (!mount_boot.ok()) {
+            FN_LOGE(TAG, "failed to mount readonly BASIC program ATR error=%u",
+                    static_cast<unsigned>(mount_boot.error));
+            return 1;
+        }
+        FN_LOGI(TAG, "BASIC program ATR mounted slot=1 path=%s readonly=%u", kBootAtrPath.data(),
+                boot_options.readOnlyRequested ? 1u : 0u);
     }
     const auto create_disk = disk->disk_service().create_image(
         "host", std::string(kDiskFixturePath), fujinet::disk::ImageType::Atr,
