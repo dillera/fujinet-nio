@@ -212,3 +212,21 @@ TEST_CASE("Atari SIO ingress router rejects malformed or interrupted native data
     CHECK(harness.replies.back() == std::vector<std::uint8_t>{'A', 'C'});
     CHECK(harness.device->requests.size() == 2);
 }
+
+TEST_CASE("Atari SIO ignores unowned IDs and preserves owned errors and recovery")
+{
+    Harness harness;
+    for (const auto id : {0x00, 0x30, 0x39, 0x7e, 0x80, 0xff}) {
+        auto frame = command(static_cast<std::uint8_t>(id), 'R', 1);
+        feed(harness.router, frame);
+        frame.back() ^= 0xff;
+        feed(harness.router, frame);
+    }
+    CHECK(harness.replies.empty());
+    feed(harness.router, command(0x31, '?', 0));
+    REQUIRE(harness.replies.size() == 1);
+    CHECK(harness.replies.back() == std::vector<std::uint8_t>{'N'});
+    feed(harness.router, command(0x31, 'R', 1));
+    REQUIRE(harness.replies.size() == 2);
+    CHECK(harness.replies.back().size() == 131);
+}
