@@ -99,6 +99,16 @@ jobs:
           path: ${{ env.WORKSPACE_DIR }}/repos/MyPicoDOS
           token: ${{ secrets.NIO_WORKSPACE_TOKEN || github.token }}
 
+      # The Amiga default disks are built from the driver, nio-core-apps,
+      # nio-apps and nio-config.
+      - name: Checkout fujinet-nio-driver
+        uses: actions/checkout@v4
+        with:
+          repository: markjfisher/fujinet-nio-driver
+          path: ${{ env.WORKSPACE_DIR }}/repos/fujinet-nio-driver
+          fetch-depth: 0
+          token: ${{ secrets.NIO_WORKSPACE_TOKEN || github.token }}
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -128,6 +138,30 @@ jobs:
             https://github.com/CycoPH/atasm.git /tmp/atasm
           make -C /tmp/atasm/src prog
           echo "/tmp/atasm/src" >> "$GITHUB_PATH"
+
+      # The Amiga builds use bebbo's amiga-gcc from /opt/amiga/bin (scripts/env.sh).
+      # The pinned image's binaries need a newer glibc than the runner has, so
+      # each tool there is a wrapper that runs it in the image, with $HOME (the
+      # workspace) and /tmp mounted at the same paths.
+      - name: Install amiga-gcc
+        env:
+          AMIGA_GCC_IMAGE: stefanreinauer/amiga-gcc:gcc-v6.5.0b-20261011@sha256:cafc64bc34a5450d858cf27d6f399222bed241fced3c093123b9ec764a82f26f
+        run: |
+          docker pull --platform linux/amd64 "$AMIGA_GCC_IMAGE"
+          sudo mkdir -p /opt/amiga/bin
+          for tool in $(docker run --rm --platform linux/amd64 "$AMIGA_GCC_IMAGE" ls /opt/amiga/bin); do
+            sudo tee "/opt/amiga/bin/$tool" > /dev/null <<WRAPPER
+          #!/bin/sh
+          exec docker run --rm -i --platform linux/amd64 -u "\$(id -u):\$(id -g)" \\
+            -v "\$HOME:\$HOME" -v /tmp:/tmp -w "\$PWD" "$AMIGA_GCC_IMAGE" "$tool" "\$@"
+          WRAPPER
+            sudo chmod +x "/opt/amiga/bin/$tool"
+          done
+          /opt/amiga/bin/m68k-amigaos-gcc --version
+
+      # scripts/amiga runs the ADF tools (amitools) through uv.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.0
 
       # fn-rom's SSD builder needs basictool (BBC BASIC tokeniser) and dfstool.
       # Pinned so the boot disks don't change with upstream heads.
