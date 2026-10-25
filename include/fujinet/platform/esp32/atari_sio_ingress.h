@@ -7,6 +7,7 @@
 #include "fujinet/io/atari_sio_transaction_boundary.h"
 #include "fujinet/io/core/work_source.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -38,6 +39,9 @@ private:
     io::AtariSioNioFrontend _nio;
     io::AtariSioIngressRouter _router;
     io::AtariSioTransactionBoundary _boundary;
+    io::AtariSioCapture _capture;
+    int _cmd_pin{-1};
+    void* _owner_task{nullptr};
 };
 
 } // namespace fujinet::platform::esp32

@@ -5,8 +5,14 @@
 #include "fujinet/platform/esp32/pinmap.h"
 #include "fujinet/platform/esp32/uart_channel.h"
 
+#include <algorithm>
+
 extern "C" {
 #include "driver/gpio.h"
+#include "esp_timer.h"
+#include "esp_rom_sys.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 }
 
 namespace fujinet::platform::esp32 {
@@ -49,8 +55,10 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
     , _nio(routing)
     , _router(_disk, _nio, [this](const std::vector<std::uint8_t>& bytes) { send(bytes); })
 {
+    _owner_task = xTaskGetCurrentTaskHandle();
     const auto& pins = pinmap();
     configure_sio_lines(pins);
+    _cmd_pin = pins.sio.cmd;
     if (pins.sio.cmd >= 0 && pins.sio.cmd < GPIO_NUM_MAX) {
         const auto cmd = static_cast<gpio_num_t>(pins.sio.cmd);
         gpio_set_intr_type(cmd, GPIO_INTR_ANYEDGE);
@@ -73,7 +81,17 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
 AtariSioIngress::~AtariSioIngress() = default;
 
 bool AtariSioIngress::supports_work_wait() const { return _uart && _uart->supports_readable_wait(); }
-bool AtariSioIngress::wait_for_work(std::chrono::milliseconds timeout) { return _uart && _uart->wait_for_readable(timeout); }
+bool AtariSioIngress::wait_for_work(std::chrono::milliseconds timeout)
+{
+    if (_capture.needs_immediate_poll()) {
+        esp_rom_delay_us(100);
+        return true;
+    }
+    // An ISR task notification wakes the owner on COMMAND even though the
+    // UART queue has not yet received a byte. Cap the fallback to one tick.
+    const TickType_t ticks = timeout.count() > 0 ? 1 : 0;
+    return ulTaskNotifyTake(pdTRUE, ticks) != 0;
+}
 
 void AtariSioIngress::send(const std::vector<std::uint8_t>& bytes)
 {
@@ -83,22 +101,17 @@ void AtariSioIngress::send(const std::vector<std::uint8_t>& bytes)
 void AtariSioIngress::note_cmd_edge() noexcept
 {
     _boundary.note_cmd_edge();
+    BaseType_t woken = pdFALSE;
+    if (_owner_task) vTaskNotifyGiveFromISR(static_cast<TaskHandle_t>(_owner_task), &woken);
+    if (woken == pdTRUE) portYIELD_FROM_ISR();
 }
 
 void AtariSioIngress::poll()
 {
-    if (!_uart) return;
-    if (_boundary.consume()) _router.reset_command_collection();
-    std::uint8_t bytes[256];
-    while (_uart->available()) {
-        const std::size_t count = _uart->read(bytes, sizeof(bytes));
-        for (std::size_t i = 0; i < count; ++i) {
-            // An edge can arrive while draining an event batch.  Bound the
-            // next byte to the newly-recorded command transaction.
-            if (_boundary.consume()) _router.reset_command_collection();
-            _router.consume(bytes[i]);
-        }
-    }
+    if (!_uart || _cmd_pin < 0 || _cmd_pin >= GPIO_NUM_MAX) return;
+    _capture.poll(_boundary, _router, *_uart,
+                  [this] { return gpio_get_level(static_cast<gpio_num_t>(_cmd_pin)) == 0; },
+                  [] { return esp_timer_get_time(); });
 }
 
 } // namespace fujinet::platform::esp32

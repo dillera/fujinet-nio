@@ -39,6 +39,9 @@ public:
     /// Should be called regularly (e.g., from poll() or serviceOnce()).
     /// This is automatically called from available() and read().
     void updateFIFO();
+    // Discard both the software FIFO and the IDF driver input.
+    void discardInput();
+    std::uint32_t rx_errors() const { return _rx_errors; }
 
     /// Flush output buffer, waiting for transmission to complete.
     void flushOutput();
@@ -65,6 +68,7 @@ private:
     struct RxDriver;
     // Non-data events only: data events go through io::uart_rx_dispatch.
     void process_event(const uart_event_t& event);
+    std::uint32_t _rx_errors{0};
     bool _initialized{false};
     config::UartConfig _uart_cfg{};
     UartPins _uart_pins{};

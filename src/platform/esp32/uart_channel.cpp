@@ -329,11 +329,13 @@ void UartChannel::process_event(const uart_event_t& event)
 {
     switch (event.type) {
     case UART_FIFO_OVF:
+        ++_rx_errors;
         FN_LOGW(TAG, "UART FIFO overflow");
         uart_flush_input(_uart_port);
         break;
 
     case UART_BUFFER_FULL:
+        ++_rx_errors;
         FN_LOGW(TAG, "UART buffer full");
         uart_flush_input(_uart_port);
         break;
@@ -343,10 +345,12 @@ void UartChannel::process_event(const uart_event_t& event)
         break;
 
     case UART_PARITY_ERR:
+        ++_rx_errors;
         FN_LOGW(TAG, "UART parity error");
         break;
 
     case UART_FRAME_ERR:
+        ++_rx_errors;
         FN_LOGW(TAG, "UART frame error");
         break;
 
@@ -357,6 +361,14 @@ void UartChannel::process_event(const uart_event_t& event)
         FN_LOGW(TAG, "Unknown UART event: %d", event.type);
         break;
     }
+}
+
+void UartChannel::discardInput()
+{
+    if (!_initialized) return;
+    updateFIFO(); // Consume pending error events before establishing a new baseline.
+    _fifo.clear();
+    uart_flush_input(_uart_port);
 }
 
 bool UartChannel::available()

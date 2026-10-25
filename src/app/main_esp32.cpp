@@ -367,6 +367,11 @@ extern "C" void fujinet_core_task(void* arg)
 //         }
 // #endif
 
+#if defined(FN_BUILD_ATARI_FUJIBUS_SIO)
+        if (atariSioIngress) {
+            atariSioIngress->wait_for_work(idleDelay);
+        } else
+#endif
         if (core.hasWaitableWorkSource()) {
             core.waitForWork(idleDelay);
         } else {
