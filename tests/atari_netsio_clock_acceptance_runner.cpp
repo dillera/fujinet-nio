@@ -11,6 +11,8 @@
 #include "fujinet/core/logging.h"
 #include "fujinet/io/core/request_handler.h"
 #include "fujinet/io/devices/disk_device.h"
+#include "fujinet/io/devices/network_device.h"
+#include "fujinet/io/devices/network_device_diagnostics.h"
 #include "fujinet/io/devices/network_protocol.h"
 #include "fujinet/io/protocol/wire_device_ids.h"
 #include "fujinet/disk/disk_types.h"
@@ -61,8 +63,11 @@ void request_stop(int)
 
 class CountingAcceptanceRoute final : public fujinet::io::IRequestHandler {
 public:
-    explicit CountingAcceptanceRoute(fujinet::io::IRequestHandler& target)
-        : _target(target)
+    explicit CountingAcceptanceRoute(fujinet::io::IRequestHandler& target,
+                                     fujinet::io::NetworkDevice* network,
+                                     bool invalidate_write, bool invalidate_commit, bool invalidate_read)
+        : _target(target), _network(network), _invalidate_write(invalidate_write),
+          _invalidate_commit(invalidate_commit), _invalidate_read(invalidate_read)
     {}
 
     fujinet::io::IOResponse handleRequest(const fujinet::io::IORequest& request) override
@@ -83,6 +88,21 @@ public:
             ++_network_dispatches;
             FN_LOGI(TAG, "NetworkDevice routed request %u command=%u",
                     _network_dispatches, static_cast<unsigned>(request.command));
+            const bool commit = request.payload.size() >= 9 &&
+                request.payload[7] == 0 && request.payload[8] == 0;
+            if (request.payload.size() >= 9 &&
+                ((request.command == 3 && (_invalidate_write || (_invalidate_commit && commit))) ||
+                 (request.command == 2 && _invalidate_read))) {
+                const auto handle = static_cast<std::uint16_t>(request.payload[1]) |
+                    (static_cast<std::uint16_t>(request.payload[2]) << 8);
+                const bool closed = _network &&
+                    fujinet::io::NetworkDeviceDiagnosticsAccessor::close(*_network, handle);
+                FN_LOGI(TAG, "Network stale fixture invalidated handle=%04x closed=%u",
+                        static_cast<unsigned>(handle), closed ? 1u : 0u);
+                _invalidate_write = false;
+                _invalidate_commit = false;
+                _invalidate_read = false;
+            }
         }
         if (request.deviceId == to_device_id(WireDeviceId::DiskService)) {
             ++_disk_dispatches;
@@ -94,6 +114,10 @@ public:
 
 private:
     fujinet::io::IRequestHandler& _target;
+    fujinet::io::NetworkDevice* _network;
+    bool _invalidate_write;
+    bool _invalidate_commit;
+    bool _invalidate_read;
     std::uint32_t _clock_dispatches{};
     std::uint32_t _file_dispatches{};
     std::uint32_t _network_dispatches{};
@@ -126,8 +150,10 @@ public:
         FN_LOGI(TAG, "Network fixture open count=%u method=%u url=%s",
                 _state->opens, static_cast<unsigned>(request.method), request.url.c_str());
         const bool public_acceptance_open = request.method == 2 && request.url == kNetworkFixtureUri;
-        const bool resident_open = request.method == 1 && request.url == kResidentOpenFixtureUri;
-        const bool resident_write = request.method == 3 && request.url == kResidentWriteFixtureUri;
+        const bool resident_open = request.method == 1 &&
+            (request.url == kResidentOpenFixtureUri || request.url == "FIXTURE://RESIDENT-OPEN");
+        const bool resident_write = request.method == 3 &&
+            (request.url == kResidentWriteFixtureUri || request.url == "FIXTURE://RESIDENT-WRITE");
         const bool resident_post = request.method == 2 && request.flags == 4 && request.url == kResidentPostFixtureUri;
         _resident_post = resident_post;
         if (resident_open) {
@@ -360,7 +386,13 @@ int main(int argc, char** argv)
             static_cast<unsigned>(kDiskFixtureSectorSize),
             static_cast<unsigned>(kDiskFixtureSectorCount));
 
-    CountingAcceptanceRoute route(core.routingManager());
+    auto* network = dynamic_cast<fujinet::io::NetworkDevice*>(
+        core.deviceManager().getDevice(
+            fujinet::io::protocol::to_device_id(fujinet::io::protocol::WireDeviceId::NetworkService)));
+    CountingAcceptanceRoute route(core.routingManager(), network,
+                                 has_option(argc, argv, "--invalidate-network-write"),
+                                 has_option(argc, argv, "--invalidate-network-commit"),
+                                 has_option(argc, argv, "--invalidate-network-read"));
     auto udp = fujinet::platform::create_udp_channel(host, static_cast<std::uint16_t>(parsed_port));
     if (!udp) {
         FN_LOGE(TAG, "failed to create NetSIO UDP channel");
