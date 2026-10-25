@@ -88,6 +88,20 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.NIO_WORKSPACE_TOKEN || github.token }}
 
+      # The Atari boot disk's boot sector is built from MyPicoDOS source, at
+      # the revision the workspace pins.
+      - name: Resolve MyPicoDOS revision
+        id: mypicodos
+        run: echo "sha=$(git -C "$WORKSPACE_DIR" rev-parse HEAD:repos/MyPicoDOS)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout MyPicoDOS
+        uses: actions/checkout@v4
+        with:
+          repository: markjfisher/MyPicoDOS
+          ref: ${{ steps.mypicodos.outputs.sha }}
+          path: ${{ env.WORKSPACE_DIR }}/repos/MyPicoDOS
+          token: ${{ secrets.NIO_WORKSPACE_TOKEN || github.token }}
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -100,13 +114,23 @@ jobs:
             mtools \
             python3 \
             python3-venv \
-            zip
+            zip \
+            zlib1g-dev
 
       - name: Build dir2atr
         run: |
           git clone --depth 1 https://github.com/HiassofT/AtariSIO.git /tmp/AtariSIO
           make -C /tmp/AtariSIO/tools -f Makefile.posix
           echo "/tmp/AtariSIO/tools" >> "$GITHUB_PATH"
+
+      # MyPicoDOS assembles with atasm. Pinned so the boot disks don't change
+      # with upstream heads.
+      - name: Build atasm
+        run: |
+          git -c advice.detachedHead=false clone --depth 1 -b V1.30 \
+            https://github.com/CycoPH/atasm.git /tmp/atasm
+          make -C /tmp/atasm/src prog
+          echo "/tmp/atasm/src" >> "$GITHUB_PATH"
 
       # fn-rom's SSD builder needs basictool (BBC BASIC tokeniser) and dfstool.
       # Pinned so the boot disks don't change with upstream heads.
