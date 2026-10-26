@@ -33,6 +33,7 @@ jobs:
     # Forks have no Pages site of ours to publish to.
     if: github.repository == 'markjfisher/fujinet-nio'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -48,7 +49,7 @@ jobs:
           sudo apt-get install -y software-properties-common
           sudo add-apt-repository -y ppa:bkryza/clang-uml
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y -o Acquire::Retries=3 \
             clang-uml \
             graphviz \
             cmake \

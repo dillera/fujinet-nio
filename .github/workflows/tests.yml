@@ -17,6 +17,7 @@ jobs:
   posix:
     name: POSIX ${{ matrix.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # a run takes about 2 minutes; do not let a stall hold a runner for 6 hours
     strategy:
       fail-fast: false
       matrix:
@@ -37,7 +38,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build build-essential libcurl4-openssl-dev libssl-dev
+          sudo apt-get install -y -o Acquire::Retries=3 cmake ninja-build build-essential libcurl4-openssl-dev libssl-dev
 
       # Builds the preset and runs ctest, as developers do locally.
       - name: Build and test
