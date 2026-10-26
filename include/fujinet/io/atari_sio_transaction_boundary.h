@@ -14,18 +14,30 @@ namespace fujinet::io {
 // interrupts while masked, so this is not a physical edge timestamp.
 class AtariSioTransactionBoundary {
 public:
-    void note_cmd_edge() noexcept
+    // `at_us` is the interrupt's clock reading, for diagnostics only (0 when the caller has none).
+    void note_cmd_edge(std::uint32_t at_us = 0) noexcept
     {
         _edges.fetch_add(1, std::memory_order_relaxed);
-        _total.fetch_add(1, std::memory_order_relaxed);
+        if (_total.fetch_add(1, std::memory_order_relaxed) == 0) {
+            _first_edge_us.store(at_us, std::memory_order_relaxed);
+        }
+        _last_edge_us.store(at_us, std::memory_order_relaxed);
     }
     std::uint32_t consume() noexcept { return _edges.exchange(0, std::memory_order_acq_rel); }
     // Every edge since the last reset, for diagnostics; consume() does not affect it.
     std::uint32_t total_edges() const noexcept { return _total.load(std::memory_order_relaxed); }
-    void reset_total_edges() noexcept { _total.store(0, std::memory_order_relaxed); }
+    void reset_total_edges() noexcept
+    {
+        _total.store(0, std::memory_order_relaxed);
+        _first_edge_us.store(0, std::memory_order_relaxed);
+    }
+    std::uint32_t first_edge_us() const noexcept { return _first_edge_us.load(std::memory_order_relaxed); }
+    std::uint32_t last_edge_us() const noexcept { return _last_edge_us.load(std::memory_order_relaxed); }
 private:
     std::atomic<std::uint32_t> _edges{0};
     std::atomic<std::uint32_t> _total{0};
+    std::atomic<std::uint32_t> _first_edge_us{0};
+    std::atomic<std::uint32_t> _last_edge_us{0};
 };
 
 // State machine used by the ESP32 ingress. The callables expose the existing
@@ -91,6 +103,8 @@ public:
                     if (_frame_used == _frame.size()) { abort(&AtariSioCaptureStats::aborts_overflow); return; }
                     _frame[_frame_used++] = bytes[i];
                 } else if (router.pending_write_bytes()) {
+                    _processing_start_us = static_cast<std::uint32_t>(now());
+                    _processing_command = false;
                     router.consume(bytes[i]);
                     _write_started_us = router.pending_write_bytes() ? now() : 0;
                 }
@@ -110,6 +124,12 @@ public:
             _collecting = false;
             _released = false;
             ++_stats.frames;
+            const auto start = static_cast<std::uint32_t>(now());
+            if (_stats.frames == 1) _stats.first_frame_us = start;
+            const std::uint32_t lag = start - boundary.last_edge_us();
+            if (lag > _stats.lag_us_max) _stats.lag_us_max = lag;
+            _processing_start_us = start;
+            _processing_command = true;
             for (const auto byte : _frame) router.consume(byte);
             _write_started_us = router.pending_write_bytes() ? now() : 0;
             _frame_used = 0;
@@ -117,9 +137,15 @@ public:
         if (!_collecting && !router.pending_write_bytes()) _rx_errors = uart.rx_errors();
     }
     const AtariSioCaptureStats& stats() const noexcept { return _stats; }
+    // For the ingress's reply timing: when the frame or data now being handled started processing,
+    // and whether it is a command frame (judged against the CMD release edge) or a data frame.
+    std::uint32_t processing_start_us() const noexcept { return _processing_start_us; }
+    bool processing_command() const noexcept { return _processing_command; }
     void reset_stats() noexcept { _stats = {}; }
 private:
     AtariSioCaptureStats _stats;
+    std::uint32_t _processing_start_us{0};
+    bool _processing_command{false};
     std::array<std::uint8_t, 5> _frame{};
     std::size_t _frame_used{0};
     std::int64_t _started_us{0};

@@ -267,3 +267,92 @@ TEST_CASE("Atari SIO capture counts bytes, frames and each kind of abort")
     CHECK(zero.frames == 0);
     CHECK(zero.aborts_edge + zero.aborts_timeout + zero.aborts_overflow + zero.aborts_rx_error == 0);
 }
+
+TEST_CASE("Atari SIO boundary keeps the first and last CMD edge times for diagnostics")
+{
+    fujinet::io::AtariSioTransactionBoundary boundary;
+    CHECK(boundary.first_edge_us() == 0);
+    boundary.note_cmd_edge(1000);
+    boundary.note_cmd_edge(1400);
+    CHECK(boundary.first_edge_us() == 1000);
+    CHECK(boundary.last_edge_us() == 1400);
+    CHECK(boundary.consume() == 2);       // consuming edges for the state machine keeps the record
+    CHECK(boundary.first_edge_us() == 1000);
+    boundary.reset_total_edges();
+    CHECK(boundary.first_edge_us() == 0);
+    boundary.note_cmd_edge(5000);         // the first edge after a reset is the new first
+    CHECK(boundary.first_edge_us() == 5000);
+}
+
+TEST_CASE("Atari SIO capture times the first frame, the reaction lag, and what it is processing")
+{
+    fujinet::io::AtariSioCapture capture;
+    fujinet::io::AtariSioTransactionBoundary boundary;
+    CaptureUart uart;
+    CaptureRouter router;
+    bool low = false;
+    std::int64_t time = 0;
+    auto poll = [&] { capture.poll(boundary, router, uart, [&] { return low; }, [&] { return time; }); };
+
+    // CMD asserted at 1000 us, the frame arrives, CMD released at 2000 us, and the loop gets to it at 2500 us.
+    low = true; time = 1000; boundary.note_cmd_edge(1000); uart.driver = {0x31, 1, 2, 3, 4}; poll();
+    low = false; time = 2000; boundary.note_cmd_edge(2000);
+    time = 2500; poll();
+    CHECK(capture.stats().frames == 1);
+    CHECK(capture.stats().first_frame_us == 2500);
+    CHECK(capture.stats().lag_us_max == 500);
+    CHECK(capture.processing_command());
+    CHECK(capture.processing_start_us() == 2500);
+
+    // A write's data frame is processed later and is not a command.
+    time = 9000; uart.driver = {10, 11, 12}; poll();
+    CHECK_FALSE(capture.processing_command());
+    CHECK(capture.processing_start_us() == 9000);
+
+    // The next command: the first frame stays, the worst lag is kept.
+    low = true; time = 10000; boundary.note_cmd_edge(10000); uart.driver = {0x31, 1, 2, 3, 4}; poll();
+    low = false; time = 10100; boundary.note_cmd_edge(10100);
+    time = 10300; poll();
+    CHECK(capture.stats().frames == 2);
+    CHECK(capture.stats().first_frame_us == 2500);
+    CHECK(capture.stats().lag_us_max == 500);   // 200 us this time, 500 us is still the worst
+}
+
+TEST_CASE("Atari SIO reply timing measures the ACK against the CMD release and the handler against its start")
+{
+    fujinet::io::AtariSioReplyStats reply;
+    reply.ready_us = 2'235'000;
+
+    // A command: released at 100 ms, processing began at 100.4 ms, the ACK started at 101.2 ms.
+    reply.record(101'200, 100'400, true, 100'000);
+    CHECK(reply.replies == 1);
+    CHECK(reply.reply_us_last == 1200);
+    CHECK(reply.handle_us_last == 800);
+    CHECK(reply.reply_over_deadline == 0);
+
+    // A data frame's reply is a handler time only: it has no CMD release to measure from.
+    reply.record(500'000, 100'000, false, 0);
+    CHECK(reply.handle_us_max == 400'000);
+    CHECK(reply.reply_us_last == 1200);        // unchanged by a non-command reply
+    CHECK(reply.reply_us_max == 1200);
+
+    // A late ACK is counted against the 16 ms deadline.
+    reply.record(120'000, 119'000, true, 100'000);
+    CHECK(reply.reply_us_last == 20'000);
+    CHECK(reply.reply_us_max == 20'000);
+    CHECK(reply.reply_over_deadline == 1);
+
+    reply.reset();
+    CHECK(reply.replies == 0);
+    CHECK(reply.reply_us_max == 0);
+    CHECK(reply.ready_us == 2'235'000);        // when the ingress came up is not a counter
+}
+
+TEST_CASE("Atari SIO reply timing survives the 32-bit microsecond clock wrapping")
+{
+    fujinet::io::AtariSioReplyStats reply;
+    // Released 200 us before the clock wraps; the ACK starts 1000 us after the wrap.
+    reply.record(1000, 4'294'967'000u, true, 4'294'967'096u);
+    CHECK(reply.reply_us_last == 1200);
+    CHECK(reply.handle_us_last == 1296);
+}

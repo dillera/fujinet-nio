@@ -43,6 +43,7 @@ private:
     io::AtariSioIngressRouter _router;
     io::AtariSioTransactionBoundary _boundary;
     io::AtariSioCapture _capture;
+    io::AtariSioReplyStats _reply;
     int _cmd_pin{-1};
     void* _owner_task{nullptr};
 };

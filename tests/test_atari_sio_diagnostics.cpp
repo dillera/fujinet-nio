@@ -124,3 +124,58 @@ TEST_CASE("sio.reset zeroes the counters through the ingress, and unknown comman
     CHECK(f.stats.capture.frames == 0);
     CHECK(run(*f.provider, {"sio.nonsense"}).status == DiagStatus::NotFound);
 }
+
+TEST_CASE("sio.status shows when the ingress was ready and when the Atari first spoke")
+{
+    Fixture f;
+    f.stats.reply.ready_us = 2'235'000;
+    f.stats.first_edge_us = 2'790'000;
+    f.stats.capture.first_frame_us = 2'802'000;
+    auto text = run(*f.provider, {"sio.status"}).text;
+    CHECK(contains(text, "ingress ready 2235   first CMD edge 2790   first frame 2802"));
+    CHECK_FALSE(contains(text, "watch:"));    // ready before the Atari spoke: nothing to flag
+
+    f.stats = {};
+    text = run(*f.provider, {"sio.status"}).text;
+    CHECK(contains(text, "ingress ready none   first CMD edge none   first frame none"));
+}
+
+TEST_CASE("sio.status reports the reaction, reply and handler times in milliseconds")
+{
+    Fixture f;
+    f.stats.capture.lag_us_max = 400;
+    f.stats.reply.replies = 122;
+    f.stats.reply.reply_us_last = 1200;
+    f.stats.reply.reply_us_max = 3100;
+    f.stats.reply.handle_us_last = 900;
+    f.stats.reply.handle_us_max = 2800;
+    const auto text = run(*f.provider, {"sio.status"}).text;
+    CHECK(contains(text, "react: CMD release -> start of processing, max 0.4 ms"));
+    CHECK(contains(text, "reply: CMD release -> first byte, last 1.2 ms, max 3.1 ms, over 16 ms: 0   (replies 122)"));
+    CHECK(contains(text, "handler: last 0.9 ms, max 2.8 ms"));
+    CHECK_FALSE(contains(text, "watch:"));
+}
+
+TEST_CASE("sio.status warns about late ACKs, slow handlers and a first edge before the ingress was ready")
+{
+    Fixture f;
+    f.stats.reply.reply_over_deadline = 2;
+    f.stats.reply.reply_us_max = 21'500;
+    auto text = run(*f.provider, {"sio.status"}).text;
+    CHECK(contains(text, "watch: 2 command reply(ies) started more than 16 ms after CMD was released (worst 21.5 ms)"));
+
+    f.stats = {};
+    f.stats.reply.handle_us_max = 800'000;
+    text = run(*f.provider, {"sio.status"}).text;
+    CHECK(contains(text, "watch: a request spent 800.0 ms in its handler"));
+    CHECK(contains(text, "leaves the native endpoint stuck"));
+
+    f.stats = {};
+    f.stats.reply.handle_us_max = 99'999;      // just under the limit: no warning
+    CHECK_FALSE(contains(run(*f.provider, {"sio.status"}).text, "watch:"));
+
+    f.stats = {};
+    f.stats.reply.ready_us = 2'000'000;
+    f.stats.first_edge_us = 1'900'000;
+    CHECK(contains(run(*f.provider, {"sio.status"}).text, "watch: the first CMD edge came before the ingress was ready"));
+}

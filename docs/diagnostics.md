@@ -110,7 +110,19 @@ tight, so this is how to see what the Atari is doing:
   devices, the abort counts by reason (`edge`, `timeout`, `overflow`, `rx_error`),
   the last frame seen (device and command decoded), and a `reading:` line naming the
   first thing that looks wrong, in the order the signal travels
-- `sio.reset` — zero the counters; do this before powering the Atari
+  Timing lines (microsecond clock, shown in ms): `boot` gives when the ingress was ready, when
+  the first CMD edge arrived and when the first command was processed, so the margin between
+  "ready" and "the Atari spoke" is visible; `react` is the worst CMD-release-to-processing
+  delay (how fast the loop reacts); `reply` is CMD release to the first reply byte, last and
+  worst, with a count of those later than 16 ms (the ACK deadline); `handler` is how long a
+  request spent between starting processing and replying. `watch:` lines flag a late ACK, a
+  handler over 100 ms (slow work on the SIO task stalls every reply, and the Atari times out
+  and leaves the native endpoint stuck) and a first CMD edge before the ingress was ready.
+- `sio.reset` — zero the counters; do this before powering the Atari. The ingress-ready time is
+  kept, since it is not a counter
+
+The timings are measured at the existing send and poll points; nothing is logged on the SIO
+path.
 
 A quick reading: `cmd_edges: 0` means the CMD pin never changes (the Atari is not
 sending, or CMD is wired to a different pin than `pinmap.cpp` says); edges but

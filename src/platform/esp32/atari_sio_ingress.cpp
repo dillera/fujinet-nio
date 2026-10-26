@@ -76,6 +76,8 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
     // never transmit, so the Atari would never see an ACK. On the v1 hardware TX feeds a 74LS07
     // buffer input, which wants a driven high (push-pull), as the legacy firmware does.
     _uart = std::make_unique<UartChannel>(sio_config(config.channel.uart), pins.sio.uart);
+    // From here the ingress answers commands. sio.status compares this with the first CMD edge.
+    _reply.ready_us = static_cast<std::uint32_t>(esp_timer_get_time());
 }
 
 AtariSioIngress::~AtariSioIngress() = default;
@@ -95,18 +97,25 @@ bool AtariSioIngress::wait_for_work(std::chrono::milliseconds timeout)
 
 void AtariSioIngress::send(const std::vector<std::uint8_t>& bytes)
 {
-    if (!bytes.empty() && _uart) { _uart->write(bytes.data(), bytes.size()); _uart->flushOutput(); }
+    if (bytes.empty() || !_uart) return;
+    // Timed before the write: this is when the reply starts, which is what the Atari waits for.
+    _reply.record(static_cast<std::uint32_t>(esp_timer_get_time()), _capture.processing_start_us(),
+                  _capture.processing_command(), _boundary.last_edge_us());
+    _uart->write(bytes.data(), bytes.size());
+    _uart->flushOutput();
 }
 
 io::AtariSioStats AtariSioIngress::stats() const
 {
     io::AtariSioStats out;
     out.cmd_edges = _boundary.total_edges();
+    out.first_edge_us = _boundary.first_edge_us();
     out.cmd_line_low = _cmd_pin >= 0 && _cmd_pin < GPIO_NUM_MAX &&
                        gpio_get_level(static_cast<gpio_num_t>(_cmd_pin)) == 0;
     out.uart_rx_errors = _uart ? _uart->rx_errors() : 0;
     out.capture = _capture.stats();
     out.router = _router.stats();
+    out.reply = _reply;
     return out;
 }
 
@@ -115,11 +124,12 @@ void AtariSioIngress::reset_stats()
     _boundary.reset_total_edges();
     _capture.reset_stats();
     _router.reset_stats();
+    _reply.reset();
 }
 
 void AtariSioIngress::note_cmd_edge() noexcept
 {
-    _boundary.note_cmd_edge();
+    _boundary.note_cmd_edge(static_cast<std::uint32_t>(esp_timer_get_time()));
     BaseType_t woken = pdFALSE;
     if (_owner_task) vTaskNotifyGiveFromISR(static_cast<TaskHandle_t>(_owner_task), &woken);
     if (woken == pdTRUE) portYIELD_FROM_ISR();
