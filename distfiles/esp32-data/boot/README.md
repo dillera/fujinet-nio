@@ -43,9 +43,10 @@ boot:
 ```
 
 Atari boards select `atari` (`./build.sh -s atari-...` sets it) and boot the disk
-from flash. Name the filesystem explicitly: `persist:` resolves to the host
-folder, then the SD card, then flash, so with an SD card inserted it would look
-there instead.
+from flash. The ESP32 Atari NIO build already defaults `boot.config_uri` to
+`flash:/boot/atari/autorun.atr`, so a fresh device needs no yaml. The name is
+explicit on purpose: `persist:` resolves to the host folder, then the SD card,
+then flash, so with an SD card inserted it would look there instead.
 
 ```yaml
 boot:
@@ -54,8 +55,18 @@ boot:
   readonly: true
 ```
 
-The default `config_uri` is `persist:/boot/autorun.img`, which matches none of
-the per-platform images here, so it must be set for every board. `fujinet.yaml`
-is read from the SD card when one is mounted, otherwise from flash, and
-`./build.sh -f` rewrites the whole flash filesystem, so a `fujinet.yaml` kept in
-flash is lost by it.
+Other builds default `config_uri` to `persist:/boot/autorun.img`, which matches
+none of the per-platform images here, so set it. Without editing files, use the
+console (a restart applies it):
+
+```
+boot.get
+boot.set config_uri flash:/boot/atari/autorun.atr
+boot.save
+```
+
+A default only applies where `fujinet.yaml` does not say otherwise. A device that
+already ran with the generic default has it saved in `fujinet.yaml` (on the SD
+card when one is mounted, otherwise in flash, mirrored), so set it with
+`boot.set` there. `./build.sh -f` rewrites the whole flash filesystem, so a
+`fujinet.yaml` kept in flash is lost by it, and the profile default applies again.

@@ -68,6 +68,10 @@ std::unique_ptr<IDiagnosticProvider> create_packet_link_diagnostic_provider(
     ::fujinet::io::Channel* channel,
     ::fujinet::io::FujiDevice* fuji);
 
+// Boot configuration (boot.mode / config_uri / readonly in fujinet.yaml): view, change and save.
+// Changes apply at the next start. Returns nullptr without a FujiDevice.
+std::unique_ptr<IDiagnosticProvider> create_boot_diagnostic_provider(::fujinet::io::FujiDevice* fuji);
+
 // ESP32 UartChannel: inspect/change host UART (FujiBus) settings. Returns nullptr on POSIX or non-UART channel.
 // Also found beneath a packet link.
 std::unique_ptr<IDiagnosticProvider> create_uart_channel_diagnostic_provider(

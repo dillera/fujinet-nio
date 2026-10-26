@@ -80,6 +80,23 @@ and ESP32. It exposes:
 See [`packet_link.md`](packet_link.md). On ESP32 the `uart` provider finds the
 UART beneath a packet link, so `uart.*` keeps working on packet-link boards.
 
+### Provider: `boot`
+
+Created with `fujinet::diag::create_boot_diagnostic_provider(fuji)` on POSIX and
+ESP32, for any build with a `FujiDevice` (it does not need a Channel). It exposes
+the `boot:` section of `fujinet.yaml`:
+
+- `boot.get` — `mode`, `config_uri` and `readonly`
+- `boot.set <mode|config_uri|readonly> <value>` — change one setting in memory
+  (`mode` is `normal` or `config`; `readonly` is `true` or `false`)
+- `boot.save` — write the settings into `fujinet.yaml`
+
+The boot disk is read at start-up, so a change applies after a restart. The
+default `config_uri` comes from the build profile
+(`BuildProfile::defaultBootConfigUri`): the ESP32 Atari NIO build uses
+`flash:/boot/atari/autorun.atr`; other builds use `persist:/boot/autorun.img`.
+See [`distfiles/esp32-data/boot/README.md`](../distfiles/esp32-data/boot/README.md).
+
 ### Provider: `net`
 
 Created with `fujinet::diag::create_network_diagnostic_provider(core, wifi_ctx)`.

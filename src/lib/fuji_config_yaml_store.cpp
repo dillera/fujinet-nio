@@ -383,16 +383,18 @@ static void write_all(fs::IFile& file, const std::string& data)
 
 YamlFujiConfigStoreFs::YamlFujiConfigStoreFs(fs::IFileSystem* primary,
                                              fs::IFileSystem* backup,
-                                             std::string      relativePath)
+                                             std::string      relativePath,
+                                             FujiConfig       defaults)
     : _primary(primary)
     , _backup(backup)
     , _relPath(std::move(relativePath))
+    , _defaults(std::move(defaults))
 {
 }
 
 FujiConfig YamlFujiConfigStoreFs::load()
 {
-    FujiConfig cfg{}; // defaults
+    FujiConfig cfg = _defaults;
 
     // Try primary first if present
     if (_primary && _primary->exists(_relPath)) {
@@ -483,12 +485,12 @@ FujiConfig YamlFujiConfigStoreFs::loadFromFs(fs::IFileSystem& fs)
         FN_LOGW(TAG,
                 "Config '%s' on '%s' is empty; using defaults",
                 _relPath.c_str(), fs.name().c_str());
-        return FujiConfig{};
+        return _defaults;
     }
 
     YAML::Node root = YAML::Load(yamlText);
 
-    FujiConfig cfg{};
+    FujiConfig cfg = _defaults;
     // <== reuse existing mapping helper:
     from_yaml(root, cfg);
 

@@ -297,6 +297,10 @@ int main()
     if (packetLinkDiag) {
         diagRegistry.add_provider(*packetLinkDiag);
     }
+    auto bootDiag = fujinet::diag::create_boot_diagnostic_provider(fujiConcrete);
+    if (bootDiag) {
+        diagRegistry.add_provider(*bootDiag);
+    }
     core::setup_transports(core, *channel, profile, &config);
 #endif
 

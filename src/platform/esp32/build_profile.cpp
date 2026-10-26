@@ -26,6 +26,9 @@ BuildProfile current_build_profile()
         .primaryChannel   = ChannelKind::SioGpio,
         .name             = "Atari packet-native NIO over SIO GPIO",
         .hw               = {},
+        // The boot disk is flashed into the internal filesystem (boot_images = atari).
+        // flash: names it explicitly; persist: would resolve to an SD card first.
+        .defaultBootConfigUri = "flash:/boot/atari/autorun.atr",
     };
 #elif defined(FN_BUILD_ESP32_USB_CDC)
     profile = BuildProfile{

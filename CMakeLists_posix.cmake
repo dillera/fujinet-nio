@@ -129,6 +129,7 @@ set(FUJINET_NIO_SOURCES
         src/lib/clock_device.cpp
         src/lib/clock_device_init.cpp
         src/lib/diagnostic_app_store_provider.cpp
+        src/lib/diagnostic_boot_provider.cpp
         src/lib/diagnostic_core_provider.cpp
         src/lib/diagnostic_disk_provider.cpp
         src/lib/diagnostic_modem_provider.cpp
@@ -153,6 +154,7 @@ set(FUJINET_NIO_SOURCES
         src/lib/fs/tnfs_filesystem.cpp
         src/lib/fs_stdio.cpp
         src/lib/fuji_bus_packet.cpp
+        src/lib/fuji_config_defaults.cpp
         src/lib/fuji_config_yaml_store.cpp
         src/lib/fuji_device.cpp
         src/lib/fujibus_packet_codec.cpp

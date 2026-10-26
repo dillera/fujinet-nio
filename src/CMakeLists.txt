@@ -23,6 +23,7 @@ idf_component_register(
         lib/clock_device.cpp
         lib/clock_device_init.cpp
         lib/diagnostic_app_store_provider.cpp
+        lib/diagnostic_boot_provider.cpp
         lib/diagnostic_core_provider.cpp
         lib/diagnostic_disk_provider.cpp
         lib/diagnostic_modem_provider.cpp
@@ -47,6 +48,7 @@ idf_component_register(
         lib/fs/tnfs_filesystem.cpp
         lib/fs_stdio.cpp
         lib/fuji_bus_packet.cpp
+        lib/fuji_config_defaults.cpp
         lib/fuji_config_yaml_store.cpp
         lib/fuji_device.cpp
         lib/fujibus_packet_codec.cpp

@@ -177,6 +177,7 @@ extern "C" void fujinet_core_task(void* arg)
     auto appStoreDiag = fujinet::diag::create_app_store_diagnostic_provider(core);
     std::unique_ptr<fujinet::diag::IDiagnosticProvider> uartChannelDiag;
     std::unique_ptr<fujinet::diag::IDiagnosticProvider> packetLinkDiag;
+    std::unique_ptr<fujinet::diag::IDiagnosticProvider> bootDiag;
     diagRegistry.add_provider(*coreDiag);
     diagRegistry.add_provider(*netDiag);
     diagRegistry.add_provider(*diskDiag);
@@ -291,6 +292,10 @@ extern "C" void fujinet_core_task(void* arg)
         core::setup_transports(core, *channel, profile, &config);
         FN_ELOG("transport initialized");
     }
+
+    // Not tied to a Channel: the Atari SIO profile has none, and still needs boot.* on the console.
+    bootDiag = fujinet::diag::create_boot_diagnostic_provider(services.fuji);
+    if (bootDiag) diagRegistry.add_provider(*bootDiag);
 
     // If we load config at this point to find out if the services should be enabled or not, it adds 80ms before the main loop starts
     fujinet::core::register_host_service(core);

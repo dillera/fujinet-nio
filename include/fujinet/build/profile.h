@@ -74,6 +74,10 @@ struct BuildProfile {
     std::string_view name;
 
     HardwareCapabilities hw;
+
+    // Where this build expects its boot/config disk (the FujiConfig boot.config_uri
+    // default). Empty: the generic default. A fujinet.yaml that sets config_uri wins.
+    std::string_view defaultBootConfigUri{};
 };
 
 // Filled by platform-specific code.

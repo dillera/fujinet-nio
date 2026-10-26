@@ -2,6 +2,8 @@
 
 #include "fujinet/platform/fuji_config_store_factory.h"
 #include "fujinet/fs/storage_manager.h"
+#include "fujinet/build/profile.h"
+#include "fujinet/config/fuji_config_defaults.h"
 #include "fujinet/config/fuji_config_yaml_store_fs.h"
 #include "fujinet/core/logging.h"
 
@@ -13,17 +15,20 @@ static constexpr const char* TAG = "platform";
 std::unique_ptr<config::FujiConfigStore>
 create_fuji_config_store(fs::StorageManager& storage)
 {
+    // What a fresh device starts from: the profile knows its platform's boot disk.
+    const auto defaults = config::default_config_for(build::current_build_profile());
+
     auto* host = storage.get("host");
 
     if (!host) {
         FN_LOGE(TAG, "No 'host' filesystem registered; config will stay in-memory");
         return std::make_unique<config::YamlFujiConfigStoreFs>(
-            nullptr, nullptr, "fujinet.yaml"
+            nullptr, nullptr, "fujinet.yaml", defaults
         );
     }
 
     return std::make_unique<config::YamlFujiConfigStoreFs>(
-        host, nullptr, "fujinet.yaml"
+        host, nullptr, "fujinet.yaml", defaults
     );
 }
 
