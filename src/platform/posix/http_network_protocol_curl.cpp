@@ -36,6 +36,7 @@ bool curl_tls_is_openssl(std::string_view curlSslVersion, std::string_view opens
 #if FN_WITH_CURL == 1
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -163,7 +164,9 @@ bool curl_ssl_ctx_is_ours()
 
 #endif
 
-// curl's default CA file followed by the test CA, or empty if there is none.
+// curl's default CA file followed by the test CA. Empty when curl has no
+// default CA file (it uses the system trust store, e.g. Secure Transport or
+// Schannel) or is older than 7.84, which cannot report it.
 std::string platform_roots_plus_test_ca(CURL* curl)
 {
 #if LIBCURL_VERSION_NUM >= 0x075400
@@ -185,14 +188,36 @@ std::string platform_roots_plus_test_ca(CURL* curl)
 #endif
 }
 
-// Without the SSL_CTX callbacks, the test CA goes in as an in-memory CA
-// bundle, which every curl TLS backend accepts.
+// The same for every handle (one curl build, one default CA file), so read it
+// once, and only when a handle asks for platform roots plus the test CA.
+const std::string& platform_roots_plus_test_ca_cached(CURL* curl)
+{
+    static const std::string bundle = platform_roots_plus_test_ca(curl);
+    return bundle;
+}
+
+void warn_test_ca_unavailable(bool withPlatformRoots)
+{
+    static std::atomic_flag warned;
+    if (warned.test_and_set()) {
+        return;
+    }
+    if (withPlatformRoots) {
+        FN_LOGW("platform",
+                "HTTPS: the FujiNet test CA is not trusted: this curl has no default CA file to add it to "
+                "(it uses the system trust store, or is older than 7.84); using platform roots only");
+    } else {
+        FN_LOGW("platform", "HTTPS: cannot add the FujiNet test CA: curl is older than 7.77 (CURLOPT_CAINFO_BLOB)");
+    }
+}
+
+// Without the SSL_CTX callbacks, the test CA goes in as an in-memory CA bundle
+// (CURLOPT_CAINFO_BLOB, curl 7.77+) for the TLS backends that support it.
 void use_test_ca_bundle(CURL* curl, bool withPlatformRoots)
 {
 #if LIBCURL_VERSION_NUM >= 0x074D00
-    static const std::string additive = platform_roots_plus_test_ca(curl);
     const std::string_view pem = withPlatformRoots
-        ? std::string_view(additive)
+        ? std::string_view(platform_roots_plus_test_ca_cached(curl))
         : std::string_view(fujinet::net::test_ca_cert_pem, fujinet::net::test_ca_cert_size);
     if (!pem.empty()) {
         curl_blob blob{const_cast<char*>(pem.data()), pem.size(), CURL_BLOB_NOCOPY};
@@ -203,12 +228,7 @@ void use_test_ca_bundle(CURL* curl, bool withPlatformRoots)
 #else
     (void)curl;
 #endif
-    static bool warned = false;
-    if (!warned) {
-        warned = true;
-        FN_LOGW("platform", "HTTPS: cannot add the FujiNet test CA in this curl build; %s",
-                withPlatformRoots ? "using platform roots only" : "HTTPS will fail");
-    }
+    warn_test_ca_unavailable(withPlatformRoots);
 }
 
 } // namespace

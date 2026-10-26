@@ -1,0 +1,44 @@
+name: Unit tests
+
+# POSIX unit tests on every pull request and push to master, in both curl TLS
+# configurations: the default (curl and OpenSSL; the SSL_CTX callbacks) and curl
+# without OpenSSL, which exercises the CA-bundle path used when curl's TLS
+# library is not the OpenSSL we link (macOS system curl).
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  posix:
+    name: POSIX ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: curl + OpenSSL
+            cmake_args: ""
+          - name: curl without OpenSSL
+            cmake_args: "-DFN_WITH_OPENSSL=0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential libcurl4-openssl-dev libssl-dev
+
+      # Builds the preset and runs ctest, as developers do locally.
+      - name: Build and test
+        run: ./build.sh -cp fujibus-pty-debug ${{ matrix.cmake_args }}

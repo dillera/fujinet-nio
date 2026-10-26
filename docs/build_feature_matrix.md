@@ -17,7 +17,8 @@ It is intended as a concise engineering reference and CI/local verification chec
 HTTPS/TLS trust for the FujiNet test CA is now built into the supported runtime paths:
 
 - POSIX: additive trust, alongside normal/public trust roots
-  - The curl HTTPS backend adds the test CA to curl's `SSL_CTX` only when curl's TLS library is the OpenSSL NIO links (`curl_version_info()->ssl_version` names the same release). Otherwise it hands curl a CA bundle (`CURLOPT_CAINFO_BLOB`): curl's default CA file followed by the test CA. macOS's system curl is the common case: it runs on LibreSSL, so its `SSL_CTX` cannot go to Homebrew OpenSSL.
+  - The curl HTTPS backend adds the test CA to curl's `SSL_CTX` only when curl's TLS library is the OpenSSL NIO links (`curl_version_info()->ssl_version` names the same release). Otherwise it hands curl an in-memory CA bundle (`CURLOPT_CAINFO_BLOB`, curl 7.77+): the test CA alone in test-CA-only mode, or, to keep the platform roots, curl's default CA file (`CURLINFO_CAINFO`, curl 7.84+) followed by the test CA. macOS's system curl is the common case: it runs on LibreSSL, so its `SSL_CTX` cannot go to Homebrew OpenSSL.
+  - If curl has no default CA file (it uses the system trust store) or is too old, the test CA cannot be added in the platform-plus-test-CA mode: a warning is logged and only the platform roots are trusted.
 - ESP32: built-in test-CA trust path for local FujiNet test services
 - URL query hacks such as `?testca=1` are intentionally not part of the supported workflow
 
@@ -32,7 +33,8 @@ Useful compile combinations to keep healthy:
 2. `FN_WITH_CURL=1`, `FN_WITH_OPENSSL=0`
    - HTTP/HTTPS backend enabled
    - TLS stream backend disabled
-   - curl HTTPS gets the FujiNet test CA as a CA bundle (`CURLOPT_CAINFO_BLOB`, curl 7.84+)
+   - curl HTTPS gets the FujiNet test CA as an in-memory CA bundle (`CURLOPT_CAINFO_BLOB`: curl 7.77+, or 7.84+ to keep the platform roots)
+   - CI runs this combination (`.github/workflows/tests.yml`)
 
 3. `FN_WITH_CURL=0`, `FN_WITH_OPENSSL=1`
    - No POSIX HTTP/HTTPS backend
