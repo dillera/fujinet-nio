@@ -1,4 +1,10 @@
-name: Update UML diagrams
+name: Publish UML diagrams
+
+# The generated (gen_*) diagrams are built from the code on every push to
+# master that touches it, and published to GitHub Pages. They are not
+# committed: the job only publishes when the build and the unit tests pass.
+# Hand-authored diagrams (arch_*, seq_*) stay in docs/ and are rendered with
+# `scripts/gen_uml.sh --render-docs`.
 
 on:
   push:
@@ -9,15 +15,20 @@ on:
       - 'tests/**'
       - 'clang-uml.yml'
       - 'scripts/gen_uml.sh'
-      - 'docs/uml/arch_*.puml'
+      - '.github/workflows/update_uml.yml'
   workflow_dispatch: {}
 
 permissions:
-  contents: write
+  contents: read
+
+# One publish at a time; a newer push supersedes a running one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
-  uml:
-    # Forks would commit their own diagrams into contributors' branches.
+  build:
+    # Forks have no Pages site of ours to publish to.
     if: github.repository == 'markjfisher/fujinet-nio'
     runs-on: ubuntu-latest
 
@@ -25,8 +36,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-            submodules: recursive   # or 'true' if you don't have nested submodules
-            fetch-depth: 0          # optional, but nice if submodules need full history
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Install system dependencies
         run: |
@@ -42,34 +54,42 @@ jobs:
             ninja-build \
             build-essential
 
+      # Builds, runs the unit tests (a failure stops the job, so nothing is
+      # published from a tree that does not build or pass), then generates.
       - name: Generate UML diagrams
         run: |
           chmod +x scripts/gen_uml.sh
           ./scripts/gen_uml.sh
 
-      - name: Upload UML artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: uml-diagrams-${{ github.run_id }}
-          path: |
-            docs/uml/*.puml
-            docs/images/*.svg
+      - name: Assemble the site
+        run: |
+          mkdir -p site/uml
+          cp docs/images/gen_*.svg site/uml/
+          {
+            echo '<!doctype html><meta charset="utf-8"><title>fujinet-nio diagrams</title>'
+            echo '<h1>fujinet-nio generated diagrams</h1>'
+            echo "<p>Built from <code>${GITHUB_SHA::8}</code> on $(date -u +%Y-%m-%d).</p><ul>"
+            for f in site/uml/*.svg; do
+              n=$(basename "$f"); echo "<li><a href=\"uml/$n\">$n</a></li>"
+            done
+            echo '</ul>'
+          } > site/index.html
 
-      # - name: Debug UML changes
-      #   run: |
-      #     echo "== git status (filtered) =="
-      #     git status -sb -- docs/uml docs/images
-      #     echo
-      #     echo "== Diff for PUML =="
-      #     git diff -- docs/uml
-      #     echo
-      #     echo "== Diff for SVGs =="
-      #     git diff -- docs/images
-
-      - name: Commit updated diagrams
-        if: github.event_name == 'push'
-        uses: stefanzweifel/git-auto-commit-action@v7
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v5
         with:
-          commit_message: "chore: update auto-generated UML diagrams"
-          file_pattern: "docs/uml docs/images"
-          disable_globbing: true
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

@@ -1196,11 +1196,18 @@ We maintain PlantUML diagrams in `docs/uml/`:
 - `arch_platform_channels.puml` — how platform-specific channels plug into core  
 - `arch_protocol_fujibus.puml` — FujiBus/SLIP protocol diagram  
 
-Generated SVGs live in `docs/images/` and are referenced by docs.
+The hand-authored diagrams are rendered with `scripts/gen_uml.sh --render-docs`
+into `docs/images/`, which is committed and referenced by docs.
 
-Example:
+The code-derived diagrams (`gen_*`, from clang-uml) are not committed. The
+"Publish UML diagrams" workflow builds and tests the tree on every push to
+master and publishes them to GitHub Pages, so they only appear for a tree
+that compiles and passes:
 
-![Core + IO auto-gen UML](images/gen_core_io.svg)
+![Core + IO auto-gen UML](https://markjfisher.github.io/fujinet-nio/uml/gen_core_io.svg)
+
+The index of all generated diagrams is
+<https://markjfisher.github.io/fujinet-nio/>.
 
 ---
 
