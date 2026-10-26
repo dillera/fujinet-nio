@@ -13,7 +13,8 @@ boot_images = amiga/wb32
 ; boot_images = msdos
 ```
 
-Unset or `all` packs everything, `none` packs no images, and
+Unset or `all` packs everything, which is more than the storage partition of the
+16 MB boards holds (about 4 MiB), so set it. `none` packs no images, and
 `FN_BOOT_IMAGES=... ./build.sh -f` overrides the setting for one build. The
 build lists what it packs, and stops before uploading if a name doesn't exist or
 the selection won't fit (`pio-build/scripts/stage-fs-data.py`).
@@ -39,3 +40,21 @@ boot:
   config_uri: "flash:/boot/amiga/wb13/FujiNet-Default-WB13.adf"
   readonly: true
 ```
+
+Atari boards select `atari` (`./build.sh -s atari-...` sets it) and boot the disk
+from flash. Name the filesystem explicitly: `persist:` resolves to the host
+folder, then the SD card, then flash, so with an SD card inserted it would look
+there instead.
+
+```yaml
+boot:
+  mode: config
+  config_uri: "flash:/boot/atari/autorun.atr"
+  readonly: true
+```
+
+The default `config_uri` is `persist:/boot/autorun.img`, which matches none of
+the per-platform images here, so it must be set for every board. `fujinet.yaml`
+is read from the SD card when one is mounted, otherwise from flash, and
+`./build.sh -f` rewrites the whole flash filesystem, so a `fujinet.yaml` kept in
+flash is lost by it.

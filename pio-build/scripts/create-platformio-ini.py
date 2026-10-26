@@ -12,16 +12,33 @@ def read_build_board_value(ini_file):
         print(f"Error: 'build_board' value not found in the [fujinet] section of {ini_file}.")
         exit(1)
 
+# Boot images each family of boards needs in the flash filesystem, by build_board prefix.
+# Packing every image does not fit the 4 MiB storage partition, so a board that has an
+# obvious answer gets it here; others pick their own (see distfiles/esp32-data/boot/README.md).
+DEFAULT_BOOT_IMAGES = {
+    "atari-": "atari",
+}
+
+def default_boot_images(board_name):
+    for prefix, images in DEFAULT_BOOT_IMAGES.items():
+        if board_name.startswith(prefix):
+            return images
+    return None
+
 def create_local_ini(board_name, local_file_name):
     config = configparser.RawConfigParser()
     config.add_section('fujinet')
     config.set('fujinet', 'build_board', board_name)
     config.set('fujinet', 'console_type', "noconsole")
+    boot_images = default_boot_images(board_name)
+    if boot_images:
+        config.set('fujinet', 'boot_images', boot_images)
     with open(local_file_name, 'w') as configfile:
         config.write(configfile)
         configfile.write("; console_type can be one of [noconsole, consolecdc, consoleuart], if unset, it defaults to noconsole\n")
         configfile.write("; boot_images picks the boot images for the flash filesystem: paths under\n")
-        configfile.write("; distfiles/esp32-data/boot, space or comma separated; unset packs them all\n")
+        configfile.write("; distfiles/esp32-data/boot, space or comma separated. Unset packs them all, which\n")
+        configfile.write("; does not fit the storage partition, so set it (Atari boards default to atari).\n")
         configfile.write("; boot_images = amiga/wb32\n\n")
         configfile.write("[env]\n;build_flags += \n")
     print(f"{local_file_name} file created with build_board = {board_name}")

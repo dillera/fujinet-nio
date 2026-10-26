@@ -134,8 +134,11 @@ def stage():
     needed = littlefs_bytes(staged)
     capacity = fs_partition_size()
     if capacity is not None and needed > capacity:
+        hint = ("boot_images is not set, so every image was selected: set it in the [fujinet] section of "
+                "platformio.local.ini, e.g. boot_images = atari" if everything
+                else "choose fewer images with boot_images")
         fail(f"selection needs about {needed // 1024} KiB but the storage partition holds "
-             f"{capacity // 1024} KiB; choose fewer images with boot_images")
+             f"{capacity // 1024} KiB; {hint}")
         return
     env.Replace(PROJECT_DATA_DIR=staged)  # noqa: F821
 
