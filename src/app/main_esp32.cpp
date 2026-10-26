@@ -116,8 +116,8 @@ struct Esp32Services {
                 job->bssid = cfg.wifi.bssid;
             }
         }
-        // Priority 1, below the core task (5): SIO work always preempts the bring-up.
-        if (xTaskCreate(&wifi_start_task, "fn_wifi_start", 6144, job, 1, nullptr) != pdPASS) {
+        // Priority 1, below the core task (5), and on core 0 with the Wi-Fi driver, away from the SIO task.
+        if (xTaskCreatePinnedToCore(&wifi_start_task, "fn_wifi_start", 6144, job, 1, nullptr, 0) != pdPASS) {
             FN_LOGE(TAG, "Could not start the Wi-Fi bring-up task");
             delete job;
             wifi_starting.store(false);
@@ -536,7 +536,10 @@ extern "C" void app_main(void)
         // ... what to do?
     }
 
-    xTaskCreate(
+    // Core 1: the Wi-Fi driver task is pinned to core 0, and sharing a core with the radio costs the
+    // SIO task part of its 16 ms ACK window. The CMD interrupt and the SIO UART are set up by this
+    // task, so they land on core 1 too.
+    xTaskCreatePinnedToCore(
         &fujinet_core_task,
         "fujinet_core",
         // 4176, // would like this to be 4096, but yaml-cpp saving blows up. Might need to think about its long term usage!
@@ -544,6 +547,7 @@ extern "C" void app_main(void)
         8192,
         nullptr,
         5,
-        nullptr
+        nullptr,
+        1
     );
 }
