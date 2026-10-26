@@ -24,11 +24,6 @@
     "description": "Every VirtualDevice implementation: devices and management services.",
     "group": "overview"
   },
-  "gen_work_sources": {
-    "title": "Work sources",
-    "description": "What implements IWorkSource and can wake the core loop.",
-    "group": "overview"
-  },
   "gen_atari_ingress": {
     "title": "Atari SIO/NetSIO ingress",
     "description": "The router, the two SIO frontends and the POSIX NetSIO ingress.",
@@ -39,14 +34,9 @@
     "description": "Every IDiskImage format and IImageProbe the mount path uses.",
     "group": "overview"
   },
-  "gen_network_protocols": {
-    "title": "Network protocol backends",
-    "description": "Every INetworkProtocol backend.",
-    "group": "overview"
-  },
-  "gen_filesystems": {
-    "title": "Filesystems",
-    "description": "Every IFileSystem implementation.",
+  "gen_backends": {
+    "title": "Pluggable backends",
+    "description": "Every INetworkProtocol and IFileSystem implementation, and how the HTTP filesystem uses a protocol backend.",
     "group": "overview"
   },
   "ProtocolFujiBus": {

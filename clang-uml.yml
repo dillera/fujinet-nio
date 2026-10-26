@@ -214,18 +214,6 @@ diagrams:
       before:
         - "title Devices and services (VirtualDevice implementations)"
 
-  gen_work_sources:
-    type: class
-    include:
-      subclasses:
-        - fujinet::io::IWorkSource
-    exclude:
-      namespaces:
-        - std
-      access: [public, protected, private]   # names and relationships only
-    plantuml:
-      before:
-        - "title Work sources: what can wake the core loop"
 
   gen_atari_ingress:
     type: class
@@ -255,28 +243,16 @@ diagrams:
       before:
         - "title Disk image formats and format probes"
 
-  gen_network_protocols:
+  gen_backends:
     type: class
     include:
       subclasses:
         - fujinet::io::INetworkProtocol
-    exclude:
-      namespaces:
-        - std
-      access: [public, protected, private]   # names and relationships only
-    plantuml:
-      before:
-        - "title Network protocol backends"
-
-  gen_filesystems:
-    type: class
-    include:
-      subclasses:
         - fujinet::fs::IFileSystem
     exclude:
       namespaces:
         - std
-      access: [public, protected, private]   # names and relationships only
+      access: [public, protected, private]
     plantuml:
       before:
-        - "title Filesystems"
+        - "title Pluggable backends: network protocols and filesystems"
