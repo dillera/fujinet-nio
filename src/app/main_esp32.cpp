@@ -361,6 +361,9 @@ extern "C" void fujinet_core_task(void* arg)
 
         if (console_running) {
             console_running = console->step(0);
+            if (!console_running) {
+                FN_LOGW(TAG, "Console stopped: it will not respond until restart");
+            }
         }
 
 // Do this later when we want to check the water mark

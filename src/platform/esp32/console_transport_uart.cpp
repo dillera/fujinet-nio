@@ -1,5 +1,8 @@
 #include "fujinet/console/console_engine.h"
 
+#include "fujinet/core/logging.h"
+
+#include <cstdint>
 #include <string>
 
 extern "C" {
@@ -11,6 +14,12 @@ extern "C" {
 namespace fujinet::console {
 
 namespace {
+
+constexpr const char* TAG = "console";
+
+// Bring-up aid: a console that shows nothing could be a silent line or a stopped
+// task. Say what arrives on UART0, for the first few bytes only.
+constexpr unsigned kLoggedRxBytes = 32;
 
 class Esp32UartConsoleTransport final : public IConsoleTransport {
 public:
@@ -32,6 +41,12 @@ public:
         (void)uart_set_pin(port, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE,
                            UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
         (void)uart_flush_input(port);
+
+        size_t buffered = 0;
+        (void)uart_get_buffered_data_len(port, &buffered);
+        FN_LOGI(TAG, "UART0 console: driver %s, %u byte(s) waiting; type to see the bytes arrive",
+                uart_is_driver_installed(port) ? "installed" : "NOT installed",
+                static_cast<unsigned>(buffered));
     }
 
     bool read_byte(std::uint8_t& out, int timeout_ms) override
@@ -51,8 +66,18 @@ public:
         const TickType_t to = (timeout_ms < 0) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
 
         int n = uart_read_bytes(port, tmp, sizeof(tmp), to);
-        if (n <= 0) {
+        if (n < 0) {
+            if (!_read_error_logged) {
+                _read_error_logged = true;
+                FN_LOGE(TAG, "UART0 console read failed (%d): input will not work", n);
+            }
             return false;
+        }
+        if (n == 0) {
+            return false;
+        }
+        for (int i = 0; i < n && _rx_logged < kLoggedRxBytes; ++i, ++_rx_logged) {
+            FN_LOGI(TAG, "UART0 rx 0x%02x", static_cast<unsigned>(tmp[i]));
         }
 
         _rx.assign(reinterpret_cast<const char*>(tmp), static_cast<std::size_t>(n));
@@ -80,6 +105,8 @@ public:
 private:
     std::string _rx;
     std::size_t _rx_off{0};
+    unsigned _rx_logged{0};
+    bool _read_error_logged{false};
 };
 
 } // namespace
