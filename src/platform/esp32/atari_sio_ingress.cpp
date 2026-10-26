@@ -118,6 +118,7 @@ io::AtariSioStats AtariSioIngress::stats() const
     out.router = _router.stats();
     out.reply = _reply;
     out.poll_gap_us_max = _poll_gap_us_max;
+    out.poll_gap_at_us = _poll_gap_at_us;
     out.stale_replies_dropped = _nio.stale_replies_dropped();
     return out;
 }
@@ -129,6 +130,7 @@ void AtariSioIngress::reset_stats()
     _router.reset_stats();
     _reply.reset();
     _poll_gap_us_max = 0;
+    _poll_gap_at_us = 0;
 }
 
 void AtariSioIngress::note_cmd_edge() noexcept
@@ -145,8 +147,10 @@ void AtariSioIngress::poll()
     const auto now = static_cast<std::uint32_t>(esp_timer_get_time());
     const auto edges = _boundary.total_edges();
     // Only a gap in which the Atari signalled CMD can have cost a command.
-    if (_last_poll_us != 0 && edges != _edges_at_last_poll && now - _last_poll_us > _poll_gap_us_max)
+    if (_last_poll_us != 0 && edges != _edges_at_last_poll && now - _last_poll_us > _poll_gap_us_max) {
         _poll_gap_us_max = now - _last_poll_us;
+        _poll_gap_at_us = _last_poll_us;
+    }
     _last_poll_us = now;
     _edges_at_last_poll = edges;
     _capture.poll(_boundary, _router, *_uart,

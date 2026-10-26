@@ -92,11 +92,14 @@ struct Esp32Services {
     {
         std::unique_ptr<WifiStartJob> job(static_cast<WifiStartJob*>(arg));
         auto link = std::make_unique<fujinet::platform::esp32::Esp32WifiLink>();
+        const auto begun_us = esp_timer_get_time();
         link->init();
         if (job->connect) {
             link->set_bssid(job->bssid);
             link->connect(job->ssid, job->pass);
         }
+        FN_ELOG("[%u ms] wifi bring-up done in %u ms", (unsigned)(esp_timer_get_time()/1000),
+                (unsigned)((esp_timer_get_time() - begun_us)/1000));
         // Published for good: the link lives as long as the firmware.
         job->services->wifi_ready.store(link.release(), std::memory_order_release);
         vTaskDelete(nullptr);

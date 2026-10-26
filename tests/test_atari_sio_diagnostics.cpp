@@ -176,8 +176,9 @@ TEST_CASE("sio.status warns about late ACKs, slow handlers and a first edge befo
 
     f.stats = {};
     f.stats.poll_gap_us_max = 1'350'000;
+    f.stats.poll_gap_at_us = 1'650'000;
     text = run(*f.provider, {"sio.status"}).text;
-    CHECK(contains(text, "while CMD was active, 1350.0 ms"));
+    CHECK(contains(text, "while CMD was active, 1350.0 ms, starting at 1650"));
     CHECK(contains(text, "watch: the SIO task went 1350.0 ms without polling while CMD was active"));
 
     f.stats = {};

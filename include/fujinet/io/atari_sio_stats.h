@@ -78,6 +78,7 @@ struct AtariSioStats {
     // Longest time between two polls of the ingress during which the Atari signalled CMD (a stalled
     // SIO task that could miss a command). Idle gaps with no CMD edge are not counted.
     std::uint32_t poll_gap_us_max{0};
+    std::uint32_t poll_gap_at_us{0};   // when that longest gap began (same clock as first_edge_us)
     std::uint32_t stale_replies_dropped{0};  // native replies the Atari never read, discarded after 2 s
 };
 
