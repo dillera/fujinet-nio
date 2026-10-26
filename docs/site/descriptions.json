@@ -1,0 +1,60 @@
+{
+  "CoreIOArchitecture": {
+    "title": "Core / IO architecture",
+    "description": "fujinet-nio Core / IO / Device architecture."
+  },
+  "DiskDetectionArchitecture": {
+    "description": "Disk image detection and geometry ownership."
+  },
+  "DiskDetectionFlow": {
+    "description": "Disk image mount-time detection flow."
+  },
+  "PlatformChannels": {
+    "description": "Platform build profiles, channels and transports."
+  },
+  "ProtocolFujiBus": {
+    "title": "FujiBus protocol",
+    "description": "FujiBus packet format and SLIP encoding."
+  },
+  "RequestResponseFlow": {
+    "title": "Request / response flow",
+    "description": "The full request/response path over FujiBus and SLIP."
+  },
+  "seq_atari_fujibus_paths": {
+    "title": "Atari FujiBus paths",
+    "description": "Atari FujiBus channel and transport paths compared."
+  },
+  "seq_legacy_network_flow": {
+    "description": "Legacy network client flow (fujinet-firmware API, device IDs 0x71-0x78)."
+  },
+  "gen_core_io": {
+    "title": "Core + IO",
+    "description": "Classes in fujinet::core and fujinet::io, plus StorageManager."
+  },
+  "gen_core_io_sequence": {
+    "title": "Core IO request flow",
+    "description": "IOService::serviceOnce(): transports through to the handler."
+  },
+  "gen_core_device_sequence": {
+    "title": "Device dispatch flow",
+    "description": "IODeviceManager::handleRequest(): device lookup to VirtualDevice::handle()."
+  },
+  "gen_core_spider": {
+    "title": "Core spider",
+    "description": "Everything within four relationships of FujinetCore."
+  },
+  "gen_fs": {
+    "title": "Filesystem",
+    "description": "The filesystem classes (fujinet::fs)."
+  },
+  "gen_config": {
+    "description": "The configuration classes (fujinet::config)."
+  },
+  "gen_io_protocol": {
+    "title": "IO protocol",
+    "description": "The I/O protocol classes (fujinet::io::protocol)."
+  },
+  "gen_build_support": {
+    "description": "The build profile classes (fujinet::build)."
+  }
+}

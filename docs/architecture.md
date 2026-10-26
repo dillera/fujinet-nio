@@ -320,7 +320,7 @@ to `FujiBusTransport`.
 Diagram source:
 [`docs/uml/seq_atari_fujibus_paths.puml`](uml/seq_atari_fujibus_paths.puml).
 Rendered SVG:
-[`docs/images/seq_atari_fujibus_paths.svg`](images/seq_atari_fujibus_paths.svg).
+[`seq_atari_fujibus_paths`](https://markjfisher.github.io/fujinet-nio/uml/seq_atari_fujibus_paths.svg).
 
 ### POSIX RS-232 serial channel
 
@@ -1196,18 +1196,17 @@ We maintain PlantUML diagrams in `docs/uml/`:
 - `arch_platform_channels.puml` — how platform-specific channels plug into core  
 - `arch_protocol_fujibus.puml` — FujiBus/SLIP protocol diagram  
 
-The hand-authored diagrams are rendered with `scripts/gen_uml.sh --render-docs`
-into `docs/images/`, which is committed and referenced by docs.
-
-The code-derived diagrams (`gen_*`, from clang-uml) are not committed. The
-"Publish UML diagrams" workflow builds and tests the tree on every push to
-master and publishes them to GitHub Pages, so they only appear for a tree
-that compiles and passes:
+Rendered diagrams are not committed. The "Publish UML diagrams" workflow
+renders every diagram, the hand-authored ones in `docs/uml/` and the
+code-derived `gen_*` ones (clang-uml), and publishes them to GitHub Pages on
+every push to master whose build and unit tests pass:
+<https://markjfisher.github.io/fujinet-nio/>.
 
 ![Core + IO auto-gen UML](https://markjfisher.github.io/fujinet-nio/uml/gen_core_io.svg)
 
-The index of all generated diagrams is
-<https://markjfisher.github.io/fujinet-nio/>.
+To preview an edited hand-authored diagram locally, run
+`scripts/gen_uml.sh --render-only` (needs `plantuml`); the page itself is built
+by `scripts/build_site.py` from `docs/site/`.
 
 ---
 

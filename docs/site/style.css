@@ -1,0 +1,161 @@
+/* Styling for the diagrams site (scripts/build_site.py). Plain CSS, no build step. */
+
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #1c2330;
+  --muted: #5d6879;
+  --border: #dfe3ea;
+  --accent: #2563eb;
+  --accent-soft: #e8efff;
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 4px 12px rgb(16 24 40 / 6%);
+  --radius: 12px;
+  --structure: #0f766e;
+  --sequence: #9333ea;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f141b;
+    --surface: #171e28;
+    --text: #e6eaf0;
+    --muted: #97a3b6;
+    --border: #283243;
+    --accent: #7aa2ff;
+    --accent-soft: #1d2a45;
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 4px 12px rgb(0 0 0 / 30%);
+    --structure: #5eead4;
+    --sequence: #d8b4fe;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+a { color: var(--accent); }
+
+.wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 32px 0 24px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.9rem;
+  letter-spacing: -0.02em;
+}
+
+h1 span { color: var(--muted); font-weight: 400; }
+
+.sub { margin: 6px 0 0; color: var(--muted); }
+
+main { padding-top: 8px; padding-bottom: 32px; }
+
+section { margin-top: 32px; }
+
+h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: -0.01em;
+}
+
+.blurb { margin: 2px 0 16px; color: var(--muted); }
+
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  color: inherit;
+  text-decoration: none;
+  overflow: hidden;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+.card:hover,
+.card:focus-visible {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Diagrams are drawn for a light background, so keep the thumbnail light. */
+.thumb {
+  display: block;
+  height: 170px;
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+}
+
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 8px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px 14px;
+}
+
+.title { font-weight: 600; }
+
+.desc { color: var(--muted); font-size: 0.9rem; }
+
+.desc:empty { display: none; }
+
+.file {
+  margin-top: 4px;
+  color: var(--muted);
+  font: 0.78rem ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.badge {
+  align-self: flex-start;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge.structure { color: var(--structure); }
+.badge.sequence { color: var(--sequence); }
+
+footer {
+  border-top: 1px solid var(--border);
+  padding: 16px 0 32px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 520px) {
+  header { padding: 24px 0 18px; }
+  h1 { font-size: 1.5rem; }
+}
