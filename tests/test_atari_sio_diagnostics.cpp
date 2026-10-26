@@ -175,6 +175,12 @@ TEST_CASE("sio.status warns about late ACKs, slow handlers and a first edge befo
     CHECK_FALSE(contains(run(*f.provider, {"sio.status"}).text, "watch:"));
 
     f.stats = {};
+    f.stats.poll_gap_us_max = 1'350'000;
+    text = run(*f.provider, {"sio.status"}).text;
+    CHECK(contains(text, "poll gap: longest time the SIO task went without polling, 1350.0 ms"));
+    CHECK(contains(text, "watch: the SIO task went 1350.0 ms without polling"));
+
+    f.stats = {};
     f.stats.reply.ready_us = 2'000'000;
     f.stats.first_edge_us = 1'900'000;
     CHECK(contains(run(*f.provider, {"sio.status"}).text, "watch: the first CMD edge came before the ingress was ready"));

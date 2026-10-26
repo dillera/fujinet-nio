@@ -316,3 +316,43 @@ TEST_CASE("Atari native NIO frontend exchanges a full 512-byte FujiBus packet")
                                         AtariSioNioFrontend::capacity) == terminal.bytes.back());
     CHECK(harness.frontend.begin(fixture("reset-clears").frame).bytes == data_reply({0, 0, 0}));
 }
+
+namespace {
+std::uint64_t g_fake_now_us = 0;
+std::uint64_t fake_clock() { return g_fake_now_us; }
+}
+
+TEST_CASE("Atari native NIO frontend drops a reply nobody read once it is stale")
+{
+    Harness harness;
+    harness.frontend.set_clock(&fake_clock);
+    const auto write = fixture("w-core-dispatch");
+    const auto poll = fixture("p-core-dispatch-ready");
+
+    g_fake_now_us = 1'000'000;
+    send_valid_write(harness, write);
+    REQUIRE(harness.device->requests.size() == 1);
+
+    // Fresh: the abandoned reply still holds the endpoint, as the wire contract says.
+    g_fake_now_us += AtariSioNioFrontend::stale_reply_us - 1;
+    CHECK_FALSE(harness.frontend.begin(write.frame).accepted);
+    CHECK(harness.frontend.stale_replies_dropped() == 0);
+    // P and R never discard, however old the reply is.
+    g_fake_now_us += 10'000'000;
+    CHECK(harness.frontend.begin(poll.frame).bytes == data_reply({2, 9, 0}));
+    CHECK(harness.frontend.stale_replies_dropped() == 0);
+
+    // Stale: a new W starts a fresh transaction.
+    const auto fresh = harness.frontend.begin(write.frame);
+    CHECK(fresh.accepted);
+    CHECK(harness.frontend.stale_replies_dropped() == 1);
+}
+
+TEST_CASE("Atari native NIO frontend without a clock never expires a reply")
+{
+    Harness harness;
+    const auto write = fixture("w-core-dispatch");
+    send_valid_write(harness, write);
+    CHECK_FALSE(harness.frontend.begin(write.frame).accepted);
+    CHECK(harness.frontend.stale_replies_dropped() == 0);
+}

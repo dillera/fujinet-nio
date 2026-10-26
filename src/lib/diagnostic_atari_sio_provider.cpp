@@ -124,6 +124,7 @@ private:
         line(text, "react: CMD release -> start of processing, max " + ms1(s.capture.lag_us_max));
         line(text, "reply: CMD release -> first byte, last " + ms1(r.reply_us_last) + ", max " + ms1(r.reply_us_max) +
                        ", over 16 ms: " + n(r.reply_over_deadline) + "   (replies " + n(r.replies) + ")");
+        line(text, "poll gap: longest time the SIO task went without polling, " + ms1(s.poll_gap_us_max));
         line(text, "handler: last " + ms1(r.handle_us_last) + ", max " + ms1(r.handle_us_max));
         if (s.router.has_last_frame) {
             const auto& f = s.router.last_frame;
@@ -158,6 +159,10 @@ private:
         if (r.handle_us_max >= slow_handler_us) {
             out.push_back("a request spent " + ms1(r.handle_us_max) + " in its handler: slow work on the SIO task "
                           "stalls every reply, and the Atari times out and leaves the native endpoint stuck");
+        }
+        if (s.poll_gap_us_max >= slow_handler_us) {
+            out.push_back("the SIO task went " + ms1(s.poll_gap_us_max) + " without polling: something blocked it "
+                          "(Wi-Fi bring-up, a slow handler); commands sent meanwhile are missed");
         }
         if (s.first_edge_us != 0 && r.ready_us != 0 && s.first_edge_us <= r.ready_us) {
             out.push_back("the first CMD edge came before the ingress was ready: early commands may have been missed");

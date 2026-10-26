@@ -37,6 +37,14 @@ public:
     // distinct from clearing an interrupted W/P/R transaction.
     void reset_host();
 
+    // A reply the Atari never read (its call timed out) would hold the endpoint busy and answer
+    // every new Q/W with NAK. With a clock set, a Q or W arriving this long after the reply became
+    // ready discards it. Without a clock (tests, POSIX) nothing expires. P and R never discard.
+    using Clock = std::uint64_t (*)();
+    static constexpr std::uint64_t stale_reply_us = 2'000'000;
+    void set_clock(Clock clock) { _clock = clock; }
+    std::uint32_t stale_replies_dropped() const { return _stale_dropped; }
+
     static std::uint8_t checksum(const std::uint8_t* data, std::size_t len);
 
 private:
@@ -47,6 +55,7 @@ private:
     static constexpr std::uint8_t nak = 'N';
     static constexpr std::uint8_t complete = 'C';
 
+    void drop_stale_reply();
     Result reject() const;
     Result data_reply(const std::vector<std::uint8_t>& data) const;
     std::uint16_t aux(const std::array<std::uint8_t, command_bytes>& command) const;
@@ -56,6 +65,9 @@ private:
     State _state{State::Idle};
     std::size_t _write_bytes{0};
     RequestID _next_request_id{1};
+    Clock _clock{nullptr};
+    std::uint64_t _ready_at_us{0};
+    std::uint32_t _stale_dropped{0};
     std::vector<std::uint8_t> _response;
 };
 

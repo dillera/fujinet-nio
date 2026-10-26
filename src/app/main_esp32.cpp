@@ -42,8 +42,10 @@ extern "C" {
 #include "fujinet/diag/diagnostic_registry.h"
 #include "fujinet/fs/boot_mount.h"
 
+#include <atomic>
 #include <chrono>
 #include <memory>
+#include <string>
 #include <vector>
 #include <unistd.h>
 
@@ -58,7 +60,6 @@ struct Esp32Services {
 
     fujinet::core::SystemEvents* events{nullptr};
 
-    std::unique_ptr<fujinet::platform::esp32::Esp32WifiLink> wifi;
     std::unique_ptr<fujinet::net::NetworkLinkMonitor> wifiMon;
 
     // Starts SNTP when NetworkEvent::GotIp occurs.
@@ -72,27 +73,65 @@ struct Esp32Services {
 
     bool phase1_started{false};
 
-    fujinet::net::INetworkLink* ensure_wifi(bool connect_from_config = false)
+    // Wi-Fi bring-up (esp_wifi_init, starting the radio) takes a second or more. It must not run
+    // on the core task: that task also serves SIO, and a stalled SIO task misses the Atari's boot
+    // commands. A low-priority task builds and connects the link, then publishes it here; until
+    // then the Wi-Fi service answers "not ready" at once.
+    std::atomic<fujinet::platform::esp32::Esp32WifiLink*> wifi_ready{nullptr};
+    std::atomic<bool> wifi_starting{false};
+
+    struct WifiStartJob {
+        Esp32Services* services;
+        bool connect;
+        std::string ssid;
+        std::string pass;
+        std::string bssid;
+    };
+
+    static void wifi_start_task(void* arg)
     {
-        if (!events) {
-            return nullptr;
+        std::unique_ptr<WifiStartJob> job(static_cast<WifiStartJob*>(arg));
+        auto link = std::make_unique<fujinet::platform::esp32::Esp32WifiLink>();
+        link->init();
+        if (job->connect) {
+            link->set_bssid(job->bssid);
+            link->connect(job->ssid, job->pass);
         }
+        // Published for good: the link lives as long as the firmware.
+        job->services->wifi_ready.store(link.release(), std::memory_order_release);
+        vTaskDelete(nullptr);
+    }
 
-        if (!wifi) {
-            wifi = std::make_unique<fujinet::platform::esp32::Esp32WifiLink>();
-            wifi->init();
-            wifiMon = std::make_unique<fujinet::net::NetworkLinkMonitor>(*events, *wifi);
-        }
+    void start_wifi_async(bool connect_from_config)
+    {
+        if (!events || wifi_starting.exchange(true)) return;
 
+        auto* job = new WifiStartJob{this, false, {}, {}, {}};
         if (connect_from_config && fuji) {
             const auto& cfg = fuji->config();
             if (cfg.wifi.enabled && !cfg.wifi.ssid.empty()) {
-                wifi->set_bssid(cfg.wifi.bssid);
-                wifi->connect(cfg.wifi.ssid, cfg.wifi.passphrase);
+                job->connect = true;
+                job->ssid = cfg.wifi.ssid;
+                job->pass = cfg.wifi.passphrase;
+                job->bssid = cfg.wifi.bssid;
             }
         }
+        // Priority 1, below the core task (5): SIO work always preempts the bring-up.
+        if (xTaskCreate(&wifi_start_task, "fn_wifi_start", 6144, job, 1, nullptr) != pdPASS) {
+            FN_LOGE(TAG, "Could not start the Wi-Fi bring-up task");
+            delete job;
+            wifi_starting.store(false);
+        }
+    }
 
-        return wifi.get();
+    // The link once it is up, otherwise nullptr. A request that needs Wi-Fi before phase 1 had
+    // configured it starts the bring-up in the background and is answered "not ready".
+    fujinet::net::INetworkLink* ensure_wifi(bool connect_from_config = false)
+    {
+        auto* link = wifi_ready.load(std::memory_order_acquire);
+        // Before phase 1 has decided whether to connect, only report "not up yet".
+        if (!link && (phase1_started || connect_from_config)) start_wifi_async(connect_from_config);
+        return link;
     }
 
     void init_phase0(fujinet::core::FujinetCore& core)
@@ -156,8 +195,12 @@ struct Esp32Services {
 
     void poll()
     {
-        if (wifi) wifi->poll();
-        if (wifiMon) wifiMon->poll();
+        auto* link = wifi_ready.load(std::memory_order_acquire);
+        if (!link) return;
+        // Subscribes to the event bus, so it is created here, on the core task, not by the bring-up.
+        if (!wifiMon) wifiMon = std::make_unique<fujinet::net::NetworkLinkMonitor>(*events, *link);
+        link->poll();
+        wifiMon->poll();
     }
 };
 } // namespace

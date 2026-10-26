@@ -115,9 +115,12 @@ tight, so this is how to see what the Atari is doing:
   "ready" and "the Atari spoke" is visible; `react` is the worst CMD-release-to-processing
   delay (how fast the loop reacts); `reply` is CMD release to the first reply byte, last and
   worst, with a count of those later than 16 ms (the ACK deadline); `handler` is how long a
-  request spent between starting processing and replying. `watch:` lines flag a late ACK, a
-  handler over 100 ms (slow work on the SIO task stalls every reply, and the Atari times out
-  and leaves the native endpoint stuck) and a first CMD edge before the ingress was ready.
+  request spent between starting processing and replying; `poll gap` is the longest time the SIO
+  task went without polling. `watch:` lines flag a late ACK, a handler over 100 ms (slow work on
+  the SIO task stalls every reply and the Atari times out), a poll gap over 100 ms (something
+  blocked the task, such as Wi-Fi bring-up, which now runs in its own low-priority task) and a
+  first CMD edge before the ingress was ready. A native reply the Atari never read is discarded
+  by the next Q or W after 2 s, so a timed-out call no longer leaves the endpoint stuck.
 - `sio.reset` — zero the counters; do this before powering the Atari. The ingress-ready time is
   kept, since it is not a counter
 

@@ -56,6 +56,7 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
     , _router(_disk, _nio, [this](const std::vector<std::uint8_t>& bytes) { send(bytes); })
 {
     _owner_task = xTaskGetCurrentTaskHandle();
+    _nio.set_clock([]() -> std::uint64_t { return static_cast<std::uint64_t>(esp_timer_get_time()); });
     const auto& pins = pinmap();
     configure_sio_lines(pins);
     _cmd_pin = pins.sio.cmd;
@@ -116,6 +117,7 @@ io::AtariSioStats AtariSioIngress::stats() const
     out.capture = _capture.stats();
     out.router = _router.stats();
     out.reply = _reply;
+    out.poll_gap_us_max = _poll_gap_us_max;
     return out;
 }
 
@@ -125,6 +127,7 @@ void AtariSioIngress::reset_stats()
     _capture.reset_stats();
     _router.reset_stats();
     _reply.reset();
+    _poll_gap_us_max = 0;
 }
 
 void AtariSioIngress::note_cmd_edge() noexcept
@@ -138,6 +141,9 @@ void AtariSioIngress::note_cmd_edge() noexcept
 void AtariSioIngress::poll()
 {
     if (!_uart || _cmd_pin < 0 || _cmd_pin >= GPIO_NUM_MAX) return;
+    const auto now = static_cast<std::uint32_t>(esp_timer_get_time());
+    if (_last_poll_us != 0 && now - _last_poll_us > _poll_gap_us_max) _poll_gap_us_max = now - _last_poll_us;
+    _last_poll_us = now;
     _capture.poll(_boundary, _router, *_uart,
                   [this] { return gpio_get_level(static_cast<gpio_num_t>(_cmd_pin)) == 0; },
                   [] { return esp_timer_get_time(); });

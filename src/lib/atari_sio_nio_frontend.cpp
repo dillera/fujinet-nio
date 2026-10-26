@@ -65,6 +65,7 @@ AtariSioNioFrontend::Result AtariSioNioFrontend::begin(
     const auto length = aux(command);
     switch (command[1]) {
     case command_query:
+        drop_stale_reply();
         if (_state != State::Idle || length != 0) return reject();
         return data_reply({wire_revision,
                            static_cast<std::uint8_t>(capacity & 0xffU),
@@ -72,6 +73,7 @@ AtariSioNioFrontend::Result AtariSioNioFrontend::begin(
                            feature_flags});
 
     case command_write:
+        drop_stale_reply();
         if (_state != State::Idle || length == 0 || length > capacity) return reject();
         _state = State::Receiving;
         _write_bytes = length;
@@ -136,7 +138,16 @@ AtariSioNioFrontend::Result AtariSioNioFrontend::complete_write(const std::uint8
     _write_bytes = 0;
     _response = std::move(response);
     _state = State::Ready;
+    _ready_at_us = _clock ? _clock() : 0;
     return Result{{ack, complete}, 0, true};
+}
+
+void AtariSioNioFrontend::drop_stale_reply()
+{
+    if (_state != State::Ready || !_clock) return;
+    if (_clock() - _ready_at_us < stale_reply_us) return;
+    reset();
+    ++_stale_dropped;
 }
 
 void AtariSioNioFrontend::abort_write()

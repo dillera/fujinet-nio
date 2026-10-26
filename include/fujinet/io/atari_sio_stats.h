@@ -75,6 +75,7 @@ struct AtariSioStats {
     AtariSioCaptureStats capture;
     AtariSioRouterStats router;
     AtariSioReplyStats reply;
+    std::uint32_t poll_gap_us_max{0};  // longest time between two polls of the ingress (a stalled SIO task)
 };
 
 } // namespace fujinet::io
