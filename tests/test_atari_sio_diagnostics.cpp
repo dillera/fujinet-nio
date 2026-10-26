@@ -177,8 +177,14 @@ TEST_CASE("sio.status warns about late ACKs, slow handlers and a first edge befo
     f.stats = {};
     f.stats.poll_gap_us_max = 1'350'000;
     text = run(*f.provider, {"sio.status"}).text;
-    CHECK(contains(text, "poll gap: longest time the SIO task went without polling, 1350.0 ms"));
-    CHECK(contains(text, "watch: the SIO task went 1350.0 ms without polling"));
+    CHECK(contains(text, "while CMD was active, 1350.0 ms"));
+    CHECK(contains(text, "watch: the SIO task went 1350.0 ms without polling while CMD was active"));
+
+    f.stats = {};
+    f.stats.stale_replies_dropped = 3;
+    CHECK(contains(run(*f.provider, {"sio.status"}).text, "native replies never read, discarded: 3"));
+    f.stats.stale_replies_dropped = 0;
+    CHECK_FALSE(contains(run(*f.provider, {"sio.status"}).text, "never read"));
 
     f.stats = {};
     f.stats.reply.ready_us = 2'000'000;

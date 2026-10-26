@@ -45,6 +45,7 @@ private:
     io::AtariSioCapture _capture;
     io::AtariSioReplyStats _reply;
     std::uint32_t _last_poll_us{0};
+    std::uint32_t _edges_at_last_poll{0};
     std::uint32_t _poll_gap_us_max{0};
     int _cmd_pin{-1};
     void* _owner_task{nullptr};

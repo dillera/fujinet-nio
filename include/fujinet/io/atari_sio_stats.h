@@ -75,7 +75,10 @@ struct AtariSioStats {
     AtariSioCaptureStats capture;
     AtariSioRouterStats router;
     AtariSioReplyStats reply;
-    std::uint32_t poll_gap_us_max{0};  // longest time between two polls of the ingress (a stalled SIO task)
+    // Longest time between two polls of the ingress during which the Atari signalled CMD (a stalled
+    // SIO task that could miss a command). Idle gaps with no CMD edge are not counted.
+    std::uint32_t poll_gap_us_max{0};
+    std::uint32_t stale_replies_dropped{0};  // native replies the Atari never read, discarded after 2 s
 };
 
 } // namespace fujinet::io
