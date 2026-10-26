@@ -124,7 +124,7 @@ private:
         line(text, "react: CMD release -> start of processing, max " + ms1(s.capture.lag_us_max));
         line(text, "reply: CMD release -> first byte, last " + ms1(r.reply_us_last) + ", max " + ms1(r.reply_us_max) +
                        ", over 16 ms: " + n(r.reply_over_deadline) + "   (replies " + n(r.replies) + ")");
-        line(text, "poll gap: longest time the SIO task went without polling while CMD was active, " + ms1(s.poll_gap_us_max) +
+        line(text, "poll gap: longest time between polls (not counting serving a command) while CMD was active, " + ms1(s.poll_gap_us_max) +
                        (s.poll_gap_us_max ? ", starting at " + at_ms(s.poll_gap_at_us) + " ms" : ""));
         if (s.stale_replies_dropped != 0)
             line(text, "native replies never read, discarded: " + n(s.stale_replies_dropped));

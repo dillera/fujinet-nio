@@ -58,14 +58,16 @@ question, not a firmware one.
   the CMD input (GPIO39), not a firmware fault. Frames are still served (the Atari retries), so
   it costs a little time only. If it ever matters, look at the CMD input hardware (pull-up,
   filtering) before the firmware.
-- The `poll gap` max counts only gaps during which a CMD edge occurred. It is consistently
-  about 170 ms (240 ms with Wi-Fi off, under the older any-gap metric), and `sio.status` now
-  says when the worst gap began. It is not phase 1: with Wi-Fi off the SIO task, the
-  `phase 1 done in` log line reads 1 ms. Prime suspect is the radio starting (PHY calibration and
-  NVS writes disable the flash cache on both cores for 100-200 ms), which also coincides with the
-  CMD transient at about 1.65 s. Compare the gap's start time with the `wifi bring-up done in`
-  log line to confirm. The Atari's first command is about 1.3 s later, so nothing is lost on a
-  cold boot; this would matter only if the Atari started talking sooner.
+- The `poll gap` metric first read a constant 169-174 ms (240 ms with Wi-Fi off), which suggested phase 1 and then the
+  radio start. Neither was it: phase 1 takes 1 ms, Wi-Fi bring-up takes
+  127 ms on its own task, and the worst gap began at 3.5 s and 12.6 s, in the middle of
+  traffic. It was the SIO task transmitting one 256-byte sector: 259 bytes at 19200 baud is
+  about 135 ms, plus 2 ms between each 16-byte chunk (`tx_chunk_gap_us`), and `send()` blocks
+  in `flushOutput()` until done. The Atari's next command can arrive before that returns, which
+  made the gap look "CMD active". It is not a stall. The metric now runs from the end of one
+  poll to the start of the next, so serving a command is excluded and only other work (the
+  core tick, services, console) counts. Slow handlers show in `handler`.
+- A real stall shows as `react` growing.
 - The `Registered ...` lines are buffered stdout and can appear out of order, with late monitor
   timestamps, relative to the early `[N ms]` lines. Trust the `[N ms]` lines for timing.
 
@@ -79,8 +81,6 @@ question, not a firmware one.
 
 ## Open items
 
-- Confirm what the roughly 170 ms poll gap is (suspected radio start / flash cache stall); if it
-  is, decide whether the Atari's first command can ever arrive that early.
 - High-speed SIO (HSIO) has not been measured; the numbers above are at 19200 baud.
 - FTESTNIO crashes with the BASIC cartridge enabled; boot it with BASIC off (it ends on the
   SELF TEST screen).

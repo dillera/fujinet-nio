@@ -146,16 +146,18 @@ void AtariSioIngress::poll()
     if (!_uart || _cmd_pin < 0 || _cmd_pin >= GPIO_NUM_MAX) return;
     const auto now = static_cast<std::uint32_t>(esp_timer_get_time());
     const auto edges = _boundary.total_edges();
-    // Only a gap in which the Atari signalled CMD can have cost a command.
+    // The gap is from the end of one poll to the start of the next, so it excludes serving a command:
+    // sending a 256-byte sector blocks the poll for about 170 ms at 19200 baud, and the line is busy
+    // then anyway. Only a gap in which the Atari signalled CMD can have cost a command.
     if (_last_poll_us != 0 && edges != _edges_at_last_poll && now - _last_poll_us > _poll_gap_us_max) {
         _poll_gap_us_max = now - _last_poll_us;
         _poll_gap_at_us = _last_poll_us;
     }
-    _last_poll_us = now;
-    _edges_at_last_poll = edges;
     _capture.poll(_boundary, _router, *_uart,
                   [this] { return gpio_get_level(static_cast<gpio_num_t>(_cmd_pin)) == 0; },
                   [] { return esp_timer_get_time(); });
+    _last_poll_us = static_cast<std::uint32_t>(esp_timer_get_time());
+    _edges_at_last_poll = _boundary.total_edges();
 }
 
 } // namespace fujinet::platform::esp32
