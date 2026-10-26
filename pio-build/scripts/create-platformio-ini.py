@@ -40,7 +40,11 @@ def create_local_ini(board_name, local_file_name):
         configfile.write("; distfiles/esp32-data/boot, space or comma separated. Unset packs none (all of them\n")
         configfile.write("; do not fit the storage partition); Atari boards default to atari.\n")
         configfile.write("; boot_images = amiga/wb32\n\n")
-        configfile.write("[env]\n;build_flags += \n")
+        configfile.write("[env]\n")
+        configfile.write("; Serial port for -u / -f / -m (default /dev/ttyACM0). PlatformIO reads these from\n")
+        configfile.write("; [env], not [fujinet]. A stable name via a udev rule: docs/diagnostics.md.\n")
+        configfile.write(";upload_port = /dev/ttyUSB0\n;monitor_port = /dev/ttyUSB0\n")
+        configfile.write(";build_flags += \n")
     print(f"{local_file_name} file created with build_board = {board_name}")
 
 def merge_ini_files(base_file, local_file, output_file):
