@@ -405,7 +405,11 @@ extern "C" void fujinet_core_task(void* arg)
 
         // start phase-1 services after a small delay
         if (!services.phase1_started && core.tick_count() >= phase1_at) {
+            // Timed because it runs on the SIO task: whatever it takes, SIO is not served meanwhile.
+            const auto phase1_start_us = esp_timer_get_time();
             services.start_phase1(core);
+            FN_ELOG("[%u ms] phase 1 done in %u ms", (unsigned)(esp_timer_get_time()/1000),
+                    (unsigned)((esp_timer_get_time() - phase1_start_us)/1000));
         }
 
         services.poll();
@@ -496,7 +500,7 @@ extern "C" void app_main(void)
     esp_log_level_set("tusb_desc",   ESP_LOG_ERROR);
     esp_log_level_set("TinyUSB",     ESP_LOG_ERROR);
 
-    FN_ELOG("fujinet-nio - (ESP32-S3 / ESP-IDF) starting up");
+    FN_ELOG("fujinet-nio - starting up");
 
     // Platform bootstrap: NVS init (required by Wi-Fi and other ESP-IDF subsystems).
     {
