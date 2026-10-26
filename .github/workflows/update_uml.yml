@@ -50,11 +50,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             clang-uml \
-            plantuml \
             graphviz \
             cmake \
             ninja-build \
             build-essential
+
+      # The Ubuntu package is years old (1.2020.02) and rejects current syntax, so
+      # use the same pinned release as local development. Java is preinstalled.
+      - name: Install PlantUML
+        env:
+          PLANTUML_VERSION: "1.2026.8"
+          PLANTUML_SHA256: 5e1ecfa8ecd32c90b03bbf3b1eb6f020943f98ab0fcf4032be31a0002ee2c462
+        run: |
+          curl -fsSL -o plantuml.jar \
+            "https://github.com/plantuml/plantuml/releases/download/v${PLANTUML_VERSION}/plantuml-${PLANTUML_VERSION}.jar"
+          echo "${PLANTUML_SHA256}  plantuml.jar" | sha256sum -c -
+          sudo install -D -m 0644 plantuml.jar /usr/local/share/plantuml/plantuml.jar
+          printf '#!/bin/sh\nexec java -jar /usr/local/share/plantuml/plantuml.jar "$@"\n' | sudo tee /usr/local/bin/plantuml >/dev/null
+          sudo chmod +x /usr/local/bin/plantuml
+          rm plantuml.jar
+          plantuml -version | head -1
 
       # Builds, runs the unit tests (a failure stops the job, so nothing is
       # published from a tree that does not build or pass), then generates.
