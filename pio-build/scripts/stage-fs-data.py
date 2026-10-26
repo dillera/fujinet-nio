@@ -8,8 +8,10 @@
 #   [fujinet]
 #   boot_images = amiga/wb32
 #
-# Empty or "all" packs everything; "none" packs no images. FN_BOOT_IMAGES in
-# the environment overrides the setting for one build. The selection is copied
+# Unset or empty packs no images (every image together does not fit the storage
+# partition, so flashing none is the safe default); "none" says so explicitly and
+# "all" packs everything, which fails if it does not fit. FN_BOOT_IMAGES in the
+# environment overrides the setting for one build. The selection is copied
 # to $BUILD_DIR/fs-data, which becomes the filesystem image's source, and the
 # build stops if it won't fit the storage partition.
 
@@ -89,7 +91,7 @@ def stage():
     data_dir = env.subst("$PROJECT_DATA_DIR")  # noqa: F821
     boot_dir = os.path.join(data_dir, "boot")
     items, source = selection()
-    everything = not items or items == ["all"]
+    everything = items == ["all"]
     images = available(boot_dir) if os.path.isdir(boot_dir) else []
 
     if not everything:
@@ -124,6 +126,8 @@ def stage():
                 shutil.copy2(src, dst)
 
     chosen = "all" if everything else (", ".join(items) or "none")
+    if not everything and not items and source == "boot_images not set":
+        chosen = "none (set boot_images in platformio.local.ini to flash a boot disk, e.g. boot_images = atari)"
     print(f"[boot_images] {chosen} (from {source})")
     # Build times make a stale image obvious before it is flashed.
     for image in available(os.path.join(staged, "boot")):
@@ -134,9 +138,7 @@ def stage():
     needed = littlefs_bytes(staged)
     capacity = fs_partition_size()
     if capacity is not None and needed > capacity:
-        hint = ("boot_images is not set, so every image was selected: set it in the [fujinet] section of "
-                "platformio.local.ini, e.g. boot_images = atari" if everything
-                else "choose fewer images with boot_images")
+        hint = "choose fewer images with boot_images"
         fail(f"selection needs about {needed // 1024} KiB but the storage partition holds "
              f"{capacity // 1024} KiB; {hint}")
         return

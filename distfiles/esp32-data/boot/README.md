@@ -13,8 +13,9 @@ boot_images = amiga/wb32
 ; boot_images = msdos
 ```
 
-Unset or `all` packs everything, which is more than the storage partition of the
-16 MB boards holds (about 4 MiB), so set it. `none` packs no images, and
+Unset, empty or `none` packs no images: a board with no setting flashes no boot
+disk. `all` packs everything, which is more than the storage partition of the
+16 MB boards holds (about 4 MiB), so the build stops; name what the board needs.
 `FN_BOOT_IMAGES=... ./build.sh -f` overrides the setting for one build. The
 build lists what it packs, and stops before uploading if a name doesn't exist or
 the selection won't fit (`pio-build/scripts/stage-fs-data.py`).
