@@ -1,11 +1,46 @@
 #include "fujinet/platform/posix/http_network_protocol_curl.h"
 
+namespace fujinet::platform::posix {
+
+bool curl_tls_is_openssl(std::string_view curlSslVersion, std::string_view opensslVersion)
+{
+    // "OpenSSL 3.0.13 30 Jan 2024" -> "3.0.13"
+    constexpr std::string_view prefix = "OpenSSL ";
+    if (opensslVersion.substr(0, prefix.size()) != prefix) {
+        return false;
+    }
+    std::string_view ours = opensslVersion.substr(prefix.size());
+    ours = ours.substr(0, ours.find(' '));
+    if (ours.empty()) {
+        return false;
+    }
+
+    // curl names every TLS library it was built with and brackets the ones it
+    // is not using: "(SecureTransport) LibreSSL/3.3.6".
+    while (!curlSslVersion.empty()) {
+        const std::size_t end = curlSslVersion.find(' ');
+        const std::string_view token = curlSslVersion.substr(0, end);
+        if (!token.empty() && token.front() != '(') {
+            return token.substr(0, 8) == "OpenSSL/" && token.substr(8) == ours;
+        }
+        if (end == std::string_view::npos) {
+            break;
+        }
+        curlSslVersion.remove_prefix(end + 1);
+    }
+    return false;
+}
+
+} // namespace fujinet::platform::posix
+
 #if FN_WITH_CURL == 1
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <string>
 
@@ -115,7 +150,66 @@ CURLcode replace_with_test_ca_sslctx_cb(CURL* curl, void* sslctx, void* /*userda
     return CURLE_OK;
 }
 
+// The callbacks above only work on an SSL_CTX from the OpenSSL we link; the
+// system curl on macOS passes LibreSSL's.
+bool curl_ssl_ctx_is_ours()
+{
+    static const bool ours = [] {
+        const char* curlSsl = curl_version_info(CURLVERSION_NOW)->ssl_version;
+        return curl_tls_is_openssl(curlSsl ? curlSsl : "", OpenSSL_version(OPENSSL_VERSION));
+    }();
+    return ours;
+}
+
 #endif
+
+// curl's default CA file followed by the test CA, or empty if there is none.
+std::string platform_roots_plus_test_ca(CURL* curl)
+{
+#if LIBCURL_VERSION_NUM >= 0x075400
+    char* path = nullptr;
+    if (curl_easy_getinfo(curl, CURLINFO_CAINFO, &path) != CURLE_OK || !path) {
+        return {};
+    }
+    std::ifstream in(path, std::ios::binary);
+    std::string bundle{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    if (bundle.empty()) {
+        return {};
+    }
+    bundle += '\n';
+    bundle += fujinet::net::test_ca_cert_pem;
+    return bundle;
+#else
+    (void)curl;
+    return {};
+#endif
+}
+
+// Without the SSL_CTX callbacks, the test CA goes in as an in-memory CA
+// bundle, which every curl TLS backend accepts.
+void use_test_ca_bundle(CURL* curl, bool withPlatformRoots)
+{
+#if LIBCURL_VERSION_NUM >= 0x074D00
+    static const std::string additive = platform_roots_plus_test_ca(curl);
+    const std::string_view pem = withPlatformRoots
+        ? std::string_view(additive)
+        : std::string_view(fujinet::net::test_ca_cert_pem, fujinet::net::test_ca_cert_size);
+    if (!pem.empty()) {
+        curl_blob blob{const_cast<char*>(pem.data()), pem.size(), CURL_BLOB_NOCOPY};
+        if (curl_easy_setopt(curl, CURLOPT_CAINFO_BLOB, &blob) == CURLE_OK) {
+            return;
+        }
+    }
+#else
+    (void)curl;
+#endif
+    static bool warned = false;
+    if (!warned) {
+        warned = true;
+        FN_LOGW("platform", "HTTPS: cannot add the FujiNet test CA in this curl build; %s",
+                withPlatformRoots ? "using platform roots only" : "HTTPS will fail");
+    }
+}
 
 } // namespace
 
@@ -383,18 +477,23 @@ io::StatusCode HttpNetworkProtocolCurl::open(const io::NetworkOpenRequest& req)
     case fujinet::net::HttpsTrustPolicy::TestCaOnly:
         curl_easy_setopt(_curl, CURLOPT_CAINFO, nullptr);
 #if FN_WITH_OPENSSL == 1
-        curl_easy_setopt(_curl, CURLOPT_SSL_CTX_FUNCTION, &replace_with_test_ca_sslctx_cb);
-#else
-        FN_LOGW("platform", "HTTPS: test CA only mode requires OpenSSL-backed curl");
+        if (curl_ssl_ctx_is_ours()) {
+            curl_easy_setopt(_curl, CURLOPT_SSL_CTX_FUNCTION, &replace_with_test_ca_sslctx_cb);
+            break;
+        }
 #endif
+        curl_easy_setopt(_curl, CURLOPT_CAPATH, nullptr);
+        use_test_ca_bundle(_curl, false);
         break;
 
     case fujinet::net::HttpsTrustPolicy::PlatformPlusTestCa:
 #if FN_WITH_OPENSSL == 1
-        curl_easy_setopt(_curl, CURLOPT_SSL_CTX_FUNCTION, &add_test_ca_sslctx_cb);
-#else
-        FN_LOGW("platform", "HTTPS: FujiNet test CA additive trust is unavailable in this curl build without OpenSSL support");
+        if (curl_ssl_ctx_is_ours()) {
+            curl_easy_setopt(_curl, CURLOPT_SSL_CTX_FUNCTION, &add_test_ca_sslctx_cb);
+            break;
+        }
 #endif
+        use_test_ca_bundle(_curl, true);
         break;
     }
 
