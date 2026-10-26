@@ -2,6 +2,7 @@
 
 #include "fujinet/io/atari_sio_disk_frontend.h"
 #include "fujinet/io/atari_sio_nio_frontend.h"
+#include "fujinet/io/atari_sio_stats.h"
 
 #include <array>
 #include <cstddef>
@@ -28,6 +29,9 @@ public:
     // native write data phase; a ready NIO response deliberately survives.
     void reset_command_collection();
 
+    const AtariSioRouterStats& stats() const noexcept { return _stats; }
+    void reset_stats() noexcept { _stats = {}; }
+
 private:
     enum class PendingWrite : std::uint8_t { None, Disk, Nio };
 
@@ -43,6 +47,7 @@ private:
     std::size_t _command_used{0};
     std::size_t _write_expected{0};
     PendingWrite _pending{PendingWrite::None};
+    AtariSioRouterStats _stats;
 };
 
 } // namespace fujinet::io

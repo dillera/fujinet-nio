@@ -97,6 +97,26 @@ default `config_uri` comes from the build profile
 `flash:/boot/atari/autorun.atr`; other builds use `persist:/boot/autorun.img`.
 See [`distfiles/esp32-data/boot/README.md`](../distfiles/esp32-data/boot/README.md).
 
+### Provider: `sio` (Atari physical SIO build only)
+
+Created with `fujinet::diag::create_atari_sio_diagnostic_provider(snapshot, reset)`
+(`diagnostic_atari_sio.h`) and registered only in the ESP32 Atari NIO build
+(`FN_BUILD_ATARI_FUJIBUS_SIO`). The implementation compiles to nothing in every
+other build except host tests. The ingress has no logging, because SIO timing is
+tight, so this is how to see what the Atari is doing:
+
+- `sio.status` — `cmd_edges` and the CMD line level, `rx_bytes` and UART errors,
+  `frames` (complete 5-byte commands) split into D1:-D8:, native (`0x7f`) and other
+  devices, the abort counts by reason (`edge`, `timeout`, `overflow`, `rx_error`),
+  the last frame seen (device and command decoded), and a `reading:` line naming the
+  first thing that looks wrong, in the order the signal travels
+- `sio.reset` — zero the counters; do this before powering the Atari
+
+A quick reading: `cmd_edges: 0` means the CMD pin never changes (the Atari is not
+sending, or CMD is wired to a different pin than `pinmap.cpp` says); edges but
+`rx_bytes: 0` points at the data-in pin; bytes but `frames: 0` points at the aborts.
+Pair it with `disk.stats` to see whether sector requests reach the disk.
+
 ### Provider: `net`
 
 Created with `fujinet::diag::create_network_diagnostic_provider(core, wifi_ctx)`.

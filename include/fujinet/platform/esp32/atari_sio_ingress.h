@@ -26,6 +26,9 @@ public:
     ~AtariSioIngress() override;
 
     void poll();
+    // Counters for bring-up (sio.status). stats() reads the CMD line too.
+    io::AtariSioStats stats() const;
+    void reset_stats();
     // ISR-safe edge recorder; UART/event work remains the sole wake source.
     void note_cmd_edge() noexcept;
     bool supports_work_wait() const override;

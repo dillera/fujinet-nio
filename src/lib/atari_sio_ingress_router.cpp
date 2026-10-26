@@ -36,7 +36,10 @@ void AtariSioIngressRouter::begin_command()
 {
     const auto command = _command;
     _command_used = 0;
+    _stats.has_last_frame = true;
+    _stats.last_frame = command;
     if (command[0] == 0x7f) {
+        ++_stats.nio_commands;
         const auto result = _nio.begin(command);
         _send(result.bytes);
         if (result.accepted && result.expected_write_bytes != 0) {
@@ -47,8 +50,12 @@ void AtariSioIngressRouter::begin_command()
 
     // Other SIO devices share the bus; never reply to their addresses, even
     // if their frame checksum or command would be invalid for our frontend.
-    if (command[0] < 0x31 || command[0] > 0x38) return;
+    if (command[0] < 0x31 || command[0] > 0x38) {
+        ++_stats.other_commands;
+        return;
+    }
 
+    ++_stats.disk_commands;
     const auto result = _disk.begin(command);
     _send(result.bytes);
     if (result.accepted && result.expected_write_bytes != 0) {

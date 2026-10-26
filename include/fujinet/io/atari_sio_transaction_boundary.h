@@ -5,6 +5,8 @@
 #include <atomic>
 #include <cstdint>
 
+#include "fujinet/io/atari_sio_stats.h"
+
 namespace fujinet::io {
 
 // A counter detects multiple observed edges between polls; unlike a boolean it
@@ -12,10 +14,18 @@ namespace fujinet::io {
 // interrupts while masked, so this is not a physical edge timestamp.
 class AtariSioTransactionBoundary {
 public:
-    void note_cmd_edge() noexcept { _edges.fetch_add(1, std::memory_order_relaxed); }
+    void note_cmd_edge() noexcept
+    {
+        _edges.fetch_add(1, std::memory_order_relaxed);
+        _total.fetch_add(1, std::memory_order_relaxed);
+    }
     std::uint32_t consume() noexcept { return _edges.exchange(0, std::memory_order_acq_rel); }
+    // Every edge since the last reset, for diagnostics; consume() does not affect it.
+    std::uint32_t total_edges() const noexcept { return _total.load(std::memory_order_relaxed); }
+    void reset_total_edges() noexcept { _total.store(0, std::memory_order_relaxed); }
 private:
     std::atomic<std::uint32_t> _edges{0};
+    std::atomic<std::uint32_t> _total{0};
 };
 
 // State machine used by the ESP32 ingress. The callables expose the existing
@@ -29,7 +39,8 @@ public:
     void poll(AtariSioTransactionBoundary& boundary, Router& router, Uart& uart,
               Asserted asserted, Now now)
     {
-        const auto abort = [this, &router, &uart] {
+        const auto abort = [this, &router, &uart](std::uint32_t AtariSioCaptureStats::* reason) {
+            ++(_stats.*reason);
             router.reset_command_collection();
             _collecting = false;
             _released = false;
@@ -40,7 +51,7 @@ public:
             _discard_until_release = true;
         };
         if (_write_started_us && now() - _write_started_us > 200000) {
-            abort();
+            abort(&AtariSioCaptureStats::aborts_timeout);
             return;
         }
         const std::uint32_t edges = boundary.consume();
@@ -51,7 +62,7 @@ public:
             return;
         }
         if (edges > 1 || (edges == 1 && (low == _collecting || _released))) {
-            abort();
+            abort(&AtariSioCaptureStats::aborts_edge);
             return;
         }
         if (edges == 1 && low) {
@@ -63,19 +74,21 @@ public:
             _started_us = now();
         }
         if (_collecting && now() - _started_us > 50000) {
-            abort();
+            abort(&AtariSioCaptureStats::aborts_timeout);
             return;
         }
         std::uint8_t bytes[256];
         while (uart.available()) {
             const auto count = uart.read(bytes, sizeof(bytes));
-            if (uart.rx_errors() != _rx_errors || boundary.consume() != 0 || asserted() != low) {
-                abort();
+            _stats.rx_bytes += static_cast<std::uint32_t>(count);
+            const bool rx_error = uart.rx_errors() != _rx_errors;
+            if (rx_error || boundary.consume() != 0 || asserted() != low) {
+                abort(rx_error ? &AtariSioCaptureStats::aborts_rx_error : &AtariSioCaptureStats::aborts_edge);
                 return;
             }
             for (std::size_t i = 0; i < count; ++i) {
                 if (_collecting) {
-                    if (_frame_used == _frame.size()) { abort(); return; }
+                    if (_frame_used == _frame.size()) { abort(&AtariSioCaptureStats::aborts_overflow); return; }
                     _frame[_frame_used++] = bytes[i];
                 } else if (router.pending_write_bytes()) {
                     router.consume(bytes[i]);
@@ -85,24 +98,28 @@ public:
             }
         }
         if ((_collecting || router.pending_write_bytes()) && uart.rx_errors() != _rx_errors) {
-            abort();
+            abort(&AtariSioCaptureStats::aborts_rx_error);
             return;
         }
         if (_collecting && edges == 1 && !low) _released = true;
         if (_collecting && _released && _frame_used == _frame.size()) {
             if (boundary.consume() != 0 || asserted()) {
-                abort();
+                abort(&AtariSioCaptureStats::aborts_edge);
                 return;
             }
             _collecting = false;
             _released = false;
+            ++_stats.frames;
             for (const auto byte : _frame) router.consume(byte);
             _write_started_us = router.pending_write_bytes() ? now() : 0;
             _frame_used = 0;
         }
         if (!_collecting && !router.pending_write_bytes()) _rx_errors = uart.rx_errors();
     }
+    const AtariSioCaptureStats& stats() const noexcept { return _stats; }
+    void reset_stats() noexcept { _stats = {}; }
 private:
+    AtariSioCaptureStats _stats;
     std::array<std::uint8_t, 5> _frame{};
     std::size_t _frame_used{0};
     std::int64_t _started_us{0};

@@ -23,6 +23,7 @@ idf_component_register(
         lib/clock_device.cpp
         lib/clock_device_init.cpp
         lib/diagnostic_app_store_provider.cpp
+        lib/diagnostic_atari_sio_provider.cpp
         lib/diagnostic_boot_provider.cpp
         lib/diagnostic_core_provider.cpp
         lib/diagnostic_disk_provider.cpp

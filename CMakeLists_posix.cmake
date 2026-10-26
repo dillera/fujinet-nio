@@ -129,6 +129,7 @@ set(FUJINET_NIO_SOURCES
         src/lib/clock_device.cpp
         src/lib/clock_device_init.cpp
         src/lib/diagnostic_app_store_provider.cpp
+        src/lib/diagnostic_atari_sio_provider.cpp
         src/lib/diagnostic_boot_provider.cpp
         src/lib/diagnostic_core_provider.cpp
         src/lib/diagnostic_disk_provider.cpp

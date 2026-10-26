@@ -98,6 +98,25 @@ void AtariSioIngress::send(const std::vector<std::uint8_t>& bytes)
     if (!bytes.empty() && _uart) { _uart->write(bytes.data(), bytes.size()); _uart->flushOutput(); }
 }
 
+io::AtariSioStats AtariSioIngress::stats() const
+{
+    io::AtariSioStats out;
+    out.cmd_edges = _boundary.total_edges();
+    out.cmd_line_low = _cmd_pin >= 0 && _cmd_pin < GPIO_NUM_MAX &&
+                       gpio_get_level(static_cast<gpio_num_t>(_cmd_pin)) == 0;
+    out.uart_rx_errors = _uart ? _uart->rx_errors() : 0;
+    out.capture = _capture.stats();
+    out.router = _router.stats();
+    return out;
+}
+
+void AtariSioIngress::reset_stats()
+{
+    _boundary.reset_total_edges();
+    _capture.reset_stats();
+    _router.reset_stats();
+}
+
 void AtariSioIngress::note_cmd_edge() noexcept
 {
     _boundary.note_cmd_edge();

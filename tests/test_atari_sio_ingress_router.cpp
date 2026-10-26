@@ -229,3 +229,28 @@ TEST_CASE("Atari SIO ignores unowned IDs and preserves owned errors and recovery
     REQUIRE(harness.replies.size() == 2);
     CHECK(harness.replies.back().size() == 131);
 }
+
+TEST_CASE("Atari SIO ingress router counts commands by owner and remembers the last frame")
+{
+    Harness harness;
+    CHECK_FALSE(harness.router.stats().has_last_frame);
+
+    feed(harness.router, command(0x31, 'S', 0));   // D1: status
+    feed(harness.router, command(0x7f, 'Q', 0));   // native query
+    feed(harness.router, command(0x45, 'S', 0));   // another bus device: ignored on purpose
+    feed(harness.router, command(0x45, 'R', 1));
+
+    const auto& stats = harness.router.stats();
+    CHECK(stats.disk_commands == 1);
+    CHECK(stats.nio_commands == 1);
+    CHECK(stats.other_commands == 2);
+    REQUIRE(stats.has_last_frame);
+    CHECK(stats.last_frame[0] == 0x45);
+    CHECK(stats.last_frame[1] == 'R');
+    CHECK(stats.last_frame == command(0x45, 'R', 1));
+
+    harness.router.reset_stats();
+    CHECK(harness.router.stats().disk_commands == 0);
+    CHECK(harness.router.stats().other_commands == 0);
+    CHECK_FALSE(harness.router.stats().has_last_frame);
+}

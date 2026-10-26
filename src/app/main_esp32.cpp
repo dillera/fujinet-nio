@@ -31,6 +31,7 @@ extern "C" {
 #include "fujinet/platform/esp32/sntp_service.h"
 #include "fujinet/platform/esp32/wifi_link.h"
 #if defined(FN_BUILD_ATARI_FUJIBUS_SIO)
+#include "fujinet/diag/diagnostic_atari_sio.h"
 #include "fujinet/platform/esp32/atari_sio_ingress.h"
 #endif
 #include "fujinet/platform/fuji_config_store_factory.h"
@@ -305,6 +306,7 @@ extern "C" void fujinet_core_task(void* arg)
 
 #if defined(FN_BUILD_ATARI_FUJIBUS_SIO)
     std::unique_ptr<fujinet::platform::esp32::AtariSioIngress> atariSioIngress;
+    std::unique_ptr<fujinet::diag::IDiagnosticProvider> atariSioDiag;
 #endif
     // Restore live drive mappings and then apply the configured boot disk.
     // This must happen after DiskDevice is registered.
@@ -332,6 +334,12 @@ extern "C" void fujinet_core_task(void* arg)
                 atariSioIngress = std::make_unique<fujinet::platform::esp32::AtariSioIngress>(
                     config, diskDev->disk_service(), core.routingManager());
                 core.addWorkSource(atariSioIngress.get());
+                // The ingress has no logging (SIO timing is tight): sio.status shows its counters.
+                auto* ingress = atariSioIngress.get();
+                atariSioDiag = fujinet::diag::create_atari_sio_diagnostic_provider(
+                    [ingress] { return ingress->stats(); },
+                    [ingress] { ingress->reset_stats(); });
+                if (atariSioDiag) diagRegistry.add_provider(*atariSioDiag);
             }
 #endif
 
