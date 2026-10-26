@@ -365,6 +365,11 @@ ACTION=="add", SUBSYSTEM=="tty", KERNEL=="ttyACM*", \
 ACTION=="add", SUBSYSTEM=="tty", KERNEL=="ttyACM*", \
   ENV{ID_VENDOR_ID}=="303a", ENV{ID_MODEL_ID}=="1001", ENV{ID_USB_INTERFACE_NUM}=="00", \
   SYMLINK+="fujinet-rs232"
+
+# atari fujinet
+ACTION=="add", SUBSYSTEM=="tty", KERNEL=="ttyUSB*", \
+  ENV{ID_VENDOR_ID}=="10c4", ENV{ID_MODEL_ID}=="ea60", ENV{ID_USB_INTERFACE_NUM}=="00", \
+  SYMLINK+="fujinet-atari"
 ```
 
 Notes:
