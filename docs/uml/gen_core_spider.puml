@@ -468,6 +468,70 @@ __
 -_name : std::string
 -_root : std::string
 }
+abstract "io::Channel" as C_0008542343802949846318
+abstract C_0008542343802949846318 {
++~Channel() constexpr = default : void
+..
+{abstract} +available() = 0 : bool
++packet_io() : IPacketIO *
+{abstract} +read(std::uint8_t * buffer, std::size_t maxLen) = 0 : std::size_t
++supports_readable_wait() const : bool
++wait_for_readable(std::chrono::milliseconds timeout) : bool
+{abstract} +write(const std::uint8_t * buffer, std::size_t len) = 0 : void
+__
+}
+enum "io::RequestType" as C_0015173710654558847960
+enum C_0015173710654558847960 {
+Command
+Read
+Write
+Open
+Close
+Control
+}
+class "io::IORequest" as C_0002386736627821114488
+class C_0002386736627821114488 {
+__
++clientOwner : const void *
++command : std::uint16_t
++deviceId : DeviceID
++id : RequestID
++params : std::vector<std::uint32_t>
++payload : std::vector<std::uint8_t>
++type : RequestType
+}
+enum "io::StatusCode" as C_0012496700434923238249
+enum C_0012496700434923238249 {
+Ok
+DeviceNotFound
+InvalidRequest
+DeviceBusy
+NotReady
+IOError
+Timeout
+InternalError
+Unsupported
+}
+class "io::IOResponse" as C_0002942984525013396621
+class C_0002942984525013396621 {
+__
++command : std::uint16_t
++deviceId : DeviceID
++id : RequestID
++payload : std::vector<std::uint8_t>
++status : StatusCode
+}
+abstract "io::ITransport" as C_0015529497257294770104
+abstract C_0015529497257294770104 {
++~ITransport() constexpr = default : void
+..
++poll() : void
+{abstract} +receive(IORequest & outReq) = 0 : bool
+{abstract} +send(const IOResponse & resp) = 0 : void
++supports_work_wait() const : bool
++wait_for_work(std::chrono::milliseconds timeout) : bool
+__
+}
 class "io::transport::legacy::BusTraits" as C_0008686573398797909484
 class C_0008686573398797909484 {
 +validate_checksum(const std::uint8_t * frame_data, std::size_t frame_len, std::uint8_t received_checksum) const : bool
@@ -541,69 +605,6 @@ abstract C_0007145399192091431715 {
 +send(const IOResponse & resp) : void
 {abstract} #sendDataPacket(const std::uint8_t * buf, std::size_t len) = 0 : void
 {abstract} #sendStatusPacket(std::uint8_t status) = 0 : void
-__
-}
-abstract "io::Channel" as C_0008542343802949846318
-abstract C_0008542343802949846318 {
-+~Channel() constexpr = default : void
-..
-{abstract} +available() = 0 : bool
-+packet_io() : IPacketIO *
-{abstract} +read(std::uint8_t * buffer, std::size_t maxLen) = 0 : std::size_t
-+supports_readable_wait() const : bool
-+wait_for_readable(std::chrono::milliseconds timeout) : bool
-{abstract} +write(const std::uint8_t * buffer, std::size_t len) = 0 : void
-__
-}
-enum "io::RequestType" as C_0015173710654558847960
-enum C_0015173710654558847960 {
-Command
-Read
-Write
-Open
-Close
-Control
-}
-class "io::IORequest" as C_0002386736627821114488
-class C_0002386736627821114488 {
-__
-+command : std::uint16_t
-+deviceId : DeviceID
-+id : RequestID
-+params : std::vector<std::uint32_t>
-+payload : std::vector<std::uint8_t>
-+type : RequestType
-}
-enum "io::StatusCode" as C_0012496700434923238249
-enum C_0012496700434923238249 {
-Ok
-DeviceNotFound
-InvalidRequest
-DeviceBusy
-NotReady
-IOError
-Timeout
-InternalError
-Unsupported
-}
-class "io::IOResponse" as C_0002942984525013396621
-class C_0002942984525013396621 {
-__
-+command : std::uint16_t
-+deviceId : DeviceID
-+id : RequestID
-+payload : std::vector<std::uint8_t>
-+status : StatusCode
-}
-abstract "io::ITransport" as C_0015529497257294770104
-abstract C_0015529497257294770104 {
-+~ITransport() constexpr = default : void
-..
-+poll() : void
-{abstract} +receive(IORequest & outReq) = 0 : bool
-{abstract} +send(const IOResponse & resp) = 0 : void
-+supports_work_wait() const : bool
-+wait_for_work(std::chrono::milliseconds timeout) : bool
 __
 }
 abstract "io::INetworkProtocol" as C_0010613333864250568344
@@ -681,6 +682,7 @@ abstract C_0010069830097413987109 {
 ..
 {abstract} +handle(const IORequest & request) = 0 : IOResponse
 +poll() : void
++resetClient(const void *) : void
 __
 }
 class "io::AppStoreService" as C_0008366653720214799347
@@ -720,6 +722,15 @@ abstract C_0007350464861923755413 {
 +~IRequestHandler() constexpr = default : void
 ..
 {abstract} +handleRequest(const IORequest & request) = 0 : IOResponse
++resetClient(DeviceID, const void *) : void
+__
+}
+abstract "io::IWorkSource" as C_0006291719176467715314
+abstract C_0006291719176467715314 {
++~IWorkSource() constexpr = default : void
+..
+{abstract} +supports_work_wait() const = 0 : bool
+{abstract} +wait_for_work(std::chrono::milliseconds timeout) = 0 : bool
 __
 }
 class "io::IOService" as C_0007645722238685656096
@@ -727,12 +738,14 @@ class C_0007645722238685656096 {
 +IOService(IRequestHandler & handler) : void
 ..
 +addTransport(ITransport * transport) : void
++addWorkSource(IWorkSource * source) : void
 +hasWaitableWorkSource() const : bool
 +serviceOnce() : void
 +waitForWork(std::chrono::milliseconds timeout) : bool
 __
 -_handler : IRequestHandler &
 -_transports : std::vector<ITransport *>
+-_workSources : std::vector<IWorkSource *>
 }
 class "io::WifiController" as C_0001833966047295824140
 class C_0001833966047295824140 {
@@ -751,6 +764,112 @@ __
 -_linkProvider : LinkProvider
 -_store : config::FujiConfigStore *
 }
+class "io::AtariSioDiskFrontend" as C_0007945535391614471758
+class C_0007945535391614471758 {
++AtariSioDiskFrontend(disk::DiskService & service) : void
+..
++begin(const std::array<std::uint8_t,command_bytes> & command) : Result
+{static} +checksum(const std::uint8_t * bytes, std::size_t size) : std::uint8_t
++complete_write(const std::uint8_t * data, std::size_t data_bytes) : Result
+{static} -controller_status(disk::DiskError error) : std::uint8_t
+-read(std::size_t slot, std::uint16_t sector) : Result
+-record(std::size_t slot, disk::DiskError error, std::uint8_t transient) : void
+-sector_bytes(std::size_t slot, std::uint16_t sector) const : std::size_t
+-status(std::size_t slot) : Result
+{static} -supported_geometry(const disk::DiskSlotInfo & info) : bool
+__
+-_pending : PendingWrite
+-_pending_bytes : std::size_t
+-_pending_sector : std::uint16_t
+-_pending_slot : std::size_t
+-_service : disk::DiskService &
+-_state : std::array<DriveState,disk::DiskService::MAX_SLOTS>
+{static} +command_bytes : const std::size_t
+{static} +max_sector_bytes : const std::size_t
+}
+class "io::AtariSioDiskFrontend::Result" as C_0002267818613278076631
+class C_0002267818613278076631 {
+__
++accepted : bool
++bytes : std::vector<std::uint8_t>
++expected_write_bytes : std::size_t
+}
+enum "io::AtariSioDiskFrontend::PendingWrite" as C_0016408529724717989636
+enum C_0016408529724717989636 {
+None
+Put
+Verify
+}
+class "io::AtariSioDiskFrontend::DriveState" as C_0002163122230279192647
+class C_0002163122230279192647 {
+__
++error : disk::DiskError
++transient : std::uint8_t
+}
+class "io::AtariSioNioFrontend" as C_0002004428708757649360
+class C_0002004428708757649360 {
++AtariSioNioFrontend(IRequestHandler & handler) : void
++AtariSioNioFrontend(const AtariSioNioFrontend &) = deleted : void
++~AtariSioNioFrontend() : void
+..
++operator=(const AtariSioNioFrontend &) = deleted : AtariSioNioFrontend &
+..
++abort_write() : void
+-aux(const std::array<std::uint8_t,command_bytes> & command) const : std::uint16_t
++begin(const std::array<std::uint8_t,command_bytes> & command) : Result
+-bounded_error_response(const IORequest & request) const : std::vector<std::uint8_t>
+{static} +checksum(const std::uint8_t * data, std::size_t len) : std::uint8_t
++complete_write(const std::uint8_t * data, std::size_t data_bytes) : Result
+-data_reply(const std::vector<std::uint8_t> & data) const : Result
+-reject() const : Result
++reset() : void
++reset_host() : void
+__
+-_handler : IRequestHandler &
+-_next_request_id : RequestID
+-_response : std::vector<std::uint8_t>
+-_state : State
+-_write_bytes : std::size_t
+{static} -ack : const std::uint8_t
+{static} +capacity : const std::size_t
+{static} +command_bytes : const std::size_t
+{static} -complete : const std::uint8_t
+{static} -device_id : const std::uint8_t
+{static} -nak : const std::uint8_t
+}
+class "io::AtariSioNioFrontend::Result" as C_0012635314744353761438
+class C_0012635314744353761438 {
+__
++accepted : bool
++bytes : std::vector<std::uint8_t>
++expected_write_bytes : std::size_t
+}
+enum "io::AtariSioNioFrontend::State" as C_0009959985905956785571
+enum C_0009959985905956785571 {
+Idle
+Receiving
+Ready
+}
+class "io::AtariSioIngressRouter" as C_0000614538137983737362
+class C_0000614538137983737362 {
++AtariSioIngressRouter(AtariSioDiskFrontend & disk, AtariSioNioFrontend & nio, Send send) : void
+..
+-begin_command() : void
+-complete_write() : void
++consume(std::uint8_t byte) : void
++pending_write_bytes() const noexcept : std::size_t
++reset_command_collection() : void
+-start_write(PendingWrite kind, std::size_t bytes) : void
+__
+-_command : std::array<std::uint8_t,AtariSioDiskFrontend::command_bytes>
+-_command_used : std::size_t
+-_disk : AtariSioDiskFrontend &
+-_nio : AtariSioNioFrontend &
+-_pending : PendingWrite
+-_send : Send
+-_write : std::vector<std::uint8_t>
+-_write_expected : std::size_t
+}
 class "io::IODeviceManager" as C_0010794218937492142358
 class C_0010794218937492142358 {
 +IODeviceManager() = default : void
@@ -764,6 +883,7 @@ class C_0010794218937492142358 {
 +handleRequest(const IORequest & request) : IOResponse
 +pollDevices() : void
 +registerDevice(DeviceID id, std::unique_ptr<VirtualDevice> device) : bool
++resetClient(DeviceID id, const void * owner) : void
 +unregisterDevice(DeviceID id) : bool
 __
 -_devices : std::unordered_map<DeviceID,std::unique_ptr<VirtualDevice>>
@@ -777,6 +897,7 @@ class C_0005273847708888915350 {
 +deviceManager() const : const IODeviceManager &
 +handleRequest(const IORequest & request) : IOResponse
 +hasOverrideHandler() const : bool
++resetClient(DeviceID id, const void * owner) : void
 +setOverrideHandler(IRequestHandler * handler) : void
 +setOverrideHandler(std::unique_ptr<IRequestHandler> handler) : void
 __
@@ -855,6 +976,7 @@ class C_0006245826437162508923 {
 -pick_lru_victim() noexcept : Session *
 +poll() : void
 -record_translation(TranslationLogEntry entry) : void
++resetClient(const void * owner) : void
 {static} -reset_translation(Session & s) noexcept : void
 -touch(Session & s) noexcept : void
 {static} -translation_enabled(const Session & s) noexcept : bool
@@ -878,6 +1000,7 @@ __
 +active : bool
 +awaitingBody : bool
 +bodyLenUnknown : bool
++clientOwner : const void *
 +completed : bool
 +createdTick : std::uint64_t
 +expectedBodyLen : std::uint32_t
@@ -1537,6 +1660,7 @@ class C_0011474842863539673819 {
 +FujinetCore() : void
 ..
 +addTransport(io::ITransport * transport) : void
++addWorkSource(io::IWorkSource * source) : void
 +deviceManager() : io::IODeviceManager &
 +deviceManager() const : const io::IODeviceManager &
 +events() : SystemEvents &
@@ -1890,6 +2014,10 @@ C_0001007711765235056436 ..> C_0014904826619290153445
 C_0001007711765235056436 ..> C_0007646493544420080876
 C_0001007711765235056436 o-- C_0014883681608496495557 : -_kind
 C_0012397556205933868732 <|-- C_0001007711765235056436
+C_0002386736627821114488 o-- C_0015173710654558847960 : +type
+C_0002942984525013396621 o-- C_0012496700434923238249 : +status
+C_0015529497257294770104 ..> C_0002386736627821114488
+C_0015529497257294770104 ..> C_0002942984525013396621
 C_0015838915725578446589 ..> C_0002386736627821114488
 C_0015838915725578446589 ..> C_0002942984525013396621
 C_0015838915725578446589 --> C_0008542343802949846318 : #_channel
@@ -1909,10 +2037,6 @@ C_0007145399192091431715 ..> C_0008686573398797909484
 C_0007145399192091431715 ..> C_0002386736627821114488
 C_0007145399192091431715 ..> C_0002942984525013396621
 C_0015838915725578446589 <|-- C_0007145399192091431715
-C_0002386736627821114488 o-- C_0015173710654558847960 : +type
-C_0002942984525013396621 o-- C_0012496700434923238249 : +status
-C_0015529497257294770104 ..> C_0002386736627821114488
-C_0015529497257294770104 ..> C_0002942984525013396621
 C_0010613333864250568344 ..> C_0012496700434923238249
 C_0017938940343811357840 ..> C_0002332226688905710359
 C_0017938940343811357840 ..> C_0010095979242356174466
@@ -1941,12 +2065,31 @@ C_0007350464861923755413 ..> C_0002386736627821114488
 C_0007350464861923755413 ..> C_0002942984525013396621
 C_0007645722238685656096 --> C_0007350464861923755413 : -_handler
 C_0007645722238685656096 --> C_0015529497257294770104 : -_transports
+C_0007645722238685656096 --> C_0006291719176467715314 : -_workSources
 C_0001833966047295824140 ..> C_0016905784937528219397
 C_0001833966047295824140 ..> C_0001548601329560013188
 C_0001833966047295824140 ..> C_0012496700434923238249
 C_0001833966047295824140 ..> C_0017008327188014981563
 C_0001833966047295824140 --> C_0013064010099190715901 : -_config
 C_0001833966047295824140 --> C_0010708806357379257038 : -_store
+C_0007945535391614471758 ..> C_0002267818613278076631
+C_0007945535391614471758 ..> C_0009077318554391460630
+C_0007945535391614471758 ..> C_0000494354313681174192
+C_0007945535391614471758 --> C_0014804734580910690913 : -_service
+C_0007945535391614471758 o-- C_0002163122230279192647 : -_state
+C_0007945535391614471758 o-- C_0016408529724717989636 : -_pending
+C_0002267818613278076631 --+ C_0007945535391614471758
+C_0016408529724717989636 --+ C_0007945535391614471758
+C_0002163122230279192647 --+ C_0007945535391614471758
+C_0002163122230279192647 o-- C_0009077318554391460630 : +error
+C_0002004428708757649360 ..> C_0012635314744353761438
+C_0002004428708757649360 ..> C_0002386736627821114488
+C_0002004428708757649360 --> C_0007350464861923755413 : -_handler
+C_0002004428708757649360 o-- C_0009959985905956785571 : -_state
+C_0012635314744353761438 --+ C_0002004428708757649360
+C_0009959985905956785571 --+ C_0002004428708757649360
+C_0000614538137983737362 --> C_0007945535391614471758 : -_disk
+C_0000614538137983737362 --> C_0002004428708757649360 : -_nio
 C_0010794218937492142358 ..> C_0002386736627821114488
 C_0010794218937492142358 ..> C_0002942984525013396621
 C_0010794218937492142358 o-- C_0010069830097413987109 : -_devices
@@ -2116,6 +2259,7 @@ C_0011633639399304046317 ..> C_0011046427244206106114
 C_0011633639399304046317 --> C_0011474842863539673819 : -_core
 C_0007944674237235781138 <|-- C_0011633639399304046317
 C_0011474842863539673819 ..> C_0015529497257294770104
+C_0011474842863539673819 ..> C_0006291719176467715314
 C_0011474842863539673819 o-- C_0010794218937492142358 : -_deviceManager
 C_0011474842863539673819 o-- C_0005273847708888915350 : -_routing
 C_0011474842863539673819 o-- C_0007645722238685656096 : -_ioService
