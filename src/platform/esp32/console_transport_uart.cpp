@@ -17,10 +17,6 @@ namespace {
 
 constexpr const char* TAG = "console";
 
-// Bring-up aid: a console that shows nothing could be a silent line or a stopped
-// task. Say what arrives on UART0, for the first few bytes only.
-constexpr unsigned kLoggedRxBytes = 32;
-
 class Esp32UartConsoleTransport final : public IConsoleTransport {
 public:
     Esp32UartConsoleTransport()
@@ -44,7 +40,7 @@ public:
 
         size_t buffered = 0;
         (void)uart_get_buffered_data_len(port, &buffered);
-        FN_LOGI(TAG, "UART0 console: driver %s, %u byte(s) waiting; type to see the bytes arrive",
+        FN_LOGI(TAG, "UART0 console: driver %s, %u byte(s) waiting",
                 uart_is_driver_installed(port) ? "installed" : "NOT installed",
                 static_cast<unsigned>(buffered));
     }
@@ -76,9 +72,6 @@ public:
         if (n == 0) {
             return false;
         }
-        for (int i = 0; i < n && _rx_logged < kLoggedRxBytes; ++i, ++_rx_logged) {
-            FN_LOGI(TAG, "UART0 rx 0x%02x", static_cast<unsigned>(tmp[i]));
-        }
 
         _rx.assign(reinterpret_cast<const char*>(tmp), static_cast<std::size_t>(n));
         _rx_off = 0;
@@ -105,7 +98,6 @@ public:
 private:
     std::string _rx;
     std::size_t _rx_off{0};
-    unsigned _rx_logged{0};
     bool _read_error_logged{false};
 };
 
