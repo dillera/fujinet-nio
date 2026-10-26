@@ -1189,24 +1189,28 @@ extern "C" void app_main(void)
 
 # **UML Diagrams**
 
-We maintain PlantUML diagrams in `docs/uml/`:
+Diagrams are published, not committed, at
+<https://markjfisher.github.io/fujinet-nio/>. The "Publish UML diagrams"
+workflow rebuilds them on every push to master whose build and unit tests pass.
 
-- `core_io.puml` — core I/O classes and relationships  
-- `arch_core_io.puml` — layered architecture between Channel, Transport, Core, Devices  
-- `arch_platform_channels.puml` — how platform-specific channels plug into core  
-- `arch_protocol_fujibus.puml` — FujiBus/SLIP protocol diagram  
+Most are **generated from the code** by clang-uml (`clang-uml.yml`), so they
+cannot go stale. The overviews select by relationship ("every implementation of
+`Channel`", "every `VirtualDevice`") and hide members, so they follow the code
+without editing:
 
-Rendered diagrams are not committed. The "Publish UML diagrams" workflow
-renders every diagram, the hand-authored ones in `docs/uml/` and the
-code-derived `gen_*` ones (clang-uml), and publishes them to GitHub Pages on
-every push to master whose build and unit tests pass:
-<https://markjfisher.github.io/fujinet-nio/>.
+![Core layers](https://markjfisher.github.io/fujinet-nio/uml/gen_core_layers.svg)
 
-![Core + IO auto-gen UML](https://markjfisher.github.io/fujinet-nio/uml/gen_core_io.svg)
+Only what cannot be generated is hand-authored in `docs/uml/` (`arch_*.puml`,
+`seq_*.puml`): the FujiBus packet layout, the Atari ingress flow across systems
+outside this repository, and the legacy network walk-through.
+`scripts/check_uml_names.py` flags any name in those that no longer exists in
+the code (renamed or removed); it cannot check a flow, so keep them few and
+small. To add a generated overview, add a diagram to `clang-uml.yml`, usually
+`include: subclasses: [<base class>]`, and describe it in `docs/site/descriptions.json`.
 
-To preview an edited hand-authored diagram locally, run
-`scripts/gen_uml.sh --render-only` (needs `plantuml`); the page itself is built
-by `scripts/build_site.py` from `docs/site/`.
+Local use: `scripts/gen_uml.sh` (needs `clang-uml` and `plantuml`) renders
+everything to `build/uml`; `scripts/build_site.py --svg-dir build/uml --out
+build/site` builds the page from `docs/site/`.
 
 ---
 

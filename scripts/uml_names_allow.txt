@@ -1,0 +1,3 @@
+# Names that appear in the hand-authored diagrams (docs/uml/arch_*, seq_*) but are
+# not code, so scripts/check_uml_names.py should not look for them in the sources:
+# products, external systems, descriptive words. One per line; '#' starts a comment.

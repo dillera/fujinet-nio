@@ -10,7 +10,7 @@ Reads the rendered *.svg files from --svg-dir and writes the site to --out:
     uml/*.svg    the diagrams
 
 `gen_*` diagrams are generated from the code (clang-uml); everything else is
-hand-authored. Page text and styling live in docs/site/ (style.css,
+hand-authored. descriptions.json may set "group" (overview, narrative, detail). Page text and styling live in docs/site/ (style.css,
 descriptions.json) so they can be changed without touching this script.
 Standard library only.
 """
@@ -94,8 +94,19 @@ def main() -> int:
     if desc_file.exists():
         descriptions = json.loads(desc_file.read_text(encoding="utf-8"))
 
-    generated = [s for s in svgs if s.stem.startswith("gen_")]
-    hand = [s for s in svgs if not s.stem.startswith("gen_")]
+    def group_of(svg: Path) -> str:
+        info = descriptions.get(svg.stem, {})
+        if "group" in info:
+            return info["group"]
+        return "detail" if svg.stem.startswith("gen_") else "narrative"
+
+    # Within a group, follow the order of descriptions.json, then by name.
+    position = {name: i for i, name in enumerate(descriptions)}
+    svgs.sort(key=lambda f: (position.get(f.stem, len(position)), f.name))
+
+    groups = {"overview": [], "narrative": [], "detail": []}
+    for s in svgs:
+        groups.setdefault(group_of(s), []).append(s)
 
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "uml").mkdir(exist_ok=True)
@@ -126,7 +137,8 @@ def main() -> int:
     </div>
   </header>
   <main class="wrap">
-{section("Architecture", "Hand-authored: the layering, protocols and flows the code is meant to follow.", hand, descriptions)}{section("Generated from code", "Produced by clang-uml on every push to master whose build and tests pass.", generated, descriptions)}  </main>
+{section("Overviews", "Generated from the code on every push, so they follow it. Members are hidden; these show the types and how they relate.", groups["overview"], descriptions)}{section("Narrative", "Hand-authored: flows and layouts that cannot be generated. Their names are checked against the code.", groups["narrative"], descriptions)}{section("Detail", "Generated class and sequence diagrams with members. Large; use for reference.", groups["detail"], descriptions)}
+  </main>
   <footer>
     <div class="wrap">{built}</div>
   </footer>
@@ -134,7 +146,7 @@ def main() -> int:
 </html>
 """
     (args.out / "index.html").write_text(page, encoding="utf-8")
-    print(f"wrote {args.out}/index.html ({len(hand)} hand-authored, {len(generated)} generated)")
+    print(f"wrote {args.out}/index.html ({len(groups['overview'])} overviews, {len(groups['narrative'])} narrative, {len(groups['detail'])} detail)")
     return 0
 
 

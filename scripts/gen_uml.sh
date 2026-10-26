@@ -39,5 +39,7 @@ rm -f docs/uml/gen_*.puml "$OUT"/*.svg
 clang-uml -c clang-uml.yml -d build/${BUILD_TARGET}
 plantuml -v --duration -tsvg docs/uml/*.puml -o "$PWD/$OUT"
 
+python3 -I scripts/check_uml_names.py || true   # warns about stale names in hand-authored diagrams
+
 echo "Done generating UML diagrams."
 date

@@ -1,60 +1,105 @@
 {
-  "CoreIOArchitecture": {
-    "title": "Core / IO architecture",
-    "description": "fujinet-nio Core / IO / Device architecture."
+  "gen_core_layers": {
+    "title": "Core layers",
+    "description": "Core, IOService, RoutingManager, IODeviceManager and how they connect.",
+    "group": "overview"
   },
-  "DiskDetectionArchitecture": {
-    "description": "Disk image detection and geometry ownership."
+  "gen_core_tick_sequence": {
+    "title": "One core tick",
+    "description": "FujinetCore::tick(): service the transports, route each request, then poll the devices.",
+    "group": "overview"
   },
-  "DiskDetectionFlow": {
-    "description": "Disk image mount-time detection flow."
+  "gen_transports": {
+    "title": "Transports and framers",
+    "description": "Every ITransport (FujiBus and the legacy SIO/IWM ones) and IFramer implementation.",
+    "group": "overview"
   },
-  "PlatformChannels": {
-    "description": "Platform build profiles, channels and transports."
+  "gen_channels": {
+    "title": "Channels",
+    "description": "Every Channel implementation in the POSIX build: the byte pipes under the transports.",
+    "group": "overview"
+  },
+  "gen_devices": {
+    "title": "Devices and services",
+    "description": "Every VirtualDevice implementation: devices and management services.",
+    "group": "overview"
+  },
+  "gen_work_sources": {
+    "title": "Work sources",
+    "description": "What implements IWorkSource and can wake the core loop.",
+    "group": "overview"
+  },
+  "gen_atari_ingress": {
+    "title": "Atari SIO/NetSIO ingress",
+    "description": "The router, the two SIO frontends and the POSIX NetSIO ingress.",
+    "group": "overview"
+  },
+  "gen_disk_images": {
+    "title": "Disk images and probes",
+    "description": "Every IDiskImage format and IImageProbe the mount path uses.",
+    "group": "overview"
+  },
+  "gen_network_protocols": {
+    "title": "Network protocol backends",
+    "description": "Every INetworkProtocol backend.",
+    "group": "overview"
+  },
+  "gen_filesystems": {
+    "title": "Filesystems",
+    "description": "Every IFileSystem implementation.",
+    "group": "overview"
   },
   "ProtocolFujiBus": {
-    "title": "FujiBus protocol",
-    "description": "FujiBus packet format and SLIP encoding."
-  },
-  "RequestResponseFlow": {
-    "title": "Request / response flow",
-    "description": "The full request/response path over FujiBus and SLIP."
+    "title": "FujiBus packet layout",
+    "description": "Header, parameter descriptors, checksum and SLIP framing, and where each lives in the code.",
+    "group": "narrative"
   },
   "seq_atari_fujibus_paths": {
-    "title": "Atari FujiBus paths",
-    "description": "Atari FujiBus channel and transport paths compared."
+    "title": "Atari: one SIO ingress, two carriers",
+    "description": "How Atari traffic reaches the core over NetSIO (emulator) or the SIO pins (ESP32), and how other hosts differ.",
+    "group": "narrative"
   },
   "seq_legacy_network_flow": {
-    "description": "Legacy network client flow (fujinet-firmware API, device IDs 0x71-0x78)."
+    "title": "Legacy network flow",
+    "description": "The legacy fujinet-firmware network API (device IDs 0x71-0x78) translated to NetworkDevice calls.",
+    "group": "narrative"
   },
   "gen_core_io": {
     "title": "Core + IO",
-    "description": "Classes in fujinet::core and fujinet::io, plus StorageManager."
+    "description": "Classes in fujinet::core and fujinet::io, plus StorageManager.",
+    "group": "detail"
   },
   "gen_core_io_sequence": {
     "title": "Core IO request flow",
-    "description": "IOService::serviceOnce(): transports through to the handler."
+    "description": "IOService::serviceOnce(): transports through to the handler.",
+    "group": "detail"
   },
   "gen_core_device_sequence": {
     "title": "Device dispatch flow",
-    "description": "IODeviceManager::handleRequest(): device lookup to VirtualDevice::handle()."
+    "description": "IODeviceManager::handleRequest(): device lookup to VirtualDevice::handle().",
+    "group": "detail"
   },
   "gen_core_spider": {
     "title": "Core spider",
-    "description": "Everything within four relationships of FujinetCore."
+    "description": "Everything within four relationships of FujinetCore.",
+    "group": "detail"
   },
   "gen_fs": {
     "title": "Filesystem",
-    "description": "The filesystem classes (fujinet::fs)."
+    "description": "The filesystem classes (fujinet::fs).",
+    "group": "detail"
   },
   "gen_config": {
-    "description": "The configuration classes (fujinet::config)."
+    "description": "The configuration classes (fujinet::config).",
+    "group": "detail"
   },
   "gen_io_protocol": {
     "title": "IO protocol",
-    "description": "The I/O protocol classes (fujinet::io::protocol)."
+    "description": "The I/O protocol classes (fujinet::io::protocol).",
+    "group": "detail"
   },
   "gen_build_support": {
-    "description": "The build profile classes (fujinet::build)."
+    "description": "The build profile classes (fujinet::build).",
+    "group": "detail"
   }
 }

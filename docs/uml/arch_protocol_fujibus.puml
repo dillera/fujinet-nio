@@ -1,78 +1,58 @@
 @startuml ProtocolFujiBus
-title FujiBus Packet Format + SLIP Encoding
+' Hand-authored: the wire layout cannot be generated from code. The names used
+' here are checked against the sources by scripts/check_uml_names.py.
+' Authoritative references: docs/protocol_reference.md, tests/fujibus_wire_fixtures.h.
+title FujiBus packet layout and SLIP framing
 
 skinparam shadowing false
 skinparam packageStyle rectangle
 
-package "fujinet::io::protocol" {
-
-    ' Represent the byte buffer type (std::vector<uint8_t>)
-    class ByteBuffer {
-        + size() : size_t
-        + operator[] : uint8_t
-        + push_back(uint8_t)
-        + insert(...)
-        + reserve(...)
-    }
-
-    ' SLIP control bytes as an enum
-    enum SlipByte {
-        End = 0xC0
-        Escape = 0xDB
-        EscEnd = 0xDC
-        EscEsc = 0xDD
-    }
-
-    class "to_byte(...)" as ToByte {
-        + to_byte(SlipByte) : uint8_t <<constexpr>>
-    }
-
-    ByteBuffer --> SlipByte : uses >
-    ToByte --> SlipByte
+map "Raw packet header (6 bytes, little-endian)" as hdr {
+  0 => device (wire device ID)
+  1 => command
+  2-3 => total length (header included)
+  4 => checksum
+  5 => first parameter descriptor
 }
 
-package "fujinet::io::protocol" {
-
-    class PacketParam {
-        + value : uint32_t
-        + size  : uint8_t  <<1,2,4>>
-    }
-
-    class FujiBusPacket {
-        - device : uint8_t
-        - command : uint8_t
-        - params : std::vector<PacketParam>
-        - data : ByteBuffer?
-
-        + serialize() : ByteBuffer
-        + decodeSLIP(ByteBuffer) : ByteBuffer
-        + encodeSLIP(ByteBuffer) : ByteBuffer
-        + calcChecksum(ByteBuffer) : uint8_t
-        + fromSerialized(ByteBuffer) : FujiBusPacket*
-    }
-
-    FujiBusPacket --> PacketParam : contains >
-    FujiBusPacket --> ByteBuffer : uses >
+map "Parameter descriptor (bits 0-2)" as descr {
+  0 => no parameters
+  1-4 => 1 to 4 parameters of 1 byte
+  5 => 1 parameter of 2 bytes
+  6 => 2 parameters of 2 bytes
+  7 => 1 parameter of 4 bytes
+  bit 7 => another descriptor byte follows
 }
 
-' --- FujiBus header description ---
-note right of FujiBusPacket
-FujiBus Header (6 bytes):
-  struct {
-    uint8_t  device
-    uint8_t  command
-    uint16_t length   ; includes header
-    uint8_t  checksum ; entire frame w/ checksum=0
-    uint8_t  descr    ; descriptor for params
-  }
+rectangle "After the header and any extra descriptors:\nparameters (per descriptors, little-endian), then the opaque data payload.\nA response carries its status as U8 parameter 0." as body
+
+map "SLIP framing (byte-stream channels only)" as slip {
+  frame => END payload END
+  END 0xC0 => ESC ESC_END (0xDB 0xDC)
+  ESC 0xDB => ESC ESC_ESC (0xDB 0xDD)
+}
+
+note bottom of hdr
+checksum: 8-bit sum of every byte of the packet with the
+checksum byte taken as 0, the carry folded back in at each step.
+Length must equal the number of raw bytes.
 end note
 
-' --- Descriptor explanation ---
-note bottom of PacketParam
-Parameter descriptors define:
- - how many params follow
- - each param’s byte width (1,2,4)
-Multiple descriptors may be chained using bit 7.
-end note
+hdr -[hidden]down-> descr
+descr -[hidden]down-> body
+body -[hidden]down-> slip
+
+package "Code (fujinet::io)" {
+  rectangle "FujiBusPacket\nfromRaw(), serializeRaw()" as FujiBusPacket
+  rectangle "slip_codec\nencodeSLIP(), decodeSLIP()" as SlipCodec
+  rectangle "fujibus_packet_codec\ndecode_fujibus_request()\nencode_fujibus_response()" as PacketCodec
+  rectangle "SlipFramer\n(byte-stream channels)" as SlipFramer
+  rectangle "NativeFramer\n(packet-native channels)" as NativeFramer
+  PacketCodec ..> FujiBusPacket : raw packet <-> IORequest / IOResponse
+  SlipFramer ..> SlipCodec : adds / removes SLIP
+  SlipFramer ..> PacketCodec
+  NativeFramer ..> PacketCodec : whole packets, no SLIP
+}
+slip -[hidden]down-> FujiBusPacket
 
 @enduml

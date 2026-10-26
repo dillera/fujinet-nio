@@ -4,6 +4,7 @@ output_directory: docs/uml
 # Shared settings applied to all diagrams
 glob:
   - src/lib/**/*.cpp
+  - src/platform/posix/**/*.cpp
   - include/fujinet/**/*.h
 
 using_namespace:
@@ -139,3 +140,143 @@ diagrams:
     plantuml:
       before:
         - "title FujinetCore dependency spider (auto-gen from clang-uml)"
+
+  # ---------------------------------------------------------------------------
+  # Overviews. These are selected by relationship ("everything that implements
+  # X"), so they follow the code and need no hand editing; members are hidden to
+  # keep them readable. Only ESP32-free code is parsed (the POSIX build), so
+  # ESP32-only classes do not appear.
+  # ---------------------------------------------------------------------------
+
+  gen_core_layers:
+    type: class
+    include:
+      context:
+        - match: {pattern: fujinet::io::IOService, radius: 1, direction: any, relationships: [inheritance, composition, aggregation, association]}
+        - match: {pattern: fujinet::io::RoutingManager, radius: 1, direction: any, relationships: [inheritance, composition, aggregation, association]}
+        - match: {pattern: fujinet::io::IODeviceManager, radius: 1, direction: any, relationships: [inheritance, composition, aggregation, association]}
+    exclude:
+      namespaces:
+        - std
+      access: [public, protected, private]
+    plantuml:
+      before:
+        - "title Core layers: how a request flows through the core"
+
+  gen_core_tick_sequence:
+    type: sequence
+    from:
+      - function: "fujinet::core::FujinetCore::tick()"
+    exclude:
+      namespaces:
+        - std
+    plantuml:
+      before:
+        - "title One core tick: transports in, requests routed, devices polled"
+
+  gen_transports:
+    type: class
+    include:
+      subclasses:
+        - fujinet::io::ITransport
+        - fujinet::io::IFramer
+    exclude:
+      namespaces:
+        - std
+      access: [public, protected, private]   # names and relationships only
+    plantuml:
+      before:
+        - "title Transports and framers"
+
+  gen_channels:
+    type: class
+    include:
+      subclasses:
+        - fujinet::io::Channel
+    exclude:
+      namespaces:
+        - std
+      access: [public, protected, private]   # names and relationships only
+    plantuml:
+      before:
+        - "title Channels: the byte pipes under the transports (POSIX build)"
+
+  gen_devices:
+    type: class
+    include:
+      subclasses:
+        - fujinet::io::VirtualDevice
+    exclude:
+      namespaces:
+        - std
+      access: [public, protected, private]   # names and relationships only
+    plantuml:
+      before:
+        - "title Devices and services (VirtualDevice implementations)"
+
+  gen_work_sources:
+    type: class
+    include:
+      subclasses:
+        - fujinet::io::IWorkSource
+    exclude:
+      namespaces:
+        - std
+      access: [public, protected, private]   # names and relationships only
+    plantuml:
+      before:
+        - "title Work sources: what can wake the core loop"
+
+  gen_atari_ingress:
+    type: class
+    include:
+      context:
+        - match: {pattern: fujinet::platform::posix::AtariNetSioIngress, radius: 2, direction: any, relationships: [inheritance, composition, aggregation, association]}
+        - match: {pattern: fujinet::io::AtariSioIngressRouter, radius: 2, direction: any, relationships: [inheritance, composition, aggregation, association]}
+    exclude:
+      namespaces:
+        - std
+      access: [public, protected, private]
+    plantuml:
+      before:
+        - "title Atari SIO/NetSIO ingress (POSIX): router and frontends"
+
+  gen_disk_images:
+    type: class
+    include:
+      subclasses:
+        - fujinet::disk::IDiskImage
+        - fujinet::disk::IImageProbe
+    exclude:
+      namespaces:
+        - std
+      access: [public, protected, private]   # names and relationships only
+    plantuml:
+      before:
+        - "title Disk image formats and format probes"
+
+  gen_network_protocols:
+    type: class
+    include:
+      subclasses:
+        - fujinet::io::INetworkProtocol
+    exclude:
+      namespaces:
+        - std
+      access: [public, protected, private]   # names and relationships only
+    plantuml:
+      before:
+        - "title Network protocol backends"
+
+  gen_filesystems:
+    type: class
+    include:
+      subclasses:
+        - fujinet::fs::IFileSystem
+    exclude:
+      namespaces:
+        - std
+      access: [public, protected, private]   # names and relationships only
+    plantuml:
+      before:
+        - "title Filesystems"

@@ -1,4 +1,7 @@
 @startuml
+' Hand-authored: a behavioural walk-through of the legacy adapter. The class
+' and method names are checked against the sources by scripts/check_uml_names.py.
+'
 ' Legacy network request flow (SIO/NetSIO legacy stack)
 '
 ' Shows GET/POST/PUT/DELETE, translation to NetworkDevice protocol,
@@ -11,27 +14,33 @@ autonumber
 
 actor Host as host
 participant "Legacy client\n(fujinet-firmware API)\nDeviceID 0x71..0x78" as legacy
-participant "SIO/NetSIO host bus\n(serial/udp framing)" as bus
+participant "Legacy SIO/NetSIO bus\n(BusHardware)" as bus
 participant "Legacy transport\nSioTransport (byte-based)" as transport
 participant "IOService\n(serviceOnce loop)" as iosvc
 participant "RoutingManager" as routing
 participant "LegacyNetworkAdapter\n(override handler)" as adapter
-participant "IODeviceManager" as devmgr
 participant "NetworkDevice\nDeviceID 0xFD" as netdev
-participant "NetworkProtocol\n(HTTP backend)" as proto
+participant "INetworkProtocol\n(HTTP backend)" as proto
 
 == Common receive path ==
-host -> bus: legacy frame(s)\nCmdFrame + optional DataFrame
+host -> bus: legacy frame(s)\ncommand frame + optional data frame
 bus -> transport: bytes
 transport -> iosvc: receive(IORequest)\n(deviceId=0x71..0x78, command='O'/'R'/'W'/'C'/'S')
 iosvc -> routing: handleRequest(IORequest)
 routing -> adapter: handleRequest(IORequest)\n(intercepts 0x71..0x78)
+
+note right of routing
+The adapter is installed as RoutingManager's override
+handler, only when a legacy transport is built (SIO / IWM).
+Its calls to NetworkDevice go through IODeviceManager.
+end note
 
 note right of adapter
 Per-legacy-slot state (8 slots):
 - handle (NetworkDevice handle)
 - nextReadOffset / nextWriteOffset
 - awaitingCommit (POST/PUT unknown length)
+- pendingRead / pendingEof (bytes fetched ahead by STATUS)
 end note
 
 == OPEN (GET / DELETE) ==
@@ -40,7 +49,7 @@ adapter -> adapter: parse URL from payload\nstrip "N:" prefix
 adapter -> netdev: Open(method, flags, url,\nbodyLenHint=0)\n(DeviceID=0xFD)
 netdev -> proto: open(req)\n(no-body methods dispatch immediately)
 proto --> netdev: Ok + response ready
-netdev --> adapter: OpenResp(handle)
+netdev --> adapter: open response (handle)
 adapter -> adapter: store handle in slot\nreset offsets/awaitingCommit=false
 adapter --> routing: legacy COMPLETE (no handle)
 end
@@ -49,7 +58,7 @@ end
 alt legacy OPEN with method POST or PUT
 adapter -> adapter: set flag body_unknown_len=1\nbodyLenHint=0
 adapter -> netdev: Open(method, flags|0x04, url,\nbodyLenHint=0)\n(DeviceID=0xFD)
-netdev --> adapter: OpenResp(needs_body_write=1, handle)
+netdev --> adapter: open response (needs_body_write=1, handle)
 adapter -> adapter: store handle\nnextWriteOffset=0\nawaitingCommit=true
 adapter --> routing: legacy COMPLETE (no handle)
 end
@@ -59,7 +68,7 @@ alt legacy WRITE 'W' while awaitingCommit
 adapter -> netdev: Write(handle, offset=nextWriteOffset, data)\n(DeviceID=0xFD)
 netdev -> proto: write_body(offset, data)\n(chunk accepted)
 proto --> netdev: Ok(writtenLen)
-netdev --> adapter: WriteResp(writtenLen)
+netdev --> adapter: write response (writtenLen)
 adapter -> adapter: nextWriteOffset += writtenLen
 adapter --> routing: legacy COMPLETE
 end
@@ -69,22 +78,30 @@ alt legacy STATUS 'S' or READ 'R' triggers commit
 adapter -> netdev: Write(handle, offset=nextWriteOffset, dataLen=0)\n(commit)\n(DeviceID=0xFD)
 netdev -> proto: write_body(offset, len=0)\n(commit)
 proto --> netdev: Ok
-netdev --> adapter: WriteResp(0)
+netdev --> adapter: write response (0)
 adapter -> adapter: awaitingCommit=false
 end
 
 == STATUS (S) ==
-adapter -> netdev: Info(handle)\n(DeviceID=0xFD)
-netdev -> proto: info()
-proto --> netdev: httpStatus/contentLen/headers
-netdev --> adapter: InfoResp(...)
+adapter -> adapter: commit a pending POST/PUT body first (see COMMIT)
+alt no bytes cached in pendingRead
+adapter -> netdev: Read(handle, offset=nextReadOffset, up to 512 bytes)\n(DeviceID=0xFD) as a probe
+netdev -> proto: read_body(offset, maxBytes)
+proto --> netdev: Ok(data, eof) or NotReady
+netdev --> adapter: read response (data) or NotReady
+adapter -> adapter: cache data in pendingRead, remember pendingEof
+end
 adapter --> routing: legacy status bytes\n(bytesWaiting, connected, error)
 
 == READ (R) ==
+alt pendingRead holds bytes
+adapter -> adapter: serve from pendingRead first
+else
 adapter -> netdev: Read(handle, offset=nextReadOffset, maxBytes)\n(DeviceID=0xFD)
 netdev -> proto: read_body(offset, maxBytes)
 proto --> netdev: Ok(data, eof)
-netdev --> adapter: ReadResp(data)
+netdev --> adapter: read response (data)
+end
 adapter -> adapter: nextReadOffset += dataLen
 adapter --> routing: legacy COMPLETE + data frame
 
@@ -92,7 +109,7 @@ adapter --> routing: legacy COMPLETE + data frame
 adapter -> netdev: Close(handle)\n(DeviceID=0xFD)
 netdev -> proto: close()
 proto --> netdev: Ok
-netdev --> adapter: CloseResp
+netdev --> adapter: close response
 adapter -> adapter: clear slot handle/offsets/awaitingCommit
 adapter --> routing: legacy COMPLETE
 
