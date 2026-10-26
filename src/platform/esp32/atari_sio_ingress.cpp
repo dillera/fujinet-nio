@@ -71,11 +71,11 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
             gpio_intr_enable(cmd);
         }
     }
+    // UartChannel routes UART TX to the data-in pin and owns it from here. Do not touch the pin with
+    // gpio_set_direction(): in ESP-IDF that re-routes it to a plain GPIO output and the UART can
+    // never transmit, so the Atari would never see an ACK. On the v1 hardware TX feeds a 74LS07
+    // buffer input, which wants a driven high (push-pull), as the legacy firmware does.
     _uart = std::make_unique<UartChannel>(sio_config(config.channel.uart), pins.sio.uart);
-    if (pins.sio.uart.tx >= 0 && pins.sio.uart.tx < GPIO_NUM_MAX) {
-        gpio_set_level(static_cast<gpio_num_t>(pins.sio.uart.tx), 1);
-        gpio_set_direction(static_cast<gpio_num_t>(pins.sio.uart.tx), GPIO_MODE_OUTPUT_OD);
-    }
 }
 
 AtariSioIngress::~AtariSioIngress() = default;
