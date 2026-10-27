@@ -316,7 +316,7 @@ Index 0 (124,017 baud), three runs: read 256 at 51.6, 52.2 and 52.2 ms against 5
 counts zero except the timeouts (15, 16, 15 a run; 10 at index 1: within the run-to-run spread). It works
 with native calls, so the index is a user choice.
 
-Two further changes (hardware results to come):
+Two further changes (hardware results below):
 
 - The firmware accepts `R` for more than the response's length (up to the capacity), padding with zeros, and
   advertises it as Q flag bit 0 (`01 00 02 01`). `fn_disk_read_sector` bounds its response (sector capacity
@@ -325,6 +325,40 @@ Two further changes (hardware results to come):
   small can never be guessed wrongly. The cycle profile test asserts three SIO calls (Q, W, R) and no poll.
 - `fn_disk_read_sector` reads the response in place and copies the sector once (the profile: 9,850
   cycles, 5.6 ms, after the last response byte, from 14,000).
+
+## Hardware result of the poll-free read and the single copy (index 0, two runs)
+
+| | before (index 0) | after |
+|---|---|---|
+| native info | 27.0 ms | 26.4-26.6 (still polls: no bound) |
+| native read 128 | 41.0 | 34.0-34.2 |
+| native read 256 | 52.0 | **46.0-47.2** |
+| native read 512 (no bound: 512 + 21 does not fit the packet) | 53.0 | 47.8-48.8 (copy only) |
+| `P` commands in the run | 500 | 300 (none for the 300 sector reads) |
+| `R` idle after (the Atari's) | 14.8 ms | 11.9-12.5 |
+| `hs errors` timeouts | 15-16 | 5 and 14 |
+
+The 256-byte read is 46.5 ms against 55 at index 1 before these changes (the prediction was 45). Of the
+saving, index 0 gave about 3 ms; the rest, about 5.5 ms, is the poll and the copy. The poll saved a little
+less than the 4.6 ms predicted, because the `R` is a few bytes longer (the bound is up to 21 bytes over the
+real length) and its service time rose by 0.7 ms.
+
+## Where it ended
+
+| | 256-byte native read | Per second |
+|---|---|---|
+| Start, 19200 | 246 ms | 1.0 KB/s |
+| Library driver at high speed | 87-94 ms | 2.9 KB/s |
+| Glitch filter and data gap 0 | 79 ms | 3.2 KB/s |
+| Faster checksum | 64 ms | 4.0 KB/s |
+| Faster copy | 55 ms | 4.7 KB/s |
+| Index 0, no poll, single copy | **46.5 ms** | **5.5 KB/s** |
+| The response's wire time at index 0 | 22.2 ms | |
+
+Over half of the 46.5 ms is now the wire (22.2 ms) and the request transaction (about 8.7 ms); the library's
+own processing after a response is 5.6 ms of the Atari's 12 ms idle time, the rest being the driver and the
+next call's request build. What remains is small items (a shorter header, a bound for the 512-byte case) that
+the report's earlier table prices at under 2 ms each.
 
 ## Open items
 
