@@ -326,11 +326,26 @@ private:
         return DiagResult::ok(std::move(text));
     }
 
+    // status() is split into small functions: one function with all the string temporaries needed about
+    // 4.6 KB of stack, and the console task has 8 KB (a stack overflow in fujinet_core).
     DiagResult status() const
     {
         const io::AtariSioStats s = _snapshot();
-        const auto n = [](std::uint32_t v) { return std::to_string(v); };
         std::string text;
+        status_link(s, text);
+        status_frames(s, text);
+        status_timing(s, text);
+        status_data(s, text);
+        status_commands(s, text);
+        status_last(s, text);
+        status_tail(s, text);
+        return DiagResult::ok(std::move(text));
+    }
+
+    static std::string n(std::uint32_t v) { return std::to_string(v); }
+
+    [[gnu::noinline]] void status_link(const io::AtariSioStats& s, std::string& text) const
+    {
         line(text, "cmd_edges: " + n(s.cmd_edges) + "   cmd_line: " + (s.cmd_line_low ? "low (asserted)" : "high (idle)"));
         line(text, "baud: set " + n(s.uart_baud_set) + ", UART hardware reports " + n(s.uart_baud_hw));
         text += hsio_line(s);
@@ -340,6 +355,10 @@ private:
                            n(s.alt_valid_frames) + ", used instead of the main UART's " +
                            n(s.capture.frames_from_second_listener) + (s.alt_valid_frames ? ", last " + frame_text(s.alt_last_frame) : ""));
         }
+    }
+
+    [[gnu::noinline]] void status_frames(const io::AtariSioStats& s, std::string& text) const
+    {
         line(text, "rx_bytes: " + n(s.capture.rx_bytes) + "   uart_rx_errors: " + n(s.uart_rx_errors));
         line(text, "frames: " + n(s.capture.frames) + "   disk(D1:-D8:): " + n(s.router.disk_commands) +
                        "   nio(0x7f): " + n(s.router.nio_commands) + "   other devices: " + n(s.router.other_commands));
@@ -347,6 +366,10 @@ private:
                        " overflow=" + n(s.capture.aborts_overflow) + " rx_error=" + n(s.capture.aborts_rx_error) +
                        "   (edge aborts while a write waited for its data: " + n(s.capture.aborts_edge_in_write) +
                        "; CMD edges ignored there: " + n(s.capture.write_glitches_ignored) + ")");
+    }
+
+    [[gnu::noinline]] void status_timing(const io::AtariSioStats& s, std::string& text) const
+    {
         const auto& r = s.reply;
         line(text, "boot (ms): ingress ready " + at_ms(r.ready_us) + "   first CMD edge " + at_ms(s.first_edge_us) +
                        "   first frame " + at_ms(s.capture.first_frame_us));
@@ -360,6 +383,11 @@ private:
         if (s.stale_replies_dropped != 0)
             line(text, "native replies never read, discarded: " + n(s.stale_replies_dropped));
         line(text, "handler: last " + ms1(r.handle_us_last) + ", max " + ms1(r.handle_us_max));
+    }
+
+    [[gnu::noinline]] void status_data(const io::AtariSioStats& s, std::string& text) const
+    {
+        const auto& r = s.reply;
         if (r.data_replies != 0 && r.data_bytes_total != 0) {
             // Tenths of a microsecond per byte, so the figure is readable without floating point.
             const auto tenths = [](std::uint64_t us, std::uint64_t bytes) {
@@ -372,6 +400,10 @@ private:
             data += "; last " + n(r.data_bytes_last) + " bytes in " + ms1(r.data_us_last);
             line(text, data);
         }
+    }
+
+    [[gnu::noinline]] void status_commands(const io::AtariSioStats& s, std::string& text) const
+    {
         {
             // Per command: how many, and the average time we took (service) and then the Atari took
             // before its next command (idle). Their sum over all commands is the elapsed time.
@@ -389,6 +421,10 @@ private:
             }
             if (!txn.empty()) line(text, "per command (FujiNet time, then the Atari's until its next command): " + txn);
         }
+    }
+
+    [[gnu::noinline]] void status_last(const io::AtariSioStats& s, std::string& text) const
+    {
         if (s.router.has_last_frame) {
             const auto& f = s.router.last_frame;
             std::string last = "last_frame: ";
@@ -411,11 +447,14 @@ private:
             line(text, "other device, frame " + std::to_string(i + 1) + ": " + frame_text(s.router.other_first[i]));
         }
         if (s.router.has_last_other) line(text, "last frame for another device: " + frame_text(s.router.last_other));
+    }
+
+    [[gnu::noinline]] void status_tail(const io::AtariSioStats& s, std::string& text) const
+    {
         line(text, "reading: " + reading(s));
         for (const auto& w : watch(s)) {
             line(text, "watch: " + w);
         }
-        return DiagResult::ok(std::move(text));
     }
 
     // Things worth a look even when the signal path is fine: timing that endangers a reply.
