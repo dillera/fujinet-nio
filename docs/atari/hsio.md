@@ -149,6 +149,17 @@ capture drops the main UART's reading of it, the ingress switches the main UART 
 are needed. The two-bad-frames toggle stays as the backup. `sio.status` shows how many frames were used
 this way.
 
+Ninth result (probe and benchmark, index 1, U1MB `All`): the U1MB never sends `3F` to `0x71` or `0x7f`;
+it sends their frames at 19200 (the first eight other-device frames are all `0x71 0x53`, no probe).
+A native read of 256 bytes costs 246 ms (1 KB/s, 3 frames per read) at 19200, the baseline. So the
+Atari side has to choose the speed for the native endpoint: `fujinet-nio-lib` now has an opt-in driver,
+`fn_atari_hsio_enable()` (a port of Matthias Reichl's HISIO, GPL 2+, in `src/platform/atari/fn_hsio.s`),
+which sends `3F` to `0x7f` and then runs every native call at the answered index. ftestnio's H key
+toggles it. The firmware needs nothing new for this: `3F` on `0x7f`, the per-frame speed following and
+the reply gaps are all in place. The U1MB author (flashjazzcat) has been asked why non-disk devices are
+not sped up. The U1MB manual says `SIO devices: All` covers every device except cassette and the OS
+"New Poll"; this is not what is observed.
+
 First hardware result (U1MB, index 6): the Atari asked `3F` once and we switched, but two command
 frames were unreadable and the fallback returned us to 19200. The Atari never asks again and keeps
 retrying at high speed (about 14 times per command, then once at standard), so every sector took
