@@ -82,6 +82,12 @@ two garbage bytes, never five, so a command frame that ends (CMD released) with 
 as unreadable; a CMD glitch with no bytes does not. The legacy log (an old run) shows the same
 sequence: down after two bad frames, the Atari asks `3F` again at 19200, then up after two more.
 
+Third result (toggle build): the toggle works but flaps (62 switches in 180 sectors); sectors take
+either about 0.05 s or 0.2-0.3 s with bursts of UART breaks. The legacy firmware leaves gaps at high
+speed that we did not: 250 us after ACK, and 1 ms from COMPLETE to the data frame (`DELAY_T5`,
+`DELAY_HSIO_DATA`, "SpartaDOS X's own HSIO driver misses a data frame that follows COMPLETE straight
+away"). The ingress now adds both when the UART is at high speed; at 19200 nothing changes.
+
 First hardware result (U1MB, index 6): the Atari asked `3F` once and we switched, but two command
 frames were unreadable and the fallback returned us to 19200. The Atari never asks again and keeps
 retrying at high speed (about 14 times per command, then once at standard), so every sector took
