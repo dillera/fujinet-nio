@@ -113,6 +113,20 @@ Do not assume these signals are the final production interface.
 The experiment series should determine whether explicit handshake/credit
 signals are required.
 
+### Final-board pin-budget handoff
+
+The lab's RP2350 GP2–GP7 mapping is deliberately provisional.  In the current
+Zorro-facing proposal those pins are assigned to Amiga A2–A7, so this wiring
+cannot be transferred to an integrated board.  Before Story 2.4 selects a
+production ABI, the hardware design must account for dedicated, electrically
+isolated RP2350 ↔ ESP32-S3 pins: the four SPI signals and any flow-control
+signals that the evidence shows are required.  Do not share them directly with
+Zorro address or data nets.  The durable hardware layout gate is recorded in
+`repos/fujinet-nio-hardware/amiga/docs/eventual-board-considerations.md`,
+including candidate internal-USB, redesigned-Zorro-front-end, and lower-pin-
+count serial alternatives.  The recommended next spike is an RP2350 USB-host
+to ESP32-S3 USB-device packet link, alongside the final-board GPIO audit.
+
 ---
 
 ## Architectural Boundary
