@@ -386,7 +386,8 @@ extern "C" void fujinet_core_task(void* arg)
                     [ingress] { return ingress->stats(); },
                     [ingress] { ingress->reset_stats(); },
                     [ingress](std::uint32_t target) { return ingress->probe_baud(target); },
-                    [ingress](int index, bool fallback) { return ingress->set_hsio_index(index, fallback); });
+                    [ingress](int index, bool fallback) { return ingress->set_hsio_index(index, fallback); },
+                    [ingress](const fujinet::io::AtariSioTuning& tuning) { ingress->set_tuning(tuning); });
                 if (atariSioDiag) diagRegistry.add_provider(*atariSioDiag);
             }
 #endif

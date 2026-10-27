@@ -94,9 +94,10 @@ class AtariSioDiagnosticProvider final : public IDiagnosticProvider {
 public:
     AtariSioDiagnosticProvider(std::function<io::AtariSioStats()> snapshot, std::function<void()> reset,
                                std::function<std::uint32_t(std::uint32_t)> probe_baud,
-                               std::function<bool(int, bool)> set_hsio_index)
+                               std::function<bool(int, bool)> set_hsio_index,
+                               std::function<void(const io::AtariSioTuning&)> set_tuning)
         : _snapshot(std::move(snapshot)), _reset(std::move(reset)), _probe_baud(std::move(probe_baud)),
-          _set_hsio_index(std::move(set_hsio_index))
+          _set_hsio_index(std::move(set_hsio_index)), _set_tuning(std::move(set_tuning))
     {}
 
     std::string_view provider_id() const noexcept override { return "sio"; }
@@ -125,6 +126,14 @@ public:
                 .safe = false,
             });
         }
+        if (_set_tuning) {
+            out.push_back(DiagCommandSpec{
+                .name = "sio.tune",
+                .summary = "SIO timing dials: ACK gap, data gap (us), second-listener window (ms); not saved",
+                .usage = "sio.tune [ack <us>|data <us>|window <ms>|reset]",
+                .safe = false,
+            });
+        }
         out.push_back(DiagCommandSpec{
             .name = "sio.reset",
             .summary = "zero the SIO counters (do this before powering the Atari)",
@@ -148,6 +157,9 @@ public:
         if (cmd == "sio.hsio" && _set_hsio_index) {
             return hsio(args);
         }
+        if (cmd == "sio.tune" && _set_tuning) {
+            return tune(args);
+        }
         if (cmd == "sio.reset") {
             _reset();
             return DiagResult::ok("sio counters reset\r\n");
@@ -156,6 +168,38 @@ public:
     }
 
 private:
+    static std::string tuning_text(const io::AtariSioTuning& t)
+    {
+        return "tune: ack gap " + std::to_string(t.ack_gap_us) + " us, data gap " + std::to_string(t.data_gap_us) +
+               " us (high speed only), second-listener window " + std::to_string(t.alt_window_us / 1000) + " ms" +
+               ((t.ack_gap_us != 250 || t.data_gap_us != 1000 || t.alt_window_us != 10000) ? "   (not the defaults)" : "");
+    }
+
+    DiagResult tune(const DiagArgsView& args) const
+    {
+        const char* usage = "usage: sio.tune [ack <us>|data <us>|window <ms>|reset]";
+        io::AtariSioTuning t = _snapshot().tuning;
+        if (args.argv.size() == 2 && args.argv[1] == "reset") {
+            t = io::AtariSioTuning{};
+        } else if (args.argv.size() == 3) {
+            const std::string_view value = args.argv[2];
+            if (value.empty() || value.size() > 6 || value.find_first_not_of("0123456789") != std::string_view::npos) {
+                return DiagResult::invalid_args(usage);
+            }
+            const auto n = static_cast<std::uint32_t>(std::stoul(std::string(value)));
+            if (args.argv[1] == "ack") t.ack_gap_us = n;
+            else if (args.argv[1] == "data") t.data_gap_us = n;
+            else if (args.argv[1] == "window") t.alt_window_us = n * 1000;
+            else return DiagResult::invalid_args(usage);
+        } else if (args.argv.size() != 1) {
+            return DiagResult::invalid_args(usage);
+        }
+        if (args.argv.size() > 1) _set_tuning(t);
+        std::string text;
+        line(text, tuning_text(t));
+        return DiagResult::ok(std::move(text));
+    }
+
     DiagResult hsio(const DiagArgsView& args) const
     {
         if (args.argv.size() > 1) {
@@ -269,6 +313,7 @@ private:
         line(text, "cmd_edges: " + n(s.cmd_edges) + "   cmd_line: " + (s.cmd_line_low ? "low (asserted)" : "high (idle)"));
         line(text, "baud: set " + n(s.uart_baud_set) + ", UART hardware reports " + n(s.uart_baud_hw));
         text += hsio_line(s);
+        if (_set_tuning) line(text, tuning_text(s.tuning));
         if (s.alt_baud != 0) {
             line(text, "second listener (UART2, same RX pin) at " + n(s.alt_baud) + " baud: command frames decoded " +
                            n(s.alt_valid_frames) + ", used instead of the main UART's " +
@@ -292,6 +337,18 @@ private:
         if (s.stale_replies_dropped != 0)
             line(text, "native replies never read, discarded: " + n(s.stale_replies_dropped));
         line(text, "handler: last " + ms1(r.handle_us_last) + ", max " + ms1(r.handle_us_max));
+        if (r.data_replies != 0 && r.data_bytes_total != 0) {
+            // Tenths of a microsecond per byte, so the figure is readable without floating point.
+            const auto tenths = [](std::uint64_t us, std::uint64_t bytes) {
+                const auto t = us * 10 / bytes;
+                return std::to_string(t / 10) + "." + std::to_string(t % 10);
+            };
+            std::string data = "data frames (over 64 bytes): " + n(r.data_replies) + " sent, " +
+                               tenths(r.data_us_total, r.data_bytes_total) + " us/byte on average";
+            if (s.uart_baud_set != 0) data += " (the wire: " + tenths(10'000'000ull, s.uart_baud_set) + ")";
+            data += "; last " + n(r.data_bytes_last) + " bytes in " + ms1(r.data_us_last);
+            line(text, data);
+        }
         if (s.router.has_last_frame) {
             const auto& f = s.router.last_frame;
             std::string last = "last_frame: ";
@@ -374,6 +431,7 @@ private:
     std::function<void()> _reset;
     std::function<std::uint32_t(std::uint32_t)> _probe_baud;
     std::function<bool(int, bool)> _set_hsio_index;
+    std::function<void(const io::AtariSioTuning&)> _set_tuning;
 };
 
 } // namespace
@@ -382,13 +440,14 @@ std::unique_ptr<IDiagnosticProvider> create_atari_sio_diagnostic_provider(
     std::function<io::AtariSioStats()> snapshot,
     std::function<void()> reset,
     std::function<std::uint32_t(std::uint32_t)> probe_baud,
-    std::function<bool(int, bool)> set_hsio_index)
+    std::function<bool(int, bool)> set_hsio_index,
+    std::function<void(const io::AtariSioTuning&)> set_tuning)
 {
     if (!snapshot || !reset) {
         return nullptr;
     }
     return std::make_unique<AtariSioDiagnosticProvider>(std::move(snapshot), std::move(reset), std::move(probe_baud),
-                                                        std::move(set_hsio_index));
+                                                        std::move(set_hsio_index), std::move(set_tuning));
 }
 
 } // namespace fujinet::diag

@@ -47,6 +47,13 @@ struct AtariSioReplyStats {
     std::uint32_t reply_over_deadline{0};
     std::uint32_t handle_us_last{0};   // any reply: processing started -> reply sent
     std::uint32_t handle_us_max{0};
+    // Replies with a data frame (over 64 bytes): the time to write the data and for the UART to send it
+    // (flushed), to compare with the wire time at the current baud. The gaps before it are not included.
+    std::uint32_t data_replies{0};
+    std::uint32_t data_bytes_total{0};
+    std::uint32_t data_us_total{0};
+    std::uint32_t data_bytes_last{0};
+    std::uint32_t data_us_last{0};
 
     // Unsigned subtraction, so the clock's 32-bit wrap does not matter for short intervals.
     void record(std::uint32_t send_us, std::uint32_t processing_start_us, bool command_reply,
@@ -63,6 +70,15 @@ struct AtariSioReplyStats {
             if (reply_us_last > reply_us_max) reply_us_max = reply_us_last;
             if (reply_us_last > ack_deadline_us) ++reply_over_deadline;
         }
+    }
+    void record_data(std::uint32_t bytes, std::uint32_t tx_us) noexcept
+    {
+        if (bytes <= 64) return;
+        ++data_replies;
+        data_bytes_total += bytes;
+        data_us_total += tx_us;
+        data_bytes_last = bytes;
+        data_us_last = tx_us;
     }
     void reset() noexcept
     {
@@ -97,6 +113,14 @@ struct AtariSioRouterStats {
     std::array<std::array<std::uint8_t, 5>, other_kept> other_first{};
 };
 
+// Values the ingress uses that are tunable from the console (sio.tune) to find out what each one buys;
+// the defaults are the ones the evidence in docs/atari/hsio-report.md supports.
+struct AtariSioTuning {
+    std::uint32_t ack_gap_us{250};      // ACK -> COMPLETE (the legacy DELAY_T5)
+    std::uint32_t data_gap_us{1000};    // COMPLETE -> data frame, at high speed only (DELAY_HSIO_DATA)
+    std::uint32_t alt_window_us{10000}; // how long a frame heard by the second listener stays usable
+};
+
 // The whole picture the console shows; the ingress fills in the hardware parts.
 struct AtariSioStats {
     std::uint32_t cmd_edges{0};        // CMD line edges seen by the interrupt since the last reset
@@ -125,6 +149,7 @@ struct AtariSioStats {
     // CMD edges that arrived while we were transmitting a reply and were still pending when it ended with
     // CMD high: the Atari does not touch CMD then, so they were noise (the data-out line coupling onto it).
     std::uint32_t tx_noise_edges{0};
+    AtariSioTuning tuning;
     std::uint32_t stale_replies_dropped{0};  // native replies the Atari never read, discarded after 2 s
 };
 

@@ -134,6 +134,7 @@ tight, so this is how to see what the Atari is doing:
   default two in a row toggle between 19200 and the high speed, as the legacy firmware does). Not saved, and it takes effect when the Atari next
   asks. `sio.status` shows the `hsio:` line and, after any unreadable command frame, the first and
   the latest one's bytes and why it was rejected.
+- `sio.tune [ack <us>|data <us>|window <ms>|reset]` — the timing dials (see [hsio report](atari/hsio-report.md)): the ACK-to-COMPLETE gap (default 250 us), the COMPLETE-to-data gap at high speed (1000 us) and how long a frame heard by the second listener stays usable (10 ms). With no argument it shows them; not saved. `sio.status` also shows them, and the measured time per byte of data frames against the wire time.
 - `sio.baud` — the ESP32 UART baud for each high-speed SIO index against the POKEY rate for PAL
   and NTSC clocks (see [hsio](atari/hsio.md)); run it with the Atari idle, because it retunes the
   UART for a moment. `sio.status` also shows the current UART baud.

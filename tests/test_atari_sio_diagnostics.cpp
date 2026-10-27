@@ -305,3 +305,40 @@ TEST_CASE("sio.hsio sets or clears the index, and sio.status shows the high-spee
     CHECK(contains(bad, "first unreadable: more than 5 bytes, 5 byte(s): 0x31 0x52 0x01 0x00 0x84"));
     CHECK(contains(bad, "last unreadable:  bad checksum, 5 byte(s): 0x31 0x52 0x02 0x00 0x00"));
 }
+
+TEST_CASE("sio.tune shows and sets the gaps and the window, and sio.status shows the data-frame rate")
+{
+    AtariSioStats stats;
+    stats.uart_baud_set = 108800;
+    stats.reply.record_data(30, 3000);     // too short to count
+    stats.reply.record_data(258, 24'000);
+    fujinet::io::AtariSioTuning set_to;
+    int calls = 0;
+    auto provider = fujinet::diag::create_atari_sio_diagnostic_provider(
+        [&] { return stats; }, [] {}, {}, {},
+        [&](const fujinet::io::AtariSioTuning& t) { set_to = t; stats.tuning = t; ++calls; });
+    std::vector<fujinet::diag::DiagCommandSpec> cmds;
+    provider->list_commands(cmds);
+    REQUIRE(cmds.size() == 3);
+
+    auto r = run(*provider, {"sio.tune"});
+    CHECK(r.status == DiagStatus::Ok);
+    CHECK(calls == 0);
+    CHECK(contains(r.text, "ack gap 250 us, data gap 1000 us"));
+    CHECK(!contains(r.text, "not the defaults"));
+
+    CHECK(run(*provider, {"sio.tune", "data", "0"}).status == DiagStatus::Ok);
+    CHECK(set_to.data_gap_us == 0);
+    CHECK(set_to.ack_gap_us == 250);
+    r = run(*provider, {"sio.tune", "window", "5"});
+    CHECK(set_to.alt_window_us == 5000);
+    CHECK(contains(r.text, "not the defaults"));
+    CHECK(run(*provider, {"sio.tune", "ack", "x"}).status == DiagStatus::InvalidArgs);
+    CHECK(run(*provider, {"sio.tune", "bogus", "1"}).status == DiagStatus::InvalidArgs);
+    CHECK(run(*provider, {"sio.tune", "reset"}).status == DiagStatus::Ok);
+    CHECK(set_to.data_gap_us == 1000);
+
+    const auto text = run(*provider, {"sio.status"}).text;
+    CHECK(contains(text, "data frames (over 64 bytes): 1 sent, 93.0 us/byte on average (the wire: 91.9)"));
+    CHECK(contains(text, "last 258 bytes in"));
+}

@@ -18,12 +18,10 @@ extern "C" {
 namespace fujinet::platform::esp32 {
 namespace {
 constexpr std::uint32_t sio_baud = 19200;
-// Gaps a real drive leaves, as in the legacy firmware. DELAY_T5 (250 us) separates the ACK from COMPLETE
+// Default gaps (AtariSioTuning; sio.tune changes them). A real drive leaves them, as in the legacy firmware. DELAY_T5 (250 us) separates the ACK from COMPLETE
 // at every speed: sent back to back, the Atari's ROM routine sometimes misses COMPLETE and waits out its
 // 9 s timeout. DELAY_HSIO_DATA (1 ms from COMPLETE to the data) is for high speed only, where a driver's
 // receive loop cannot take the data straight after.
-constexpr std::uint32_t ack_gap_us = 250;
-constexpr std::uint32_t hsio_data_gap_us = 1000;
 constexpr std::uint8_t sio_ack = 0x41, sio_complete = 0x43, sio_error = 0x45;
 
 config::UartConfig sio_config(config::UartConfig cfg)
@@ -126,16 +124,21 @@ void AtariSioIngress::send(const std::vector<std::uint8_t>& bytes)
     if (bytes.size() >= 2 && bytes[0] == sio_ack && (bytes[1] == sio_complete || bytes[1] == sio_error)) {
         _uart->write(bytes.data(), 1);
         _uart->flushOutput();
-        esp_rom_delay_us(ack_gap_us);
+        if (_tuning.ack_gap_us) esp_rom_delay_us(_tuning.ack_gap_us);
+        std::size_t data_bytes = bytes.size() - 1;
+        const std::uint8_t* data = bytes.data() + 1;
         if (bytes.size() > 2 && _speed.high()) {
-            _uart->write(bytes.data() + 1, 1);
+            _uart->write(data, 1);
             _uart->flushOutput();
-            esp_rom_delay_us(hsio_data_gap_us);
-            _uart->write(bytes.data() + 2, bytes.size() - 2);
-        } else {
-            _uart->write(bytes.data() + 1, bytes.size() - 1);
+            if (_tuning.data_gap_us) esp_rom_delay_us(_tuning.data_gap_us);
+            ++data;
+            --data_bytes;
         }
+        const auto data_start = static_cast<std::uint32_t>(esp_timer_get_time());
+        _uart->write(data, data_bytes);
         _uart->flushOutput();
+        _reply.record_data(static_cast<std::uint32_t>(data_bytes),
+                           static_cast<std::uint32_t>(esp_timer_get_time()) - data_start);
         drop_tx_noise_edges();
         return;
     }
@@ -178,6 +181,7 @@ io::AtariSioStats AtariSioIngress::stats() const
     out.hsio_switches = _hsio_switches;
     out.hsio_fallbacks = _hsio_fallbacks;
     out.hsio_fallback_enabled = _speed.fallback();
+    out.tuning = _tuning;
     out.tx_noise_edges = _tx_noise_edges;
     if (_alt) {
         out.alt_baud = _alt->uart_config().baudRate;
@@ -282,7 +286,7 @@ bool AtariSioIngress::take_alt_frame(std::array<std::uint8_t, 5>& frame)
 {
     if (!_alt_pending) return false;
     _alt_pending = false;
-    if (!_speed.enabled() || static_cast<std::uint32_t>(esp_timer_get_time()) - _alt_found_us > 10000) return false;
+    if (!_speed.enabled() || static_cast<std::uint32_t>(esp_timer_get_time()) - _alt_found_us > _tuning.alt_window_us) return false;
     frame = _alt_last;
     toggle_speed();
     return true;

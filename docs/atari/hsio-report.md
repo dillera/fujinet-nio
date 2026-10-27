@@ -136,6 +136,22 @@ What it changes for us: (1) for NOS, whose network devices are `$71`-`$78`, the 
 side is whether nio should serve `3F` on those IDs, as the legacy firmware does, so stock-patched drivers
 speed them up; (2) our `0x7f` still needs the library driver (or a patch that includes `$7F`).
 
+## Next trials (dials and measurements)
+
+`sio.tune` changes the ACK gap, the data gap and the second-listener window without a reflash, and
+`sio.status` now shows the average time per byte of data frames next to the wire time. ftestnio's T page
+also times a single `Q` and a single `P` to `0x7f` through the library's SIO entry, which gives the cost of
+one high-speed transaction directly (the OS rows always go at 19200 for `0x7f`). To run, for each setting
+reset the counters, run **T** at high speed and record the table:
+
+| Trial | Setting | Question |
+|---|---|---|
+| a | defaults | baseline with the new rows |
+| b | `sio.tune data 0` | does anything fail without the 1 ms gap, and how much of the per-transaction cost is it? |
+| c | `sio.tune ack 0`, then `ack 100` | how small can the ACK gap be before 9 s stalls return (standard speed) or timeouts rise? |
+| d | `sio.tune window 5` and `window 20` | does the window change rescues or timeouts? |
+| e | `sio.status` after b-d | data frames: us/byte against the wire, which shows whether the per-byte excess is on the ESP's side |
+
 ## Open items
 
 - **The ACK timeouts** (about 3 percent of native transactions, each retried at the same speed for

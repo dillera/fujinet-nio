@@ -37,6 +37,8 @@ public:
     // effect when the Atari next asks, and is not saved. False for an index out of range.
     // `fallback` false keeps the UART at the high speed however many command frames are unreadable.
     bool set_hsio_index(int index, bool fallback = true);
+    // The tunable gaps and window (sio.tune); not saved.
+    void set_tuning(const io::AtariSioTuning& tuning) { _tuning = tuning; }
     // ISR-safe edge recorder; UART/event work remains the sole wake source.
     void note_cmd_edge() noexcept;
     bool supports_work_wait() const override;
@@ -72,6 +74,7 @@ private:
     io::AtariSioReplyStats _reply;
     io::AtariSioSpeed _speed;
     std::uint32_t _tx_noise_edges{0};
+    io::AtariSioTuning _tuning;
     std::uint32_t _hsio_switches{0};
     std::uint32_t _hsio_fallbacks{0};
     std::uint32_t _last_poll_us{0};
