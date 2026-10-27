@@ -324,11 +324,11 @@ TEST_CASE("sio.tune shows and sets the gaps and the window, and sio.status shows
     auto r = run(*provider, {"sio.tune"});
     CHECK(r.status == DiagStatus::Ok);
     CHECK(calls == 0);
-    CHECK(contains(r.text, "ack gap 250 us, data gap 1000 us"));
+    CHECK(contains(r.text, "ack gap 250 us, data gap 0 us"));
     CHECK(!contains(r.text, "not the defaults"));
 
-    CHECK(run(*provider, {"sio.tune", "data", "0"}).status == DiagStatus::Ok);
-    CHECK(set_to.data_gap_us == 0);
+    CHECK(run(*provider, {"sio.tune", "data", "1000"}).status == DiagStatus::Ok);
+    CHECK(set_to.data_gap_us == 1000);
     CHECK(set_to.ack_gap_us == 250);
     r = run(*provider, {"sio.tune", "window", "5"});
     CHECK(set_to.alt_window_us == 5000);
@@ -339,9 +339,38 @@ TEST_CASE("sio.tune shows and sets the gaps and the window, and sio.status shows
     CHECK(!set_to.ignore_write_glitches);
     CHECK(run(*provider, {"sio.tune", "reset"}).status == DiagStatus::Ok);
     CHECK(set_to.ignore_write_glitches);
-    CHECK(set_to.data_gap_us == 1000);
+    CHECK(set_to.data_gap_us == 0);
 
     const auto text = run(*provider, {"sio.status"}).text;
     CHECK(contains(text, "data frames (over 64 bytes): 1 sent, 93.0 us/byte on average (the wire: 91.9)"));
     CHECK(contains(text, "last 258 bytes in"));
+}
+
+TEST_CASE("sio.save hands the current high-speed index and tuning to the config store")
+{
+    AtariSioStats stats;
+    stats.hsio_index = 1;
+    stats.tuning.data_gap_us = 500;
+    int saved_index = -99;
+    std::uint32_t saved_gap = 0;
+    std::string error;
+    auto provider = fujinet::diag::create_atari_sio_diagnostic_provider(
+        [&] { return stats; }, [] {}, {}, {}, [](const fujinet::io::AtariSioTuning&) {},
+        [&](int index, const fujinet::io::AtariSioTuning& t) {
+            saved_index = index; saved_gap = t.data_gap_us; return error;
+        });
+    std::vector<fujinet::diag::DiagCommandSpec> cmds;
+    provider->list_commands(cmds);
+    REQUIRE(cmds.size() == 4);      // status, tune, save, reset
+
+    auto r = run(*provider, {"sio.save"});
+    CHECK(r.status == DiagStatus::Ok);
+    CHECK(saved_index == 1);
+    CHECK(saved_gap == 500);
+    CHECK(contains(r.text, "saved"));
+
+    error = "config store not available";
+    r = run(*provider, {"sio.save"});
+    CHECK(r.status == DiagStatus::NotReady);
+    CHECK(contains(r.text, "config store not available"));
 }

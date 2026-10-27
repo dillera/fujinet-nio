@@ -85,6 +85,17 @@ static void from_yaml(const YAML::Node& node, NetSioConfig& out)
     out.port    = static_cast<std::uint16_t>(get_or<int>(node, "port", 9997));
 }
 
+static void from_yaml(const YAML::Node& node, AtariSioConfig& out)
+{
+    const AtariSioConfig d;
+    out.hsioIndex   = get_or<int>(node, "hsio_index", d.hsioIndex);
+    if (out.hsioIndex < -1 || out.hsioIndex > 9) out.hsioIndex = d.hsioIndex;   // 10 is read as a Happy 1050
+    out.ackGapUs    = static_cast<std::uint32_t>(get_or<int>(node, "ack_gap_us", static_cast<int>(d.ackGapUs)));
+    out.dataGapUs   = static_cast<std::uint32_t>(get_or<int>(node, "data_gap_us", static_cast<int>(d.dataGapUs)));
+    out.altWindowMs = static_cast<std::uint32_t>(get_or<int>(node, "window_ms", static_cast<int>(d.altWindowMs)));
+    out.ignoreWriteGlitches = get_or<bool>(node, "ignore_write_glitches", d.ignoreWriteGlitches);
+}
+
 static void from_yaml(const YAML::Node& node, ClockConfig& out)
 {
     out.timezone = get_or<std::string>(node, "timezone", "UTC");
@@ -242,6 +253,10 @@ static void from_yaml(const YAML::Node& root, FujiConfig& cfg)
         from_yaml(n, cfg.netsio);
     }
     
+    if (auto n = root["atari_sio"]) {
+        from_yaml(n, cfg.atariSio);
+    }
+
     if (auto n = root["clock"]) {
         from_yaml(n, cfg.clock);
     }
@@ -305,6 +320,15 @@ static void to_yaml(YAML::Emitter& out, const FujiConfig& cfg)
     out << YAML::Key << "enabled" << YAML::Value << cfg.netsio.enabled;
     out << YAML::Key << "host"    << YAML::Value << cfg.netsio.host;
     out << YAML::Key << "port"    << YAML::Value << cfg.netsio.port;
+    out << YAML::EndMap;
+
+    // atari_sio:
+    out << YAML::Key << "atari_sio" << YAML::Value << YAML::BeginMap;
+    out << YAML::Key << "hsio_index"            << YAML::Value << cfg.atariSio.hsioIndex;
+    out << YAML::Key << "ack_gap_us"            << YAML::Value << cfg.atariSio.ackGapUs;
+    out << YAML::Key << "data_gap_us"           << YAML::Value << cfg.atariSio.dataGapUs;
+    out << YAML::Key << "window_ms"             << YAML::Value << cfg.atariSio.altWindowMs;
+    out << YAML::Key << "ignore_write_glitches" << YAML::Value << cfg.atariSio.ignoreWriteGlitches;
     out << YAML::EndMap;
 
      // clock:

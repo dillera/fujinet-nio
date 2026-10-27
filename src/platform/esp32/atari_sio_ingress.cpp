@@ -98,7 +98,14 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
     }
     // From here the ingress answers commands. sio.status compares this with the first CMD edge.
     _reply.ready_us = static_cast<std::uint32_t>(esp_timer_get_time());
-    _capture.set_ignore_write_glitches(_tuning.ignore_write_glitches);
+    // The saved settings (fujinet.yaml, atari_sio): the gaps and window now, the speed index for 3F.
+    io::AtariSioTuning tuning;
+    tuning.ack_gap_us = config.atariSio.ackGapUs;
+    tuning.data_gap_us = config.atariSio.dataGapUs;
+    tuning.alt_window_us = config.atariSio.altWindowMs * 1000;
+    tuning.ignore_write_glitches = config.atariSio.ignoreWriteGlitches;
+    set_tuning(tuning);
+    if (config.atariSio.hsioIndex >= 0) set_hsio_index(config.atariSio.hsioIndex);
 }
 
 AtariSioIngress::~AtariSioIngress() = default;

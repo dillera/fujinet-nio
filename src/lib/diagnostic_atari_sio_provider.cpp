@@ -95,9 +95,10 @@ public:
     AtariSioDiagnosticProvider(std::function<io::AtariSioStats()> snapshot, std::function<void()> reset,
                                std::function<std::uint32_t(std::uint32_t)> probe_baud,
                                std::function<bool(int, bool)> set_hsio_index,
-                               std::function<void(const io::AtariSioTuning&)> set_tuning)
+                               std::function<void(const io::AtariSioTuning&)> set_tuning,
+                               std::function<std::string(int, const io::AtariSioTuning&)> save)
         : _snapshot(std::move(snapshot)), _reset(std::move(reset)), _probe_baud(std::move(probe_baud)),
-          _set_hsio_index(std::move(set_hsio_index)), _set_tuning(std::move(set_tuning))
+          _set_hsio_index(std::move(set_hsio_index)), _set_tuning(std::move(set_tuning)), _save(std::move(save))
     {}
 
     std::string_view provider_id() const noexcept override { return "sio"; }
@@ -134,6 +135,14 @@ public:
                 .safe = false,
             });
         }
+        if (_save) {
+            out.push_back(DiagCommandSpec{
+                .name = "sio.save",
+                .summary = "save the high-speed index and the sio.tune values to the config (fujinet.yaml, atari_sio)",
+                .usage = "sio.save",
+                .safe = false,
+            });
+        }
         out.push_back(DiagCommandSpec{
             .name = "sio.reset",
             .summary = "zero the SIO counters (do this before powering the Atari)",
@@ -160,6 +169,15 @@ public:
         if (cmd == "sio.tune" && _set_tuning) {
             return tune(args);
         }
+        if (cmd == "sio.save" && _save) {
+            const io::AtariSioStats s = _snapshot();
+            const std::string error = _save(s.hsio_index, s.tuning);
+            if (!error.empty()) return DiagResult::not_ready(error);
+            return DiagResult::ok("saved atari_sio (hsio_index " + std::to_string(s.hsio_index) + ", ack " +
+                                  std::to_string(s.tuning.ack_gap_us) + " us, data " +
+                                  std::to_string(s.tuning.data_gap_us) + " us, window " +
+                                  std::to_string(s.tuning.alt_window_us / 1000) + " ms) to the config store\r\n");
+        }
         if (cmd == "sio.reset") {
             _reset();
             return DiagResult::ok("sio counters reset\r\n");
@@ -173,7 +191,7 @@ private:
         return "tune: ack gap " + std::to_string(t.ack_gap_us) + " us, data gap " + std::to_string(t.data_gap_us) +
                " us (high speed only), second-listener window " + std::to_string(t.alt_window_us / 1000) + " ms, ignore CMD edges during a write " +
                (t.ignore_write_glitches ? "on" : "off") +
-               ((t.ack_gap_us != 250 || t.data_gap_us != 1000 || t.alt_window_us != 10000 ||
+               ((t.ack_gap_us != 250 || t.data_gap_us != 0 || t.alt_window_us != 10000 ||
                  !t.ignore_write_glitches) ? "   (not the defaults)" : "");
     }
 
@@ -454,6 +472,7 @@ private:
     std::function<std::uint32_t(std::uint32_t)> _probe_baud;
     std::function<bool(int, bool)> _set_hsio_index;
     std::function<void(const io::AtariSioTuning&)> _set_tuning;
+    std::function<std::string(int, const io::AtariSioTuning&)> _save;
 };
 
 } // namespace
@@ -463,13 +482,14 @@ std::unique_ptr<IDiagnosticProvider> create_atari_sio_diagnostic_provider(
     std::function<void()> reset,
     std::function<std::uint32_t(std::uint32_t)> probe_baud,
     std::function<bool(int, bool)> set_hsio_index,
-    std::function<void(const io::AtariSioTuning&)> set_tuning)
+    std::function<void(const io::AtariSioTuning&)> set_tuning,
+    std::function<std::string(int, const io::AtariSioTuning&)> save)
 {
     if (!snapshot || !reset) {
         return nullptr;
     }
     return std::make_unique<AtariSioDiagnosticProvider>(std::move(snapshot), std::move(reset), std::move(probe_baud),
-                                                        std::move(set_hsio_index), std::move(set_tuning));
+                                                        std::move(set_hsio_index), std::move(set_tuning), std::move(save));
 }
 
 } // namespace fujinet::diag

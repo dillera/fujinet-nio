@@ -387,7 +387,20 @@ extern "C" void fujinet_core_task(void* arg)
                     [ingress] { ingress->reset_stats(); },
                     [ingress](std::uint32_t target) { return ingress->probe_baud(target); },
                     [ingress](int index, bool fallback) { return ingress->set_hsio_index(index, fallback); },
-                    [ingress](const fujinet::io::AtariSioTuning& tuning) { ingress->set_tuning(tuning); });
+                    [ingress](const fujinet::io::AtariSioTuning& tuning) { ingress->set_tuning(tuning); },
+                    [fuji = services.fuji](int hsioIndex, const fujinet::io::AtariSioTuning& tuning) -> std::string {
+                        if (!fuji) return "FujiDevice not available";
+                        auto* store = fuji->config_store();
+                        if (!store) return "config store not available";
+                        auto& saved = fuji->config_mut().atariSio;
+                        saved.hsioIndex = hsioIndex;
+                        saved.ackGapUs = tuning.ack_gap_us;
+                        saved.dataGapUs = tuning.data_gap_us;
+                        saved.altWindowMs = tuning.alt_window_us / 1000;
+                        saved.ignoreWriteGlitches = tuning.ignore_write_glitches;
+                        store->save(fuji->config());
+                        return {};
+                    });
                 if (atariSioDiag) diagRegistry.add_provider(*atariSioDiag);
             }
 #endif

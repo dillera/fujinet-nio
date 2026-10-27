@@ -167,7 +167,7 @@ private:
 // the defaults are the ones the evidence in docs/atari/hsio-report.md supports.
 struct AtariSioTuning {
     std::uint32_t ack_gap_us{250};      // ACK -> COMPLETE (the legacy DELAY_T5)
-    std::uint32_t data_gap_us{1000};    // COMPLETE -> data frame, at high speed only (DELAY_HSIO_DATA)
+    std::uint32_t data_gap_us{0};       // COMPLETE -> data frame, at high speed only (the legacy DELAY_HSIO_DATA is 1000)
     std::uint32_t alt_window_us{10000}; // how long a frame heard by the second listener stays usable
     bool ignore_write_glitches{true};   // while a write waits for its data, CMD edges with the line high are noise
 };

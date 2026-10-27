@@ -99,7 +99,7 @@ What this says:
 | Value | Where | Basis | How solid |
 |---|---|---|---|
 | ACK gap 250 us, at every speed | `ack_gap_us` | The legacy firmware's `DELAY_T5`. Trial 5: without it at 19200, about twenty 9 s stalls in a 112-sector boot; with it, none. | Tested for the effect (and at high speed: 0 is unusable, 346 fallbacks); the 250 us size is the legacy value, not tuned. |
-| COMPLETE-to-data gap 1 ms, high speed only | `hsio_data_gap_us` | The legacy `DELAY_HSIO_DATA`, kept for SpartaDOS X's driver, which misses a data frame that follows COMPLETE at once. Added together with the ACK gap in trial 3, when the boot went from flapping to steady. | Isolated once: 0 saves about 1 ms per reply with data (4 percent of a read) and broke nothing, but timeouts and fallbacks were higher in three single runs. Kept until repeated runs show it is free. |
+| COMPLETE-to-data gap 1 ms, high speed only | `hsio_data_gap_us` | The legacy `DELAY_HSIO_DATA`, kept for SpartaDOS X's driver, which misses a data frame that follows COMPLETE at once. Added together with the ACK gap in trial 3, when the boot went from flapping to steady. | Isolated in 4 T runs and 2 disk boots: 0 saves about 1 ms per reply with data and per boot sector, with no measurable harm. **Default 0**; 1000 stays available (`sio.tune data 1000`, `atari_sio.data_gap_us`) for SpartaDOS X's driver, which could not be tested here. |
 | Speed index 1 (108,800 baud) as the suggested value | `sio.hsio 1` | Sector times: index 6 about 50 ms, index 1 about 33 ms, index 0 about 30 ms. Index 0 is 124,017 baud, which the Atari-side receive loop only just meets (it crosses a page in our port, which costs cycles), for 3 ms more. | Measured on disk boot only; index 0 not tested with native calls. |
 | Fall back to 19200 after 2 bad command frames, and back up after 2 more | `AtariSioCapture` | The legacy `COMMAND_FRAME_SPEED_CHANGE_THRESHOLD`. Trial 1 shows a one-way fallback strands the Atari at high speed; trial 2 shows the toggle follows it. | The threshold is the legacy value. The second listener is now the main mechanism and this is the backup (final run: 4 fallbacks, 11 frames decoded by the second listener, 8 of them used). |
 | A frame decoded by the second listener is valid for 10 ms | `atari_sio_ingress.cpp` | A heuristic: it must outlast one poll of the SIO task (the longest idle poll gap measured is about 10 ms) and be much shorter than the Atari's retry interval. | Varied (5, 10, 20 ms): no measurable difference. Kept at 10. |
@@ -230,12 +230,27 @@ successive runs. The FujiNet counters were reset before each run.
   its documented reason is another driver (SpartaDOS X) that we cannot test here; setting it to 0 is a
   decision for a default, not something the measurements forbid.
 
+## After the checksum change (high speed, index 1; then 19200)
+
+| | before | after, data 1000 | after, data 0 | after, 19200, data 0 |
+|---|---|---|---|---|
+| native info | 33-34 ms | 31.4 | 30.2 | 85.2 |
+| native read 256 | 79-82 | 65.0 | 64.4 | 207.6 |
+| `R` idle after (the Atari's) | 31.5 ms | 20.2 | 20.7 | |
+| lib `Q` / `P` | 5.0 / 4.6 | 6.2 / 5.6 | 4.8 / 4.6 | |
+
+- The checksum was about 15 ms of every 256-byte read at high speed and 15 ms at 19200 (222 to 208). The
+  prediction (about 66 ms) held: 64.4 to 65.0.
+- **About 20 ms of the Atari's time after each response is still unaccounted for.** The library
+  copies the 256 bytes more than once between the transport buffer and the caller's buffer, and parses
+  the header; none of that has been measured yet. The idle time after `W` and `P` is 2.4 and 2.6 ms.
+- Data gap 0 versus 1000: native read 64.4 against 65.0, `Q` 4.8 against 6.2. Consistent with 1 ms per
+  reply that carries data.
+
 ## Next trials
 
-1. **Run the T page again at high speed** with the new boot disk (H on). The read 256 time and `idle
-   after R` show how much of the 37 ms the checksum was. Expect read 256 near 66 ms, `idle after R`
-   about 19 ms.
-2. **Then the same at 19200** (no H): the same saving should appear, as the cost is not speed dependent.
+1. Count the cycles of the rest of the read path on the Atari side (the soft65c02 harness can run the
+   library's read), to see what the remaining 20 ms is before changing anything.
 
 ## Open items
 

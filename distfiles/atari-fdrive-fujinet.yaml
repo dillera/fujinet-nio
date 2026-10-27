@@ -26,6 +26,16 @@ netsio:
   host: "localhost"
   port: __NETSIO_PORT__
 
+# Atari physical SIO (see docs/atari/hsio-report.md). hsio_index -1 leaves 3F unanswered (19200 only);
+# 0-9 answers it with that high-speed index (1 is 108,800 baud). data_gap_us 1000 is for drivers that
+# miss a data frame that follows COMPLETE at once (SpartaDOS X).
+atari_sio:
+  hsio_index: -1
+  ack_gap_us: 250
+  data_gap_us: 0
+  window_ms: 10
+  ignore_write_glitches: true
+
 clock:
   timezone: "UTC"
   enabled: true

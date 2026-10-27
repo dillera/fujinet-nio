@@ -49,6 +49,16 @@ struct NetSioConfig {
     std::uint16_t port{9997};
 };
 
+/// Atari physical SIO (ESP32 `SioGpio` boards), see docs/atari/hsio-report.md. The defaults are the values
+/// the measurements there support; the gaps and the window can be tuned for a driver that needs more.
+struct AtariSioConfig {
+    int           hsioIndex{-1};              // high-speed SIO index answered to 3F (0-9; -1 = off)
+    std::uint32_t ackGapUs{250};              // ACK -> COMPLETE gap, every speed
+    std::uint32_t dataGapUs{0};               // COMPLETE -> data gap at high speed (SpartaDOS X may want 1000)
+    std::uint32_t altWindowMs{10};            // how long a frame heard by the second listener stays usable
+    bool          ignoreWriteGlitches{true};  // ignore CMD edges seen with the line high while a write waits
+};
+
 struct ClockConfig {
     std::string timezone{"UTC"};  // POSIX timezone string, e.g. "UTC-8:45" or "CET-1CEST,M3.5.0,M10.5.0/3"
     bool        enabled{true};
@@ -125,6 +135,7 @@ struct FujiConfig {
     CpmConfig            cpm;
     PrinterConfig        printer;
     NetSioConfig         netsio;
+    AtariSioConfig       atariSio;
     ClockConfig          clock;
     ChannelConfig        channel;
     ContentTranslationConfig translation;

@@ -66,6 +66,12 @@ bool configs_equal(const FujiConfig& a, const FujiConfig& b)
     if (a.netsio.host != b.netsio.host) return false;
     if (a.netsio.port != b.netsio.port) return false;
     
+    if (a.atariSio.hsioIndex != b.atariSio.hsioIndex) return false;
+    if (a.atariSio.ackGapUs != b.atariSio.ackGapUs) return false;
+    if (a.atariSio.dataGapUs != b.atariSio.dataGapUs) return false;
+    if (a.atariSio.altWindowMs != b.atariSio.altWindowMs) return false;
+    if (a.atariSio.ignoreWriteGlitches != b.atariSio.ignoreWriteGlitches) return false;
+
     if (a.clock.enabled != b.clock.enabled) return false;
     if (a.clock.timezone != b.clock.timezone) return false;
 
@@ -930,4 +936,39 @@ TEST_CASE("YamlFujiConfigStoreFs: translation image max_pixels")
     CHECK(text.find("translation:") != std::string::npos);
     CHECK(text.find("max_pixels: 123456") != std::string::npos);
     CHECK(store.load().translation.image.maxPixels == 123456u);
+}
+
+TEST_CASE("YamlFujiConfigStoreFs: atari_sio defaults, load and round-trip")
+{
+    auto primary = std::make_unique<fujinet::tests::MemoryFileSystem>("primary");
+    YamlFujiConfigStoreFs store(primary.get(), nullptr, "fujinet.yaml");
+
+    // Absent: the measured defaults.
+    create_file(*primary, "/fujinet.yaml", "fujinet:\n  device_name: \"x\"\n");
+    FujiConfig cfg = store.load();
+    CHECK(cfg.atariSio.hsioIndex == -1);
+    CHECK(cfg.atariSio.ackGapUs == 250);
+    CHECK(cfg.atariSio.dataGapUs == 0);
+    CHECK(cfg.atariSio.altWindowMs == 10);
+    CHECK(cfg.atariSio.ignoreWriteGlitches == true);
+
+    // Present: read, with a bad index ignored (10 is read by drivers as a Happy 1050).
+    create_file(*primary, "/fujinet.yaml",
+                "atari_sio:\n  hsio_index: 1\n  ack_gap_us: 300\n  data_gap_us: 1000\n"
+                "  window_ms: 20\n  ignore_write_glitches: false\n");
+    cfg = store.load();
+    CHECK(cfg.atariSio.hsioIndex == 1);
+    CHECK(cfg.atariSio.ackGapUs == 300);
+    CHECK(cfg.atariSio.dataGapUs == 1000);
+    CHECK(cfg.atariSio.altWindowMs == 20);
+    CHECK(cfg.atariSio.ignoreWriteGlitches == false);
+    create_file(*primary, "/fujinet.yaml", "atari_sio:\n  hsio_index: 10\n");
+    CHECK(store.load().atariSio.hsioIndex == -1);
+
+    // Saved and loaded again.
+    FujiConfig original{};
+    original.atariSio.hsioIndex = 3;
+    original.atariSio.dataGapUs = 500;
+    store.save(original);
+    CHECK(configs_equal(original, store.load()));
 }
