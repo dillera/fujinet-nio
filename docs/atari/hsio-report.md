@@ -241,16 +241,41 @@ successive runs. The FujiNet counters were reset before each run.
 
 - The checksum was about 15 ms of every 256-byte read at high speed and 15 ms at 19200 (222 to 208). The
   prediction (about 66 ms) held: 64.4 to 65.0.
-- **About 20 ms of the Atari's time after each response is still unaccounted for.** The library
-  copies the 256 bytes more than once between the transport buffer and the caller's buffer, and parses
-  the header; none of that has been measured yet. The idle time after `W` and `P` is 2.4 and 2.6 ms.
+- **About 20 ms of the Atari's time after each response remained**; the cycle profile below shows where it
+  went. The idle time after `W` and `P` is 2.4 and 2.6 ms.
 - Data gap 0 versus 1000: native read 64.4 against 65.0, `Q` 4.8 against 6.2. Consistent with 1 ms per
   reply that carries data.
 
+## Cycle profile of the Atari's side of a read (soft65c02, exact cycle counts)
+
+`fujinet-nio-lib/tests/atari_read_profile_soft65c02.*` runs the real compact library's
+`fn_disk_read_sector` against a fixture SIOV that returns a 274-byte response, and reads the CPU cycle
+counter at marks (run with `-v`; `make check` asserts a ceiling). One PAL cycle is 0.564 us.
+
+| Step | Cycles | Time |
+|---|---|---|
+| Build the request (header, copy, checksum) | 2,800 | 1.6 ms |
+| Transport between the SIO calls | about 400 | 0.2 ms |
+| After the last response byte: before the change to the copy | 24,400 | 13.7 ms |
+| of which the response checksum | 3,040 | 1.7 ms |
+| of which `fn_asm_raw_call`'s `copy_bytes` of 267 bytes (62 cycles a byte) | about 16,500 | 9.3 ms |
+| of which the caller's `memcpy` of 256 bytes | 4,130 | 2.3 ms |
+| After the last response byte: with the page-wise copy (16 cycles a byte) | 14,000 | 7.9 ms |
+
+- The profile found the second cost of the library: the byte-at-a-time copy of the response, as heavy as
+  the checksum was. Both now run in whole pages.
+- What is left after a response is the checksum (1.7 ms), the copy (2.4 ms), the header parse (about
+  1.3 ms) and the `memcpy` into the caller's buffer (2.3 ms), 7.9 ms in all. The response is copied twice
+  (response buffer to the disk reply buffer, then to the caller); removing one is worth about 2.4 ms more
+  and is not done.
+- The Atari's idle time after `R` measured on hardware (20.5 ms) is the library's 13.7 ms before this
+  change plus the next call's own work before its command frame (the request build, 1.6 ms) and the
+  driver's work around each transfer, about 5 ms. The expected result of this change is `idle after R`
+  near 14 ms and a 256-byte read near 57 ms.
+
 ## Next trials
 
-1. Count the cycles of the rest of the read path on the Atari side (the soft65c02 harness can run the
-   library's read), to see what the remaining 20 ms is before changing anything.
+1. Run the T page again at high speed with the new boot disk: `idle after R` and read 256.
 
 ## Open items
 
