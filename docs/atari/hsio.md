@@ -116,6 +116,21 @@ Idea, not built: route the SIO RX pin to two UARTs (19200 and high speed) and us
 checks out, which would remove the two-lost-commands cost when traffic alternates between D1: at high
 speed and 0x7f at standard.
 
+Sixth result (index 1, then U1MB's driver off): with the driver off nothing sends `3F` at all and the
+boot runs at 19200 (about 150-190 ms a sector, with about twenty 9 s stalls and many edge aborts, not yet
+explained). So the speed negotiation is entirely the Atari's driver: the OS ROM never speaks `3F`;
+the U1MB BIOS, SpartaDOS X, MyPicoDOS's HISIO and the Happy/US Doubler/Ultra Speed drivers inject
+it. An application without one of those stays at 19200 unless it embeds a driver (MyPicoDOS's HISIO
+module is built for that; it is GPL, so check the licence before embedding it in nio-core-apps or
+fujinet-nio-lib).
+
+Second listener experiment (observation only, no behaviour change): the original ESP32 has UART0
+(console), UART1 (SIO) and a free UART2. A `UartChannel` on UART2 shares the SIO RX pin through the
+GPIO matrix, at the speed the main UART is not using, and counts the 5-byte command frames it decodes
+with a good checksum. `sio.status` shows `second listener (UART2, same RX pin) at N baud: command
+frames decoded N`. With the main UART at high speed it should decode the app's `0x7f` frames at
+19200; if it does, the dual-listen idea is feasible. TX stays on UART1.
+
 First hardware result (U1MB, index 6): the Atari asked `3F` once and we switched, but two command
 frames were unreadable and the fallback returned us to 19200. The Atari never asks again and keeps
 retrying at high speed (about 14 times per command, then once at standard), so every sector took

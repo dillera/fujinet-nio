@@ -118,10 +118,13 @@ UartChannel::UartChannel(const config::UartConfig& uart_cfg)
     }
 }
 
-UartChannel::UartChannel(const config::UartConfig& uart_cfg, const UartPins& uart_pins)
+UartChannel::UartChannel(const config::UartConfig& uart_cfg, const UartPins& uart_pins,
+                         uart_port_t port, bool rx_only)
     : _uart_cfg(uart_cfg),
       _uart_pins(uart_pins),
-      _use_explicit_pins(true)
+      _use_explicit_pins(true),
+      _rx_only(rx_only),
+      _uart_port(port)
 {
     _initialized = initialize();
     if (!_initialized) {
@@ -194,7 +197,7 @@ bool UartChannel::apply_hw_parameters(const UartPins& uart_pins)
         return false;
     }
 
-    err = uart_set_pin(_uart_port, uart_pins.tx, uart_pins.rx, rts_pin, cts_pin);
+    err = uart_set_pin(_uart_port, _rx_only ? UART_PIN_NO_CHANGE : uart_pins.tx, uart_pins.rx, rts_pin, cts_pin);
     if (err != ESP_OK) {
         FN_LOGE(TAG, "uart_set_pin failed: %d", err);
         return false;
@@ -225,14 +228,12 @@ bool UartChannel::initialize()
 {
     const UartPins uart_pins = selected_pins();
 
-    if (uart_pins.rx < 0 || uart_pins.tx < 0) {
+    if (uart_pins.rx < 0 || (!_rx_only && uart_pins.tx < 0)) {
         FN_LOGE(TAG, "No valid UART pins configured in pinmap");
         return false;
     }
 
     FN_LOGI(TAG, "Using UART pins: RX=%d, TX=%d", uart_pins.rx, uart_pins.tx);
-
-    _uart_port = UART_NUM_1;
 
     if (!apply_hw_parameters(uart_pins)) {
         return false;
@@ -330,28 +331,28 @@ void UartChannel::process_event(const uart_event_t& event)
     switch (event.type) {
     case UART_FIFO_OVF:
         ++_rx_errors;
-        FN_LOGW(TAG, "UART FIFO overflow");
+        if (!_rx_only) FN_LOGW(TAG, "UART FIFO overflow");
         uart_flush_input(_uart_port);
         break;
 
     case UART_BUFFER_FULL:
         ++_rx_errors;
-        FN_LOGW(TAG, "UART buffer full");
+        if (!_rx_only) FN_LOGW(TAG, "UART buffer full");
         uart_flush_input(_uart_port);
         break;
 
     case UART_BREAK:
-        FN_LOGI(TAG, "UART break detected");
+        if (!_rx_only) FN_LOGI(TAG, "UART break detected");
         break;
 
     case UART_PARITY_ERR:
         ++_rx_errors;
-        FN_LOGW(TAG, "UART parity error");
+        if (!_rx_only) FN_LOGW(TAG, "UART parity error");
         break;
 
     case UART_FRAME_ERR:
         ++_rx_errors;
-        FN_LOGW(TAG, "UART frame error");
+        if (!_rx_only) FN_LOGW(TAG, "UART frame error");
         break;
 
     case UART_PATTERN_DET:

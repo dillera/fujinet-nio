@@ -89,6 +89,14 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
     // never transmit, so the Atari would never see an ACK. On the v1 hardware TX feeds a 74LS07
     // buffer input, which wants a driven high (push-pull), as the legacy firmware does.
     _uart = std::make_unique<UartChannel>(sio_config(config.channel.uart), pins.sio.uart);
+    // A second UART on the same RX pin (the GPIO matrix feeds one input to both), at the other speed.
+    // Observation only for now: it never transmits and nothing acts on what it hears.
+    if (pins.sio.uart.rx >= 0) {
+        config::UartConfig alt_cfg = sio_config(config.channel.uart);
+        alt_cfg.baudRate = sio_baud;
+        _alt = std::make_unique<UartChannel>(alt_cfg, pins.sio.uart, UART_NUM_2, true);
+        retune_alt();
+    }
     // From here the ingress answers commands. sio.status compares this with the first CMD edge.
     _reply.ready_us = static_cast<std::uint32_t>(esp_timer_get_time());
 }
@@ -155,6 +163,11 @@ io::AtariSioStats AtariSioIngress::stats() const
     out.hsio_switches = _hsio_switches;
     out.hsio_fallbacks = _hsio_fallbacks;
     out.hsio_fallback_enabled = _speed.fallback();
+    if (_alt) {
+        out.alt_baud = _alt->uart_config().baudRate;
+        out.alt_valid_frames = _alt_valid;
+        out.alt_last_frame = _alt_last;
+    }
     return out;
 }
 
@@ -169,6 +182,7 @@ bool AtariSioIngress::set_hsio_index(int index, bool fallback)
         _uart->discardInput();
         _uart->setBaudrate(_speed.baud());
     }
+    retune_alt();
     return true;
 }
 
@@ -180,6 +194,7 @@ void AtariSioIngress::enter_high_speed()
     _uart->discardInput();
     _uart->setBaudrate(_speed.baud());
     ++_hsio_switches;
+    retune_alt();
 }
 
 void AtariSioIngress::leave_high_speed()
@@ -191,6 +206,43 @@ void AtariSioIngress::leave_high_speed()
     _uart->discardInput();
     _uart->setBaudrate(_speed.baud());
     if (was_high) ++_hsio_fallbacks;
+    retune_alt();
+}
+
+void AtariSioIngress::retune_alt()
+{
+    if (!_alt) return;
+    const std::uint32_t other = _speed.high() ? sio_baud : io::AtariSioSpeed::baud_for_index(
+        static_cast<unsigned>(_speed.enabled() ? _speed.index() : 0));
+    if (_alt->uart_config().baudRate != other) {
+        _alt->discardInput();
+        _alt->setBaudrate(other);
+    }
+}
+
+// Slides a 5-byte window over what the second listener hears and counts the windows that are a command
+// frame: a device we serve and a good checksum. Bytes of the wrong speed rarely pass both tests.
+void AtariSioIngress::poll_alt()
+{
+    if (!_alt) return;
+    std::uint8_t bytes[64];
+    while (_alt->available()) {
+        const auto count = _alt->read(bytes, sizeof(bytes));
+        for (std::size_t i = 0; i < count; ++i) {
+            if (_alt_used == _alt_window.size()) {
+                std::copy(_alt_window.begin() + 1, _alt_window.end(), _alt_window.begin());
+                --_alt_used;
+            }
+            _alt_window[_alt_used++] = bytes[i];
+            if (_alt_used < _alt_window.size()) continue;
+            const auto device = _alt_window[0];
+            if ((device < 0x31 || device > 0x38) && device != 0x7f) continue;
+            if (io::AtariSioNioFrontend::checksum(_alt_window.data(), 4) != _alt_window[4]) continue;
+            ++_alt_valid;
+            _alt_last = _alt_window;
+            _alt_used = 0;
+        }
+    }
 }
 
 std::uint32_t AtariSioIngress::probe_baud(std::uint32_t target)
@@ -235,6 +287,7 @@ void AtariSioIngress::poll()
         _poll_gap_us_max = now - _last_poll_us;
         _poll_gap_at_us = _last_poll_us;
     }
+    poll_alt();
     _capture.poll(_boundary, _router, *_uart,
                   [this] { return gpio_get_level(static_cast<gpio_num_t>(_cmd_pin)) == 0; },
                   [] { return esp_timer_get_time(); });
@@ -251,6 +304,7 @@ void AtariSioIngress::poll()
             _uart->discardInput();
             _uart->setBaudrate(_speed.baud());
             ++_hsio_switches;
+            retune_alt();
         }
     }
     _last_poll_us = static_cast<std::uint32_t>(esp_timer_get_time());

@@ -269,6 +269,10 @@ private:
         line(text, "cmd_edges: " + n(s.cmd_edges) + "   cmd_line: " + (s.cmd_line_low ? "low (asserted)" : "high (idle)"));
         line(text, "baud: set " + n(s.uart_baud_set) + ", UART hardware reports " + n(s.uart_baud_hw));
         text += hsio_line(s);
+        if (s.alt_baud != 0) {
+            line(text, "second listener (UART2, same RX pin) at " + n(s.alt_baud) + " baud: command frames decoded " +
+                           n(s.alt_valid_frames) + (s.alt_valid_frames ? ", last " + frame_text(s.alt_last_frame) : ""));
+        }
         line(text, "rx_bytes: " + n(s.capture.rx_bytes) + "   uart_rx_errors: " + n(s.uart_rx_errors));
         line(text, "frames: " + n(s.capture.frames) + "   disk(D1:-D8:): " + n(s.router.disk_commands) +
                        "   nio(0x7f): " + n(s.router.nio_commands) + "   other devices: " + n(s.router.other_commands));

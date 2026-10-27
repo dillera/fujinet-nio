@@ -26,7 +26,10 @@ class UartChannel : public fujinet::io::Channel {
 public:
     /// Host-facing UART from `channel.uart` in FujiConfig (baud, framing, optional RTS/CTS).
     explicit UartChannel(const config::UartConfig& uart_cfg = {});
-    UartChannel(const config::UartConfig& uart_cfg, const UartPins& uart_pins);
+    /// `rx_only` leaves the TX pin alone and quiets the error log: a second listener on a pin another
+    /// UART already drives (the Atari SIO observer), on its own `port`.
+    UartChannel(const config::UartConfig& uart_cfg, const UartPins& uart_pins,
+                uart_port_t port = UART_NUM_1, bool rx_only = false);
     ~UartChannel() override;
 
     bool available() override;
@@ -73,6 +76,7 @@ private:
     config::UartConfig _uart_cfg{};
     UartPins _uart_pins{};
     bool _use_explicit_pins{false};
+    bool _rx_only{false};
     
     // UART port number
     uart_port_t _uart_port{UART_NUM_1};

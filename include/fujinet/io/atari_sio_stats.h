@@ -108,6 +108,11 @@ struct AtariSioStats {
     std::uint32_t hsio_switches{0};    // times the UART was switched to high speed
     std::uint32_t hsio_fallbacks{0};   // times it was switched back after unreadable command frames
     bool hsio_fallback_enabled{true};  // false: stay at the high speed even if command frames are unreadable
+    // The second listener (docs/atari/hsio.md): another UART on the same RX pin at the speed the main one
+    // is not using. Observation only: it counts command frames it decoded with a valid checksum.
+    std::uint32_t alt_baud{0};         // 0 = no second listener
+    std::uint32_t alt_valid_frames{0};
+    std::array<std::uint8_t, 5> alt_last_frame{};
     std::uint32_t stale_replies_dropped{0};  // native replies the Atari never read, discarded after 2 s
 };
 

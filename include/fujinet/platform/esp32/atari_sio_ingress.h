@@ -45,9 +45,17 @@ public:
 private:
     void send(const std::vector<std::uint8_t>& bytes);
     void enter_high_speed();
+    // The second listener follows whichever speed the main UART is not at.
+    void retune_alt();
+    void poll_alt();
     void leave_high_speed();
 
     std::unique_ptr<UartChannel> _uart;
+    std::unique_ptr<UartChannel> _alt;
+    std::array<std::uint8_t, 5> _alt_window{};
+    std::size_t _alt_used{0};
+    std::uint32_t _alt_valid{0};
+    std::array<std::uint8_t, 5> _alt_last{};
     io::AtariSioDiskFrontend _disk;
     io::AtariSioNioFrontend _nio;
     io::AtariSioIngressRouter _router;
