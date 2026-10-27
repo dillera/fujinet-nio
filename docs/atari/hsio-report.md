@@ -107,6 +107,7 @@ What this says:
 | Device whitelist (`0x31-0x38`, `0x7f`) and a checksum for second-listener frames | `AtariSioIngress` | A 5-byte window slides over arbitrary bytes at the other speed, so a frame must look like one for a device we serve. | By construction. |
 | Short frames (1-4 bytes at CMD release) count as bad | capture | A high-speed frame read by a 19200 UART arrives as one or two garbage bytes (`0xe0 ...`), never five. | Observed in every run. |
 | Drop CMD edges pending at end of a reply when CMD is high | `drop_tx_noise_edges` | Trial 8. | **Did not fix what it was for.** Harmless; kept because the Atari never touches CMD during our reply. |
+| Ignore CMD edges while a write waits for its data and the line reads high | `AtariSioCapture::set_ignore_write_glitches`, `sio.tune glitch` | Three runs each way: write aborts 4-6 to 0, timeouts down by about 6 a run, switches to 19200 from 5-7 to 1. | Measured; on by default. |
 
 ## The FujiNet patch of Hias's driver (mozzwald, `highspeed-sio` branch `fujinet`)
 
@@ -170,25 +171,59 @@ Same setup as above. Each setting was run once; the counters and the T page were
   the Atari gets no ACK for its data frame and times out. The firmware now counts those separately, and
   `sio.tune glitch 1` ignores CMD edges seen with the line high while a write waits.
 
+## Glitch filter and where a read's time goes (index 1, data gap 0, three runs each)
+
+The Atari driver's timeout count adds up across runs, so the figures below are the difference between
+successive runs. The FujiNet counters were reset before each run.
+
+| | Timeouts per run | Switches to 19200 | Edge aborts while a write waited | CMD edges ignored there | Read 256 (ms) |
+|---|---|---|---|---|---|
+| filter off | 21, 21, 19 | 5, 6, 7 | 4, 5, 6 | 0 | 80.2, 79.6, 80.4 |
+| filter on | 17, 14, 11 | 1, 1, 1 | 0, 0, 0 | 6, 3, 8 | 79.0, 79.0, 79.2 |
+
+- **The filter works and finds a real cause.** With the line high while a write waits for its data, a
+  few CMD edges per run are glitches (3-8 in about 400 writes). Left in, each aborted the write: the Atari
+  got no ACK for its data frame, timed out and retried at standard speed. Ignoring them removes those
+  aborts, cuts timeouts by about 6 per run (the number of write aborts), and removes the switches to 19200
+  that followed them. It is now the default (`sio.tune glitch 0` turns it off).
+- **About 14 timeouts per run remain** (about 1 percent of the transactions); not the write phase. Where
+  the others come from is unknown. Edge aborts overall still vary a great deal (101 to 555 per run).
+- **Where the time of a read goes** (the FujiNet's `per command` lines, identical to 0.1 ms in all six
+  runs; the counts mix 100 info calls and 300 reads, 128, 256 and 512 byte):
+
+| Command | Service (ours) | Idle after (the Atari's) |
+|---|---|---|
+| `W` (send the request) | 6.8 ms | 2.3-3.0 ms |
+| `P` (poll) | 2.0 ms | 2.7-2.8 ms |
+| `R` (read the response) | 17.6 ms (25.3 of it for the data frame of a 256 byte sector) | **31.4-31.6 ms** |
+| `Q` | 5.6 ms | 5.0-5.7 ms |
+
+  For one 256 byte read that adds up to the measured 79 ms with about **37 ms of it the Atari's time after
+  the response arrived** and before its next command: nearly half. The FujiNet's own time is the three
+  services, about 35 ms, of which the wire takes 25. So the 40 ms "missing" from the ideal is the Atari
+  side, not the transactions or the ESP. The excess per byte measured earlier (0.067 ms) is the Atari
+  processing the response, which scales with its size.
+- **What is not yet known**: whether that Atari time is the library's decoding of the response (parsing,
+  copying, checksums in C), the driver's end-of-transfer work, or the benchmark itself. At standard speed
+  the same decoding would run too, but the earlier 19200 figures do not show an excess of that size, so
+  the answer is still open. The `per command` lines at 19200 would say (next trial).
+
 ## Next trials
 
-New measurements and one dial, all in `sio.status`:
-
-- `per command (...)`: for each of `Q`, `W`, `P`, `R` the average time the FujiNet took from the CMD
-  release to the end of its last reply byte (service), and then how long the Atari took until the CMD
-  release of its next command (idle). Summed over a run these equal the elapsed time, so they show which
-  side the remaining 40 ms of a read belongs to. If the idle time after `R` is large, it is the Atari's
-  decoding of the response; if the service time of `W` is large, it is the FujiNet.
-- `edge aborts while a write waited for its data` and `CMD edges ignored there`.
-- `sio.tune glitch 1`: ignore CMD edges seen with the line high while a write waits for its data. Run
-  **B** or **T** three times with it off and three times on, `sio.reset` before each, and compare
-  `hs errors to`, `switches` and the read times.
+1. **Same T run at standard speed** (H off), then `sio.status`: the `idle after R` figure at 19200. If it is
+   also about 31 ms, it is the library's own processing of a response (and a library change, such as
+   fewer passes over the bytes, is the lever). If it is much smaller, it is something the high-speed driver
+   does after a transfer.
+2. **Disk boot with `sio.tune data 0`**: the T-page runs never used the U1MB's disk path with it. Sector
+   time and `switches` for a boot would show whether the 1 ms gap can go for disks too.
 
 ## Open items
 
-- **The ACK timeouts** (about 3 percent of native transactions, each retried at the same speed for
-  about 40 ms): cause unknown. Not CMD edges while we transmit (trial 8).
-- **Per-byte cost at high speed** is 1.7 times the wire time.
+- **The ACK timeouts**: about 6 of the roughly 20 a run were CMD glitches during a write (fixed, see
+  above); about 14 a run (1 percent of the transactions, 40 ms each) remain, cause unknown. Not CMD edges
+  while we transmit (trial 8).
+- **The Atari's time after a response** (about 37 ms of a 79 ms read): see the section above; the
+  standard-speed comparison is next.
 - **The U1MB speeds up only `D1:`**: awaiting an answer from its author. The library driver covers the
   native endpoint meanwhile.
 - **Reply timing fix.** A stray CMD edge stamped just after the reply began made `reply max` wrap to

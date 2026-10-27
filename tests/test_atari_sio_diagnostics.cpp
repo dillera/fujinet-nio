@@ -335,10 +335,10 @@ TEST_CASE("sio.tune shows and sets the gaps and the window, and sio.status shows
     CHECK(contains(r.text, "not the defaults"));
     CHECK(run(*provider, {"sio.tune", "ack", "x"}).status == DiagStatus::InvalidArgs);
     CHECK(run(*provider, {"sio.tune", "bogus", "1"}).status == DiagStatus::InvalidArgs);
-    CHECK(run(*provider, {"sio.tune", "glitch", "1"}).status == DiagStatus::Ok);
-    CHECK(set_to.ignore_write_glitches);
-    CHECK(run(*provider, {"sio.tune", "reset"}).status == DiagStatus::Ok);
+    CHECK(run(*provider, {"sio.tune", "glitch", "0"}).status == DiagStatus::Ok);
     CHECK(!set_to.ignore_write_glitches);
+    CHECK(run(*provider, {"sio.tune", "reset"}).status == DiagStatus::Ok);
+    CHECK(set_to.ignore_write_glitches);
     CHECK(set_to.data_gap_us == 1000);
 
     const auto text = run(*provider, {"sio.status"}).text;

@@ -98,6 +98,7 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
     }
     // From here the ingress answers commands. sio.status compares this with the first CMD edge.
     _reply.ready_us = static_cast<std::uint32_t>(esp_timer_get_time());
+    _capture.set_ignore_write_glitches(_tuning.ignore_write_glitches);
 }
 
 AtariSioIngress::~AtariSioIngress() = default;

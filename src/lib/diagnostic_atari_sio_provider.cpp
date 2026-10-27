@@ -174,7 +174,7 @@ private:
                " us (high speed only), second-listener window " + std::to_string(t.alt_window_us / 1000) + " ms, ignore CMD edges during a write " +
                (t.ignore_write_glitches ? "on" : "off") +
                ((t.ack_gap_us != 250 || t.data_gap_us != 1000 || t.alt_window_us != 10000 ||
-                 t.ignore_write_glitches) ? "   (not the defaults)" : "");
+                 !t.ignore_write_glitches) ? "   (not the defaults)" : "");
     }
 
     DiagResult tune(const DiagArgsView& args) const
