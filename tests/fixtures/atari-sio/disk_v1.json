@@ -208,7 +208,7 @@
     },
     {
       "command": "31 52 04 00 87",
-      "data": "ff ff 00 0d 15 86 60 20 0b 7f ba 8e 10 94 a5 0e a6 0f 8d 13 94 8e 14 94 38 ad e5 02 e9 00 85 0e 85 8a ad e6 02 e9 00 85 0f 85 8b a5 52 8d 12 94 a0 00 84 52 ae be 02 8e 11 94 8c be 02 88 8c fc 02 20 63 0d 20 3b 74 ae 10 94 9a 20 9e 74 ad 12 94 85 52 ad 11 94 8d be 02 ad 13 94 ae 14 94 85 0e 86 0f a2 00 8e f0 02 60 a0 00 f0 07 a9 6f a2 0d 4c b9 85 60 20 aa 7b a9 c8 a2 83 20 c0 7b a0 06 20 df 7b a0 04 20 6e 7b a0 00 b1 8a d0 0d a9 d4 a2 83 20 05 7c ee 16 86 4c 89 76 a9 ef a2 81 20 c0 7b a0 02 b1 8a 20 be 7b a0 04 20 6e 7b ee 17 86 4c 89 76 20 c0 7b a0 05 20 df 7b a0 03 b1 8a 88 11 8a f0 05 a9 00 4c d3 0d 20 03 2c aa f0 06 20 03 2c 4c d3 0d a9 05 20 6f 0d 4c 8e 76 20 aa 7b a9 00 20 aa 7b 4c 9c 0e 20 bc 7b a9 d7 a2 83 20 c0 7b ad ae 85 ae af 85 20 99 75 00 05 fd",
+      "data": "ff ff 00 0d de 87 60 20 5b 80 ba 8e f1 95 a5 0e a6 0f 8d f4 95 8e f5 95 38 ad e5 02 e9 00 85 0e 85 8a ad e6 02 e9 00 85 0f 85 8b a5 52 8d f3 95 a0 00 84 52 ae be 02 8e f2 95 8c be 02 88 8c fc 02 20 63 0d 20 8b 75 ae f1 95 9a 20 ee 75 ad f3 95 85 52 ad f2 95 8d be 02 ad f4 95 ae f5 95 85 0e 86 0f a2 00 8e f0 02 60 a0 00 f0 07 a9 6f a2 0d 4c 82 87 60 20 fa 7c a9 91 a2 85 20 10 7d a0 06 20 2f 7d a0 04 20 be 7c a0 00 b1 8a d0 0d a9 a0 a2 85 20 55 7d ee df 87 4c d9 77 a9 97 a2 83 20 10 7d a0 02 b1 8a 20 0e 7d a0 04 20 be 7c ee e0 87 4c d9 77 20 10 7d a0 05 20 2f 7d a0 03 b1 8a 88 11 8a f0 05 a9 00 4c d3 0d 20 53 2d aa f0 06 20 53 2d 4c d3 0d a9 05 20 6f 0d 4c de 77 20 fa 7c a9 00 20 fa 7c 4c 9c 0e 20 0c 7d a9 9a a2 85 20 10 7d ad 77 87 ae 78 87 20 e9 76 00 05 fd",
       "device": "0x31",
       "geometry": "geo-classic-256",
       "id": "boot-config-read-sector-4",
@@ -220,7 +220,7 @@
         "A",
         "C",
         "data:256",
-        "sum:32"
+        "sum:25"
       ],
       "sector": 4,
       "selection": "boot.config_uri only",
@@ -1097,7 +1097,7 @@
   "scope": "virtual protocol evidence only; no physical timing or electrical claim",
   "source_image": {
     "path": "repos/nio-core-apps/build/atari/disk/boot/autorun.atr",
-    "sha256": "252be0c04a56dbc28b856eb9bb7e19d1ff9f0d38f463f455f7f4a010f2d174e6",
+    "sha256": "eb2ce1ac03fb59c36b2be55cc760a80ce6247fe9f0dc4686c55710b627bbf10b",
     "atr_header": "96 02 e8 2c 00 01 00 00 00 00 00 00 00 00 00 00",
     "atr_header_bytes": 16,
     "geometry": "classic-256",
@@ -1126,9 +1126,9 @@
       "4": {
         "atr_offset": 400,
         "bytes": 256,
-      "data": "ff ff 00 0d 15 86 60 20 0b 7f ba 8e 10 94 a5 0e a6 0f 8d 13 94 8e 14 94 38 ad e5 02 e9 00 85 0e 85 8a ad e6 02 e9 00 85 0f 85 8b a5 52 8d 12 94 a0 00 84 52 ae be 02 8e 11 94 8c be 02 88 8c fc 02 20 63 0d 20 3b 74 ae 10 94 9a 20 9e 74 ad 12 94 85 52 ad 11 94 8d be 02 ad 13 94 ae 14 94 85 0e 86 0f a2 00 8e f0 02 60 a0 00 f0 07 a9 6f a2 0d 4c b9 85 60 20 aa 7b a9 c8 a2 83 20 c0 7b a0 06 20 df 7b a0 04 20 6e 7b a0 00 b1 8a d0 0d a9 d4 a2 83 20 05 7c ee 16 86 4c 89 76 a9 ef a2 81 20 c0 7b a0 02 b1 8a 20 be 7b a0 04 20 6e 7b ee 17 86 4c 89 76 20 c0 7b a0 05 20 df 7b a0 03 b1 8a 88 11 8a f0 05 a9 00 4c d3 0d 20 03 2c aa f0 06 20 03 2c 4c d3 0d a9 05 20 6f 0d 4c 8e 76 20 aa 7b a9 00 20 aa 7b 4c 9c 0e 20 bc 7b a9 d7 a2 83 20 c0 7b ad ae 85 ae af 85 20 99 75 00 05 fd",
-      "checksum": "32",
-      "sha256": "308c57db8dc635009ffa4e82773700e7d1d35c8018120cffa1969d024f4b504f"
+      "data": "ff ff 00 0d de 87 60 20 5b 80 ba 8e f1 95 a5 0e a6 0f 8d f4 95 8e f5 95 38 ad e5 02 e9 00 85 0e 85 8a ad e6 02 e9 00 85 0f 85 8b a5 52 8d f3 95 a0 00 84 52 ae be 02 8e f2 95 8c be 02 88 8c fc 02 20 63 0d 20 8b 75 ae f1 95 9a 20 ee 75 ad f3 95 85 52 ad f2 95 8d be 02 ad f4 95 ae f5 95 85 0e 86 0f a2 00 8e f0 02 60 a0 00 f0 07 a9 6f a2 0d 4c 82 87 60 20 fa 7c a9 91 a2 85 20 10 7d a0 06 20 2f 7d a0 04 20 be 7c a0 00 b1 8a d0 0d a9 a0 a2 85 20 55 7d ee df 87 4c d9 77 a9 97 a2 83 20 10 7d a0 02 b1 8a 20 0e 7d a0 04 20 be 7c ee e0 87 4c d9 77 20 10 7d a0 05 20 2f 7d a0 03 b1 8a 88 11 8a f0 05 a9 00 4c d3 0d 20 53 2d aa f0 06 20 53 2d 4c d3 0d a9 05 20 6f 0d 4c de 77 20 fa 7c a9 00 20 fa 7c 4c 9c 0e 20 0c 7d a9 9a a2 85 20 10 7d ad 77 87 ae 78 87 20 e9 76 00 05 fd",
+      "checksum": "25",
+      "sha256": "c85730803132fd5b7d7cfebd4ed79cb5a552dda3b4ca1015ef9e804327742f71"
       }
     }
   }
