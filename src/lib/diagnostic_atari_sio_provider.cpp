@@ -193,6 +193,7 @@ private:
         std::string text = b.reason == Reason::Checksum   ? "bad checksum"
                            : b.reason == Reason::Overflow ? "more than 5 bytes"
                            : b.reason == Reason::RxError  ? "UART error"
+                           : b.reason == Reason::Short    ? "frame ended short"
                                                           : "none";
         text += ", " + std::to_string(b.length) + " byte(s):";
         for (std::size_t i = 0; i < b.bytes.size() && i < b.length; ++i) text += " " + hex2(b.bytes[i]);

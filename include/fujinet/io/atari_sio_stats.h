@@ -11,7 +11,7 @@ namespace fujinet::io {
 
 // A command frame the capture could not read, kept so sio.status can show what arrived.
 struct AtariSioBadFrame {
-    enum class Reason : std::uint8_t { None, Checksum, Overflow, RxError };
+    enum class Reason : std::uint8_t { None, Checksum, Overflow, RxError, Short };
     Reason reason{Reason::None};
     std::uint8_t length{0};            // bytes collected before it was rejected (at most 5 are kept)
     std::array<std::uint8_t, 5> bytes{};

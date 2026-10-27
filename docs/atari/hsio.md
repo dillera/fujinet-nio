@@ -77,7 +77,10 @@ Source: `fujinet-firmware`, `lib/bus/sio/sio.cpp`, `sio.h`, `lib/device/sio/{dis
 Second result (`nofallback`): after the switch the Atari's command frames arrived at 19200 while we
 listened at 67k (bits 3.5 times too wide: `0x38 0xc0 0xf8` and UART breaks). The legacy firmware
 handles this by toggling the baud in both directions after 2 bad command frames
-(`COMMAND_FRAME_SPEED_CHANGE_THRESHOLD`, `toggleBaudrate`), so the ingress now does the same.
+(`COMMAND_FRAME_SPEED_CHANGE_THRESHOLD`, `toggleBaudrate`), so the ingress now does the same. A frame at high speed read by a 19200 UART arrives as only one or
+two garbage bytes, never five, so a command frame that ends (CMD released) with 1-4 bytes also counts
+as unreadable; a CMD glitch with no bytes does not. The legacy log (an old run) shows the same
+sequence: down after two bad frames, the Atari asks `3F` again at 19200, then up after two more.
 
 First hardware result (U1MB, index 6): the Atari asked `3F` once and we switched, but two command
 frames were unreadable and the fallback returned us to 19200. The Atari never asks again and keeps

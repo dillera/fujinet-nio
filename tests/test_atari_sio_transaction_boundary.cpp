@@ -398,6 +398,15 @@ TEST_CASE("Atari SIO capture counts command frames that cannot be read, for the 
     CHECK(capture.bad_frames_in_a_row() == 2);
     low = false; boundary.note_cmd_edge(); poll(); poll();
 
+    // A frame that ends after a byte or two (a faster frame read by a slower UART) counts too.
+    capture.clear_bad_frames();
+    low = true; boundary.note_cmd_edge(); uart.driver = {0x38}; poll();
+    low = false; boundary.note_cmd_edge(); poll();
+    low = true; boundary.note_cmd_edge(); poll();
+    CHECK(capture.bad_frames_in_a_row() == 1);
+    CHECK(capture.stats().last_bad.reason == fujinet::io::AtariSioBadFrame::Reason::Short);
+    low = false; boundary.note_cmd_edge(); poll(); poll();
+
     // Noise is not a speed change: edge and timeout aborts do not count.
     capture.clear_bad_frames();
     low = false; boundary.note_cmd_edge(); boundary.note_cmd_edge(); poll();

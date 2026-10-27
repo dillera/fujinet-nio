@@ -55,6 +55,12 @@ public:
             ++(_stats.*reason);
             // A command frame the UART could not read (framing errors or too many bytes) is what the
             // Atari sending at another speed looks like. Edge and timeout aborts are noise, not speed.
+            // A frame that ended (CMD released) with some bytes but fewer than 5: what a frame at a faster
+            // speed looks like to a slower UART. Needs a byte, so a bare CMD glitch is not counted.
+            if (_collecting && _released && _frame_used >= 1 && _frame_used < _frame.size() &&
+                reason == &AtariSioCaptureStats::aborts_edge) {
+                note_bad_frame(AtariSioBadFrame::Reason::Short);
+            }
             if (_collecting && (reason == &AtariSioCaptureStats::aborts_rx_error ||
                                 reason == &AtariSioCaptureStats::aborts_overflow)) {
                 note_bad_frame(reason == &AtariSioCaptureStats::aborts_overflow
