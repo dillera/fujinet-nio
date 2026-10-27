@@ -45,7 +45,10 @@ private:
 // host tests without ESP-IDF.
 class AtariSioCapture {
 public:
-    bool needs_immediate_poll() const noexcept { return _collecting; }
+    // True while the loop must not sleep: a command frame is being collected, or an accepted write is
+    // waiting for its data frame (no CMD edge wakes the task for that one, so sleeping a tick, 10 ms, added
+    // up to 10 ms to every write, native or disk).
+    bool needs_immediate_poll() const noexcept { return _collecting || _write_started_us != 0; }
 
     template<class Router, class Uart, class Asserted, class Now>
     void poll(AtariSioTransactionBoundary& boundary, Router& router, Uart& uart,

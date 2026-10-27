@@ -175,6 +175,25 @@ TEST_CASE("Atari SIO capture waits for final buffered byte after release")
     CHECK(router.command.size() == 5);
 }
 
+TEST_CASE("Atari SIO capture polls without sleeping while a write waits for its data frame")
+{
+    fujinet::io::AtariSioCapture capture;
+    fujinet::io::AtariSioTransactionBoundary boundary;
+    CaptureUart uart; CaptureRouter router;
+    bool low = true; std::int64_t time = 1;
+    auto poll = [&] { capture.poll(boundary, router, uart, [&] { return low; }, [&] { return time; }); };
+    CHECK_FALSE(capture.needs_immediate_poll());                   // idle: the loop may sleep
+    boundary.note_cmd_edge(); uart.driver = {0x31, 'W', 0, 0, 0x88}; poll();
+    low = false; boundary.note_cmd_edge(); poll();                 // the write command was accepted
+    REQUIRE(router.pending == 2);
+    CHECK(capture.needs_immediate_poll());                         // waiting for the data frame
+    uart.driver = {10, 11}; poll();                                // part of it
+    CHECK(capture.needs_immediate_poll());
+    uart.driver = {12}; poll();                                    // the checksum byte: done
+    CHECK(router.pending == 0);
+    CHECK_FALSE(capture.needs_immediate_poll());
+}
+
 TEST_CASE("Atari SIO capture extends write deadline on byte progress")
 {
     fujinet::io::AtariSioCapture capture;
