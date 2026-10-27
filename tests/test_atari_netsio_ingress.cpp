@@ -191,7 +191,7 @@ TEST_CASE("Atari NetSIO ingress routes canonical Q/W/P/R through the production 
     const auto read = fixture("r-core-dispatch");
 
     harness.command_frame(query.command, 1);
-    CHECK(decode_reply(harness.wire->tx, 1) == sio_reply({1, 0, 2, 0}));
+    CHECK(decode_reply(harness.wire->tx, 1) == sio_reply({1, 0, 2, 1}));
     harness.wire->clear_tx();
 
     harness.command_frame(write.command, 2);

@@ -195,7 +195,7 @@ TEST_CASE("Atari native NIO frontend dispatches the literal core packet once and
 
     const auto q = harness.frontend.begin(query.frame);
     CHECK(q.accepted);
-    CHECK(q.bytes == data_reply({1, 0, 2, 0}));
+    CHECK(q.bytes == data_reply({1, 0, 2, 1}));   // flag bit 0: R takes any length
     CHECK(harness.device->requests.empty());
     CHECK(harness.frontend.begin(command('X', 0)).bytes == std::vector<std::uint8_t>{'N'});
     CHECK(harness.frontend.begin(command('P', 1)).bytes == std::vector<std::uint8_t>{'N'});
@@ -218,9 +218,11 @@ TEST_CASE("Atari native NIO frontend dispatches the literal core packet once and
     CHECK(busy.bytes == std::vector<std::uint8_t>{'N'});
     CHECK(harness.device->requests.size() == 1);
 
+    // A shorter R is refused and the response is kept; so is one over the capacity.
     const auto wrong_read = harness.frontend.begin(command('R', read.aux - 1));
     CHECK_FALSE(wrong_read.accepted);
     CHECK(wrong_read.bytes == std::vector<std::uint8_t>{'N'});
+    CHECK_FALSE(harness.frontend.begin(command('R', AtariSioNioFrontend::capacity + 1)).accepted);
     CHECK(harness.frontend.begin(poll.frame).bytes == data_reply({2, 9, 0}));
 
     const auto terminal = harness.frontend.begin(read.frame);
@@ -355,4 +357,21 @@ TEST_CASE("Atari native NIO frontend without a clock never expires a reply")
     send_valid_write(harness, write);
     CHECK_FALSE(harness.frontend.begin(write.frame).accepted);
     CHECK(harness.frontend.stale_replies_dropped() == 0);
+}
+
+TEST_CASE("Atari native NIO frontend pads a longer R with zeros and releases the response")
+{
+    Harness harness;
+    const auto write = fixture("w-core-dispatch");
+    const auto read = fixture("r-core-dispatch");
+    send_valid_write(harness, write);
+
+    auto padded = read.payload;
+    padded.resize(read.payload.size() + 20, 0);
+    const auto result = harness.frontend.begin(command('R', static_cast<std::uint16_t>(padded.size())));
+    REQUIRE(result.accepted);
+    CHECK(result.bytes == data_reply(padded));
+    // Released like an exact read: idle, and a second R is refused.
+    CHECK(harness.frontend.begin(command('P', 0)).bytes == data_reply({0, 0, 0}));
+    CHECK_FALSE(harness.frontend.begin(command('R', static_cast<std::uint16_t>(padded.size()))).accepted);
 }

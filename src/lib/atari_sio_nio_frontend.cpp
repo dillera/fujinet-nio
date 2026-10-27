@@ -12,7 +12,13 @@ constexpr std::uint8_t command_read = 'R';
 constexpr std::uint8_t command_hsio_index = 0x3f;
 
 constexpr std::uint8_t wire_revision = 1;
-constexpr std::uint8_t feature_flags = 0;
+// Feature flags in the Q reply. Bit 0: R may ask for more than the response's length (up to the
+// capacity); the reply is the response padded with zeros, and the response is released as for an exact R.
+// A client that can bound the length of a response (a sector read: the sector size plus the packet
+// framing) reads it straight after the W, without the P that exists only to ask for the length. The
+// packet's own header gives its true length. A shorter R is refused and keeps the response, as before.
+constexpr std::uint8_t feature_any_read_length = 0x01;
+constexpr std::uint8_t feature_flags = feature_any_read_length;
 
 } // namespace
 
@@ -103,10 +109,11 @@ AtariSioNioFrontend::Result AtariSioNioFrontend::begin(
     }
 
     case command_read: {
-        if (_state != State::Ready || length != _response.size()) return reject();
+        if (_state != State::Ready || length < _response.size() || length > capacity) return reject();
         // The reply owns its copy before the transaction slot is consumed.  An
         // ingress may transmit Result::bytes after this function returns.
         std::vector<std::uint8_t> reply = _response;
+        reply.resize(length, 0);
         _response.clear();
         _state = State::Idle;
         return data_reply(reply);

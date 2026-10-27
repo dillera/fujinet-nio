@@ -3,7 +3,7 @@
   "address": 127,
   "capacity": 512,
   "scenarios": [
-    {"id":"q-idle","command":"Q","frame":"7f 51 00 00 d0","aux":0,"dcb_count":4,"reply":["A","C","01 00 02 00"],"state":"idle"},
+    {"id":"q-idle","command":"Q","frame":"7f 51 00 00 d0","aux":0,"dcb_count":4,"reply":["A","C","01 00 02 01"],"state":"idle"},
     {"id":"q-valid-larger","command":"Q","frame":"7f 51 00 00 d0","aux":0,"dcb_count":4,"reply":["A","C","01 00 04 a5"],"state":"idle"},
     {"id":"q-invalid-revision","command":"Q","frame":"7f 51 00 00 d0","aux":0,"dcb_count":4,"reply":["A","C","02 00 02 00"],"state":"idle","client_outcome":"transport-error-baseline"},
     {"id":"q-invalid-capacity","command":"Q","frame":"7f 51 00 00 d0","aux":0,"dcb_count":4,"reply":["A","C","01 ff 01 00"],"state":"idle","client_outcome":"transport-error-baseline"},

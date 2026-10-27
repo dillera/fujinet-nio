@@ -310,6 +310,22 @@ What could still be gained, with the estimated saving per 256-byte read, none of
 | Index 0 (124,017 baud) instead of 1 | about 3 ms | the receive loop only just fits, not tested with native calls |
 | Fewer bytes of header in each response (19 of 275) | about 1.7 ms | a protocol change |
 
+## Index 0, and the read without the poll
+
+Index 0 (124,017 baud), three runs: read 256 at 51.6, 52.2 and 52.2 ms against 55.0 at index 1; all error
+counts zero except the timeouts (15, 16, 15 a run; 10 at index 1: within the run-to-run spread). It works
+with native calls, so the index is a user choice.
+
+Two further changes (hardware results to come):
+
+- The firmware accepts `R` for more than the response's length (up to the capacity), padding with zeros, and
+  advertises it as Q flag bit 0 (`01 00 02 01`). `fn_disk_read_sector` bounds its response (sector capacity
+  plus at most 21 bytes of framing) and reads it straight after the `W`; the packet header gives the true
+  length. A transaction fewer, about 4.6 ms. A shorter `R` is refused as before, so a bound that is too
+  small can never be guessed wrongly. The cycle profile test asserts three SIO calls (Q, W, R) and no poll.
+- `fn_disk_read_sector` reads the response in place and copies the sector once (the profile: 9,850
+  cycles, 5.6 ms, after the last response byte, from 14,000).
+
 ## Open items
 
 - **The ACK timeouts**: about 6 of the roughly 20 a run were CMD glitches during a write (fixed, see

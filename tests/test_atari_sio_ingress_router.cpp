@@ -162,7 +162,7 @@ TEST_CASE("Atari SIO ingress router sends native W data to the real core route")
     const auto read = nio_fixture("r-core-dispatch");
 
     feed(harness.router, command(0x7f, 'Q', 0));
-    REQUIRE(harness.replies.back() == data_reply({1, 0, 2, 0}));
+    REQUIRE(harness.replies.back() == data_reply({1, 0, 2, 1}));
     feed(harness.router, write.command);
     REQUIRE(harness.replies.back() == std::vector<std::uint8_t>{'A'});
     feed(harness.router, data_frame(write.payload));
