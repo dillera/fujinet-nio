@@ -56,7 +56,10 @@ struct AtariSioReplyStats {
         handle_us_last = send_us - processing_start_us;
         if (handle_us_last > handle_us_max) handle_us_max = handle_us_last;
         if (command_reply) {
-            reply_us_last = send_us - cmd_release_edge_us;
+            // A stray CMD edge can be stamped a little after send_us was read, which would make the
+            // unsigned difference wrap to ~71 minutes. The release was then not that edge: count 0.
+            const auto since_release = static_cast<std::int32_t>(send_us - cmd_release_edge_us);
+            reply_us_last = since_release < 0 ? 0 : static_cast<std::uint32_t>(since_release);
             if (reply_us_last > reply_us_max) reply_us_max = reply_us_last;
             if (reply_us_last > ack_deadline_us) ++reply_over_deadline;
         }

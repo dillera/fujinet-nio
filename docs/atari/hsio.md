@@ -1,5 +1,7 @@
 # High-speed SIO (HSIO) on the Atari
 
+The trials, measurements and the justification for each timing value are in [hsio-report.md](hsio-report.md).
+
 Status: implemented for `3F` on `D1:`-`D8:`, off by default, switched on at run time with the console
 command `sio.hsio <0-9>` (not saved; there is no persistent setting or native-endpoint command yet).
 Off, `3F` is NAKed and the Atari stays at 19200 baud. This records how the legacy firmware does it,

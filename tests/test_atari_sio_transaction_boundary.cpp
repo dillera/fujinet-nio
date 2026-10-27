@@ -361,6 +361,12 @@ TEST_CASE("Atari SIO reply timing measures the ACK against the CMD release and t
     CHECK(reply.reply_us_max == 20'000);
     CHECK(reply.reply_over_deadline == 1);
 
+    // A stray CMD edge stamped after the reply started is not the release: counted as 0, not ~71 min.
+    reply.record(130'000, 129'000, true, 130'100);
+    CHECK(reply.reply_us_last == 0);
+    CHECK(reply.reply_us_max == 20'000);
+    CHECK(reply.reply_over_deadline == 1);
+
     reply.reset();
     CHECK(reply.replies == 0);
     CHECK(reply.reply_us_max == 0);
