@@ -209,6 +209,8 @@ void AtariSioIngress::reset_stats()
     _capture.reset_stats();
     _router.reset_stats();
     _reply.reset();
+    _hsio_switches = 0;
+    _hsio_fallbacks = 0;
     _poll_gap_us_max = 0;
     _poll_gap_at_us = 0;
 }

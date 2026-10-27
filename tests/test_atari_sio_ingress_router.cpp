@@ -304,6 +304,8 @@ TEST_CASE("Atari SIO native endpoint answers the high-speed index query too, wit
     feed(harness.router, command(0x7f, '?', 0x20));
     CHECK(harness.replies.back() == std::vector<std::uint8_t>{'A', 'C', 6, 6});
     CHECK(switches == 1);
+    CHECK(harness.router.stats().hsio_queries_nio == 2);
+    CHECK(harness.router.stats().hsio_queries_disk == 0);
     feed(harness.router, command(0x7f, 'Q', 0));             // still works afterwards
     CHECK(harness.replies.back().size() == 7);
 }

@@ -104,6 +104,18 @@ baud, so its frontends keep the default (off, `3F` is NAKed). TODO: decide wheth
 needs `sio.hsio`-style setting to answer `3F` (an emulated HSIO driver would otherwise stay at standard
 speed, which is correct but never exercises the high-speed path there).
 
+Fifth result (`3F` answered on `0x7f`): no change. `nio(0x7f)` stayed at 13/25 (the app's own commands),
+nothing was refused and no other device spoke, so the driver never sent `3F` to `0x7f` and sent its
+commands at 19200. Index timings: 6 about 50 ms per boot sector, 1 about 33 ms, 0 about 30 ms.
+In MyPicoDOS's HISIO driver the speed table is indexed by DUNIT (`SPEEDTB`, filled on the first command
+to a unit by sending `3F` to that device) and `DUNIT = 0` clears it; the library calls `0x7f` with
+DUNIT 1. The U1MB's own driver evidently differs, as 0x7f went at standard speed: which devices it
+speeds up is its "SIO devices" setting. `sio.status` now counts `3F` queries per owner, and `sio.reset`
+also clears the switch and fallback counts.
+Idea, not built: route the SIO RX pin to two UARTs (19200 and high speed) and use whichever frame
+checks out, which would remove the two-lost-commands cost when traffic alternates between D1: at high
+speed and 0x7f at standard.
+
 First hardware result (U1MB, index 6): the Atari asked `3F` once and we switched, but two command
 frames were unreadable and the fallback returned us to 19200. The Atari never asks again and keeps
 retrying at high speed (about 14 times per command, then once at standard), so every sector took

@@ -223,6 +223,8 @@ private:
                        "   switches " + std::to_string(s.hsio_switches) + ", fallbacks " +
                        std::to_string(s.hsio_fallbacks) + ", unreadable command frames " +
                        std::to_string(s.capture.frames_bad) + (s.hsio_fallback_enabled ? "" : "   (fallback off)"));
+        line(text, "  3F asked: D1:-D8: " + std::to_string(s.router.hsio_queries_disk) + ", 0x7f " +
+                       std::to_string(s.router.hsio_queries_nio));
         if (s.capture.frames_bad != 0) {
             line(text, "  first unreadable: " + bad_frame_text(s.capture.first_bad));
             line(text, "  last unreadable:  " + bad_frame_text(s.capture.last_bad));

@@ -274,8 +274,11 @@ TEST_CASE("sio.hsio sets or clears the index, and sio.status shows the high-spee
     stats.hsio_switches = 2;
     stats.hsio_fallbacks = 1;
     stats.capture.frames_bad = 4;
+    stats.router.hsio_queries_disk = 2;
+    stats.router.hsio_queries_nio = 0;
     const auto text = run(*provider, {"sio.status"}).text;
     CHECK(contains(text, "hsio: index 6 (67431 baud), HIGH SPEED now   switches 2, fallbacks 1, unreadable command frames 4"));
+    CHECK(contains(text, "3F asked: D1:-D8: 2, 0x7f 0"));
     CHECK(contains(run(*provider, {"sio.hsio"}).text, "HIGH SPEED now"));
 
     stats.capture.first_bad = {fujinet::io::AtariSioBadFrame::Reason::Overflow, 5, {0x31, 0x52, 0x01, 0x00, 0x84}};

@@ -46,6 +46,7 @@ void AtariSioIngressRouter::begin_command()
     _stats.last_frame = command;
     if (command[0] == 0x7f) {
         ++_stats.nio_commands;
+        if (command[1] == 0x3f) ++_stats.hsio_queries_nio;
         const auto result = _nio.begin(command);
         _send(result.bytes);
         if (result.high_speed && _high_speed) _high_speed();
@@ -66,6 +67,7 @@ void AtariSioIngressRouter::begin_command()
     }
 
     ++_stats.disk_commands;
+    if (command[1] == 0x3f) ++_stats.hsio_queries_disk;
     const auto result = _disk.begin(command);
     _send(result.bytes);
     if (result.high_speed && _high_speed) _high_speed();

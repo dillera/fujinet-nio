@@ -77,6 +77,9 @@ struct AtariSioRouterStats {
     std::array<std::uint8_t, 5> last_frame{};  // device, command, aux1, aux2, checksum
     // Frames for our devices that we answered with NAK: a command we do not have, or one that is not
     // allowed in the current state. The first and the latest, to show what a driver asks that we lack.
+    // 3F (high-speed index) queries received, whether or not they were answered, by owner.
+    std::uint32_t hsio_queries_disk{0};
+    std::uint32_t hsio_queries_nio{0};
     std::uint32_t refused{0};
     std::array<std::uint8_t, 5> first_refused{};
     std::array<std::uint8_t, 5> last_refused{};
