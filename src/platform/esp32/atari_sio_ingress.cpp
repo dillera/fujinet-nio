@@ -18,10 +18,11 @@ extern "C" {
 namespace fujinet::platform::esp32 {
 namespace {
 constexpr std::uint32_t sio_baud = 19200;
-// Gaps a real drive leaves at high speed, as in the legacy firmware (DELAY_T5, DELAY_HSIO_DATA): a
-// high-speed driver's receive loop cannot take ACK, COMPLETE and data back to back. At 19200 nothing
-// is added, so the boot path is unchanged.
-constexpr std::uint32_t hsio_ack_gap_us = 250;
+// Gaps a real drive leaves, as in the legacy firmware. DELAY_T5 (250 us) separates the ACK from COMPLETE
+// at every speed: sent back to back, the Atari's ROM routine sometimes misses COMPLETE and waits out its
+// 9 s timeout. DELAY_HSIO_DATA (1 ms from COMPLETE to the data) is for high speed only, where a driver's
+// receive loop cannot take the data straight after.
+constexpr std::uint32_t ack_gap_us = 250;
 constexpr std::uint32_t hsio_data_gap_us = 1000;
 constexpr std::uint8_t sio_ack = 0x41, sio_complete = 0x43, sio_error = 0x45;
 
@@ -122,16 +123,17 @@ void AtariSioIngress::send(const std::vector<std::uint8_t>& bytes)
     // Timed before the write: this is when the reply starts, which is what the Atari waits for.
     _reply.record(static_cast<std::uint32_t>(esp_timer_get_time()), _capture.processing_start_us(),
                   _capture.processing_command(), _boundary.last_edge_us());
-    if (_speed.high() && bytes.size() >= 2 && bytes[0] == sio_ack &&
-        (bytes[1] == sio_complete || bytes[1] == sio_error)) {
+    if (bytes.size() >= 2 && bytes[0] == sio_ack && (bytes[1] == sio_complete || bytes[1] == sio_error)) {
         _uart->write(bytes.data(), 1);
         _uart->flushOutput();
-        esp_rom_delay_us(hsio_ack_gap_us);
-        _uart->write(bytes.data() + 1, 1);
-        if (bytes.size() > 2) {
+        esp_rom_delay_us(ack_gap_us);
+        if (bytes.size() > 2 && _speed.high()) {
+            _uart->write(bytes.data() + 1, 1);
             _uart->flushOutput();
             esp_rom_delay_us(hsio_data_gap_us);
             _uart->write(bytes.data() + 2, bytes.size() - 2);
+        } else {
+            _uart->write(bytes.data() + 1, bytes.size() - 1);
         }
         _uart->flushOutput();
         return;

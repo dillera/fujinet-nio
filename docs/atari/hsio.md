@@ -131,6 +131,15 @@ with a good checksum. `sio.status` shows `second listener (UART2, same RX pin) a
 frames decoded N`. With the main UART at high speed it should decode the app's `0x7f` frames at
 19200; if it does, the dual-listen idea is feasible. TX stays on UART1.
 
+Seventh result (bad SSID, U1MB driver off, so 19200 and no HSIO anywhere): the 9 s stalls are still
+there, so Wi-Fi is not the cause (and `aborts: edge` is 1, so it is not CMD noise either). A stall is
+8.99 s of bus silence, a PAL SIO timeout (7 x 64 frames): the Atari sent a command, our reply did not
+complete on its side, and it re-sent after the timeout (121 disk frames for 112 sector reads). Likely
+cause: at 19200 we sent ACK, COMPLETE and the data back to back, where the legacy firmware waits
+250 us after the ACK (`DELAY_T5`) at every speed; the Atari's ROM routine sometimes misses COMPLETE.
+The 250 us ACK gap now applies at standard speed too (the 1 ms COMPLETE-to-data gap stays high-speed
+only). Same cause could be behind the long first Query in 007. To confirm: no 9 s stalls at 19200.
+
 First hardware result (U1MB, index 6): the Atari asked `3F` once and we switched, but two command
 frames were unreadable and the fallback returned us to 19200. The Atari never asks again and keeps
 retrying at high speed (about 14 times per command, then once at standard), so every sector took
