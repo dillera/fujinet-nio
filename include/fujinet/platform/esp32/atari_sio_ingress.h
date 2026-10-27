@@ -35,7 +35,8 @@ public:
     std::uint32_t probe_baud(std::uint32_t target);
     // High-speed SIO (docs/atari/hsio.md): -1 turns it off, 0..9 sets the index answered to 3F. It takes
     // effect when the Atari next asks, and is not saved. False for an index out of range.
-    bool set_hsio_index(int index);
+    // `fallback` false keeps the UART at the high speed however many command frames are unreadable.
+    bool set_hsio_index(int index, bool fallback = true);
     // ISR-safe edge recorder; UART/event work remains the sole wake source.
     void note_cmd_edge() noexcept;
     bool supports_work_wait() const override;

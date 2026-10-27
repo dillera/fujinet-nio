@@ -57,7 +57,9 @@ public:
             // Atari sending at another speed looks like. Edge and timeout aborts are noise, not speed.
             if (_collecting && (reason == &AtariSioCaptureStats::aborts_rx_error ||
                                 reason == &AtariSioCaptureStats::aborts_overflow)) {
-                note_bad_frame();
+                note_bad_frame(reason == &AtariSioCaptureStats::aborts_overflow
+                                   ? AtariSioBadFrame::Reason::Overflow
+                                   : AtariSioBadFrame::Reason::RxError);
             }
             router.reset_command_collection();
             _collecting = false;
@@ -133,7 +135,7 @@ public:
             if (frame_checksum_ok()) {
                 _bad_frames_in_a_row = 0;
             } else {
-                note_bad_frame();
+                note_bad_frame(AtariSioBadFrame::Reason::Checksum);
             }
             const auto start = static_cast<std::uint32_t>(now());
             if (_stats.frames == 1) _stats.first_frame_us = start;
@@ -157,7 +159,17 @@ public:
     std::uint32_t bad_frames_in_a_row() const noexcept { return _bad_frames_in_a_row; }
     void clear_bad_frames() noexcept { _bad_frames_in_a_row = 0; }
 private:
-    void note_bad_frame() noexcept { ++_stats.frames_bad; ++_bad_frames_in_a_row; }
+    void note_bad_frame(AtariSioBadFrame::Reason reason) noexcept
+    {
+        AtariSioBadFrame bad;
+        bad.reason = reason;
+        bad.length = static_cast<std::uint8_t>(_frame_used);
+        bad.bytes = _frame;
+        if (_stats.frames_bad == 0) _stats.first_bad = bad;
+        _stats.last_bad = bad;
+        ++_stats.frames_bad;
+        ++_bad_frames_in_a_row;
+    }
     bool frame_checksum_ok() const noexcept
     {
         std::uint16_t sum = 0;

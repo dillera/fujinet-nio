@@ -9,11 +9,21 @@ namespace fujinet::io {
 // bumped on the polling path (no logging there: SIO timing is tight), read by the
 // sio.status console command.
 
+// A command frame the capture could not read, kept so sio.status can show what arrived.
+struct AtariSioBadFrame {
+    enum class Reason : std::uint8_t { None, Checksum, Overflow, RxError };
+    Reason reason{Reason::None};
+    std::uint8_t length{0};            // bytes collected before it was rejected (at most 5 are kept)
+    std::array<std::uint8_t, 5> bytes{};
+};
+
 // What the capture state machine saw, from the UART and the CMD line.
 struct AtariSioCaptureStats {
     std::uint32_t rx_bytes{0};         // bytes read from the SIO UART
     std::uint32_t frames{0};           // complete 5-byte command frames handed to the router
     std::uint32_t frames_bad{0};       // command frames that could not be read: bad checksum, UART error or overflow
+    AtariSioBadFrame first_bad;        // the first and the most recent of them
+    AtariSioBadFrame last_bad;
     std::uint32_t aborts_edge{0};      // CMD edges that did not fit a frame (extra, early or missing)
     std::uint32_t aborts_timeout{0};   // frame not complete in 50 ms, or write data not in 200 ms
     std::uint32_t aborts_overflow{0};  // more than 5 command bytes while CMD was low
@@ -86,6 +96,7 @@ struct AtariSioStats {
     bool hsio_high{false};             // the UART is at the high speed right now
     std::uint32_t hsio_switches{0};    // times the UART was switched to high speed
     std::uint32_t hsio_fallbacks{0};   // times it was switched back after unreadable command frames
+    bool hsio_fallback_enabled{true};  // false: stay at the high speed even if command frames are unreadable
     std::uint32_t stale_replies_dropped{0};  // native replies the Atari never read, discarded after 2 s
 };
 

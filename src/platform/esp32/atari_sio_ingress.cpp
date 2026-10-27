@@ -134,12 +134,14 @@ io::AtariSioStats AtariSioIngress::stats() const
     out.hsio_high = _speed.high();
     out.hsio_switches = _hsio_switches;
     out.hsio_fallbacks = _hsio_fallbacks;
+    out.hsio_fallback_enabled = _speed.fallback();
     return out;
 }
 
-bool AtariSioIngress::set_hsio_index(int index)
+bool AtariSioIngress::set_hsio_index(int index, bool fallback)
 {
     if (!_speed.set_index(index)) return false;
+    _speed.set_fallback(fallback);
     _disk.set_hsio_index(index);
     // Off while the UART is fast, or a new index while it is: the UART follows what is now set.
     if (_uart && _uart->uart_config().baudRate != _speed.baud()) {
@@ -215,7 +217,7 @@ void AtariSioIngress::poll()
                   [] { return esp_timer_get_time(); });
     // The Atari went back to the standard speed (a reset, or its driver gave up on high speed): its
     // command frames no longer read, so follow it.
-    if (_speed.high() && _capture.bad_frames_in_a_row() >= io::AtariSioSpeed::fallback_after_bad_frames) {
+    if (_speed.high() && _speed.fallback() && _capture.bad_frames_in_a_row() >= io::AtariSioSpeed::fallback_after_bad_frames) {
         leave_high_speed();
     }
     _last_poll_us = static_cast<std::uint32_t>(esp_timer_get_time());

@@ -229,9 +229,10 @@ TEST_CASE("sio.hsio sets or clears the index, and sio.status shows the high-spee
 {
     AtariSioStats stats;
     int set_to = -99;
+    bool fallback = false;
     auto provider = fujinet::diag::create_atari_sio_diagnostic_provider(
         [&] { return stats; }, [] {}, {},
-        [&](int index) { if (index > 9) return false; set_to = index; return true; });
+        [&](int index, bool fb) { if (index > 9) return false; set_to = index; fallback = fb; return true; });
     std::vector<fujinet::diag::DiagCommandSpec> cmds;
     provider->list_commands(cmds);
     REQUIRE(cmds.size() == 3);
@@ -243,6 +244,14 @@ TEST_CASE("sio.hsio sets or clears the index, and sio.status shows the high-spee
     CHECK(set_to == 6);
     CHECK(contains(r.text, "index 6 (67431 baud)"));
     CHECK(contains(r.text, "not saved"));
+    CHECK(fallback);
+
+    r = run(*provider, {"sio.hsio", "6", "nofallback"});
+    CHECK(r.status == DiagStatus::Ok);
+    CHECK(!fallback);
+    CHECK(contains(r.text, "no fallback"));
+    CHECK(run(*provider, {"sio.hsio", "6", "later"}).status == DiagStatus::InvalidArgs);
+    CHECK(run(*provider, {"sio.hsio", "off", "nofallback"}).status == DiagStatus::InvalidArgs);
 
     CHECK(run(*provider, {"sio.hsio", "off"}).status == DiagStatus::Ok);
     CHECK(set_to == -1);
@@ -258,4 +267,12 @@ TEST_CASE("sio.hsio sets or clears the index, and sio.status shows the high-spee
     const auto text = run(*provider, {"sio.status"}).text;
     CHECK(contains(text, "hsio: index 6 (67431 baud), HIGH SPEED now   switches 2, fallbacks 1, unreadable command frames 4"));
     CHECK(contains(run(*provider, {"sio.hsio"}).text, "HIGH SPEED now"));
+
+    stats.capture.first_bad = {fujinet::io::AtariSioBadFrame::Reason::Overflow, 5, {0x31, 0x52, 0x01, 0x00, 0x84}};
+    stats.capture.last_bad = {fujinet::io::AtariSioBadFrame::Reason::Checksum, 5, {0x31, 0x52, 0x02, 0x00, 0x00}};
+    stats.hsio_fallback_enabled = false;
+    const auto bad = run(*provider, {"sio.status"}).text;
+    CHECK(contains(bad, "(fallback off)"));
+    CHECK(contains(bad, "first unreadable: more than 5 bytes, 5 byte(s): 0x31 0x52 0x01 0x00 0x84"));
+    CHECK(contains(bad, "last unreadable:  bad checksum, 5 byte(s): 0x31 0x52 0x02 0x00 0x00"));
 }

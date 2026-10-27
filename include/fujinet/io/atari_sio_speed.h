@@ -31,6 +31,10 @@ public:
         return true;
     }
 
+    // Off: stay at the high speed even when command frames cannot be read (for finding out why).
+    void set_fallback(bool on) { _fallback = on; }
+    bool fallback() const { return _fallback; }
+
     int index() const { return _index; }
     bool enabled() const { return _index >= 0; }
     bool high() const { return _high; }
@@ -43,6 +47,7 @@ private:
 
     int _index{-1};
     bool _high{false};
+    bool _fallback{true};
 };
 
 } // namespace fujinet::io

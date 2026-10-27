@@ -74,6 +74,13 @@ Source: `fujinet-firmware`, `lib/bus/sio/sio.cpp`, `sio.h`, `lib/device/sio/{dis
 
 ## Still to do
 
+First hardware result (U1MB, index 6): the Atari asked `3F` once and we switched, but two command
+frames were unreadable and the fallback returned us to 19200. The Atari never asks again and keeps
+retrying at high speed (about 14 times per command, then once at standard), so every sector took
+about 0.68 s. The fallback assumes a fresh `3F` after a reset, which this driver does not send.
+`sio.hsio 6 nofallback` and the bad-frame record in `sio.status` are there to find out why the
+first frames were unreadable.
+
 1. Measure on hardware with the U1MB: `sio.hsio 6`, boot, then `sio.status` (look at switches,
    fallbacks, `uart_rx_errors`, `react`/`reply`), then try 3 and 0.
 2. A persistent setting: yaml, the native endpoint with a Python client and `fujinet-nio-lib` call.

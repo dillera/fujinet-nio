@@ -93,7 +93,7 @@ class AtariSioDiagnosticProvider final : public IDiagnosticProvider {
 public:
     AtariSioDiagnosticProvider(std::function<io::AtariSioStats()> snapshot, std::function<void()> reset,
                                std::function<std::uint32_t(std::uint32_t)> probe_baud,
-                               std::function<bool(int)> set_hsio_index)
+                               std::function<bool(int, bool)> set_hsio_index)
         : _snapshot(std::move(snapshot)), _reset(std::move(reset)), _probe_baud(std::move(probe_baud)),
           _set_hsio_index(std::move(set_hsio_index))
     {}
@@ -120,7 +120,7 @@ public:
             out.push_back(DiagCommandSpec{
                 .name = "sio.hsio",
                 .summary = "high-speed SIO: set the index answered to 3F (0-9) or off; not saved",
-                .usage = "sio.hsio [<0-9>|off]",
+                .usage = "sio.hsio [<0-9> [nofallback]|off]",
                 .safe = false,
             });
         }
@@ -162,21 +162,41 @@ private:
             int index = -1;
             if (value != "off") {
                 if (value.empty() || value.size() > 2 || value.find_first_not_of("0123456789") != std::string_view::npos) {
-                    return DiagResult::invalid_args("usage: sio.hsio [<0-9>|off]");
+                    return DiagResult::invalid_args("usage: sio.hsio [<0-9> [nofallback]|off]");
                 }
                 index = std::stoi(std::string(value));
             }
-            if (!_set_hsio_index(index)) {
+            bool fallback = true;
+            if (args.argv.size() > 2) {
+                if (args.argv[2] != "nofallback" || index < 0) {
+                    return DiagResult::invalid_args("usage: sio.hsio [<0-9> [nofallback]|off]");
+                }
+                fallback = false;
+            }
+            if (!_set_hsio_index(index, fallback)) {
                 return DiagResult::invalid_args("index must be 0-9 (10 is read by drivers as a Happy 1050)");
             }
             std::string text = index < 0 ? "high-speed SIO off"
                                          : "high-speed SIO index " + std::to_string(index) + " (" +
                                                std::to_string(io::AtariSioSpeed::baud_for_index(
                                                    static_cast<unsigned>(index))) + " baud)";
+            if (!fallback) text += " with no fallback to 19200";
             line(text, "; takes effect when the Atari next asks (3F), and is not saved");
             return DiagResult::ok(std::move(text));
         }
         return DiagResult::ok(hsio_line(_snapshot()));
+    }
+
+    static std::string bad_frame_text(const io::AtariSioBadFrame& b)
+    {
+        using Reason = io::AtariSioBadFrame::Reason;
+        std::string text = b.reason == Reason::Checksum   ? "bad checksum"
+                           : b.reason == Reason::Overflow ? "more than 5 bytes"
+                           : b.reason == Reason::RxError  ? "UART error"
+                                                          : "none";
+        text += ", " + std::to_string(b.length) + " byte(s):";
+        for (std::size_t i = 0; i < b.bytes.size() && i < b.length; ++i) text += " " + hex2(b.bytes[i]);
+        return text;
     }
 
     static std::string hsio_line(const io::AtariSioStats& s)
@@ -191,7 +211,11 @@ private:
                        " baud), " + (s.hsio_high ? "HIGH SPEED now" : "standard speed now") +
                        "   switches " + std::to_string(s.hsio_switches) + ", fallbacks " +
                        std::to_string(s.hsio_fallbacks) + ", unreadable command frames " +
-                       std::to_string(s.capture.frames_bad));
+                       std::to_string(s.capture.frames_bad) + (s.hsio_fallback_enabled ? "" : "   (fallback off)"));
+        if (s.capture.frames_bad != 0) {
+            line(text, "  first unreadable: " + bad_frame_text(s.capture.first_bad));
+            line(text, "  last unreadable:  " + bad_frame_text(s.capture.last_bad));
+        }
         return text;
     }
 
@@ -321,7 +345,7 @@ private:
     std::function<io::AtariSioStats()> _snapshot;
     std::function<void()> _reset;
     std::function<std::uint32_t(std::uint32_t)> _probe_baud;
-    std::function<bool(int)> _set_hsio_index;
+    std::function<bool(int, bool)> _set_hsio_index;
 };
 
 } // namespace
@@ -330,7 +354,7 @@ std::unique_ptr<IDiagnosticProvider> create_atari_sio_diagnostic_provider(
     std::function<io::AtariSioStats()> snapshot,
     std::function<void()> reset,
     std::function<std::uint32_t(std::uint32_t)> probe_baud,
-    std::function<bool(int)> set_hsio_index)
+    std::function<bool(int, bool)> set_hsio_index)
 {
     if (!snapshot || !reset) {
         return nullptr;

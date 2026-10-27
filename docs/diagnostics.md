@@ -122,9 +122,12 @@ tight, so this is how to see what the Atari is doing:
   handler or other work blocked the task) and a
   first CMD edge before the ingress was ready. A native reply the Atari never read is discarded
   by the next Q or W after 2 s, so a timed-out call no longer leaves the endpoint stuck.
-- `sio.hsio [<0-9>|off]` — high-speed SIO (see [hsio](atari/hsio.md)): with no argument, show the state;
+- `sio.hsio [<0-9> [nofallback]|off]` — high-speed SIO (see [hsio](atari/hsio.md)): with no argument, show the state;
   with an index, answer it to `3F` queries (0 is about 124 kbaud, 6 about 67 kbaud); `off` turns it
-  off. Not saved, and it takes effect when the Atari next asks. `sio.status` shows the `hsio:` line.
+  off. `nofallback` keeps the UART at the high speed even when command frames cannot be read (by
+  default two in a row switch it back to 19200). Not saved, and it takes effect when the Atari next
+  asks. `sio.status` shows the `hsio:` line and, after any unreadable command frame, the first and
+  the latest one's bytes and why it was rejected.
 - `sio.baud` — the ESP32 UART baud for each high-speed SIO index against the POKEY rate for PAL
   and NTSC clocks (see [hsio](atari/hsio.md)); run it with the Atari idle, because it retunes the
   UART for a moment. `sio.status` also shows the current UART baud.

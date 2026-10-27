@@ -380,6 +380,11 @@ TEST_CASE("Atari SIO capture counts command frames that cannot be read, for the 
     frame({0x31, 'S', 0, 0, 0x01});
     CHECK(capture.bad_frames_in_a_row() == 2);
     CHECK(capture.stats().frames_bad == 2);
+    using Reason = fujinet::io::AtariSioBadFrame::Reason;
+    CHECK(capture.stats().first_bad.reason == Reason::Checksum);
+    CHECK(capture.stats().first_bad.length == 5);
+    CHECK(capture.stats().first_bad.bytes[4] == 0x00);
+    CHECK(capture.stats().last_bad.bytes[4] == 0x01);
 
     frame({0x31, 'S', 0, 0, 0x84});            // a good one ends the run
     CHECK(capture.bad_frames_in_a_row() == 0);
