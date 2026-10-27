@@ -208,22 +208,42 @@ successive runs. The FujiNet counters were reset before each run.
   the same decoding would run too, but the earlier 19200 figures do not show an excess of that size, so
   the answer is still open. The `per command` lines at 19200 would say (next trial).
 
+## Standard speed, and the disk boot with and without the data gap
+
+| Run | Result |
+|---|---|
+| Native calls at 19200 (T page, high speed off) | info 89.8 ms, read 128 155.8, read 256 222.4, read 512 221.6. FujiNet service times are 2.6 to 3.8 times the high-speed ones, as the wire says, but **`idle after R` is 34.0 ms**, against 31.5 at high speed. |
+| Disk boot, data gap 1000 us | about 7 s from reset to the first "press a key"; one switch to 19200; `R` service 27.0 ms, idle after 8.8 ms (127 disk reads). |
+| Disk boot, data gap 0 | about 6.5-7 s; one switch; `R` service 26.0 ms, idle after 8.9 ms. |
+
+- **The Atari's time after a response does not depend on the speed** (34 ms at 19200, 31.5 at high
+  speed), so it is not the high-speed driver and it is not the wire. It is the software that handles the
+  response between the last byte and the next command. A disk read through the U1MB's own driver has an
+  idle time of 8.8 ms after the same `R`, so the cost is in the native path's processing of the response
+  and not in the Atari being slow to issue commands.
+- **Found one cause**: the library's checksum core summed each byte with about 90 cycles of 16-bit
+  arithmetic and loop bookkeeping, and the 275-byte response is summed once in full. That is about 14 ms
+  of the roughly 40, and it is now one `ADC` per byte (10 cycles). The expected result is about 13 ms off
+  every 256-byte read; the rest (copying, parsing) is still to be measured.
+- **The data gap is harmless for disks too**: the boot time, switches and unreadable frames are the same
+  with 0, and it saves 1.0 ms per sector (about 130 ms of a boot). It is still 1000 us by default because
+  its documented reason is another driver (SpartaDOS X) that we cannot test here; setting it to 0 is a
+  decision for a default, not something the measurements forbid.
+
 ## Next trials
 
-1. **Same T run at standard speed** (H off), then `sio.status`: the `idle after R` figure at 19200. If it is
-   also about 31 ms, it is the library's own processing of a response (and a library change, such as
-   fewer passes over the bytes, is the lever). If it is much smaller, it is something the high-speed driver
-   does after a transfer.
-2. **Disk boot with `sio.tune data 0`**: the T-page runs never used the U1MB's disk path with it. Sector
-   time and `switches` for a boot would show whether the 1 ms gap can go for disks too.
+1. **Run the T page again at high speed** with the new boot disk (H on). The read 256 time and `idle
+   after R` show how much of the 37 ms the checksum was. Expect read 256 near 66 ms, `idle after R`
+   about 19 ms.
+2. **Then the same at 19200** (no H): the same saving should appear, as the cost is not speed dependent.
 
 ## Open items
 
 - **The ACK timeouts**: about 6 of the roughly 20 a run were CMD glitches during a write (fixed, see
   above); about 14 a run (1 percent of the transactions, 40 ms each) remain, cause unknown. Not CMD edges
   while we transmit (trial 8).
-- **The Atari's time after a response** (about 37 ms of a 79 ms read): see the section above; the
-  standard-speed comparison is next.
+- **The Atari's time after a response** (about 37 ms of a 79 ms read): not speed dependent; the checksum
+  was about 14 ms of it and is fixed; the rest is to be measured.
 - **The U1MB speeds up only `D1:`**: awaiting an answer from its author. The library driver covers the
   native endpoint meanwhile.
 - **Reply timing fix.** A stray CMD edge stamped just after the reply began made `reply max` wrap to
