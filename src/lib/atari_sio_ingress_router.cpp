@@ -32,6 +32,12 @@ void AtariSioIngressRouter::complete_write()
     _send(reply);
 }
 
+void AtariSioIngressRouter::note_refused(const std::array<std::uint8_t, AtariSioDiskFrontend::command_bytes>& command)
+{
+    if (_stats.refused++ == 0) _stats.first_refused = command;
+    _stats.last_refused = command;
+}
+
 void AtariSioIngressRouter::begin_command()
 {
     const auto command = _command;
@@ -42,6 +48,8 @@ void AtariSioIngressRouter::begin_command()
         ++_stats.nio_commands;
         const auto result = _nio.begin(command);
         _send(result.bytes);
+        if (result.high_speed && _high_speed) _high_speed();
+        if (!result.accepted) note_refused(command);
         if (result.accepted && result.expected_write_bytes != 0) {
             start_write(PendingWrite::Nio, result.expected_write_bytes);
         }
@@ -52,6 +60,8 @@ void AtariSioIngressRouter::begin_command()
     // if their frame checksum or command would be invalid for our frontend.
     if (command[0] < 0x31 || command[0] > 0x38) {
         ++_stats.other_commands;
+        _stats.has_last_other = true;
+        _stats.last_other = command;
         return;
     }
 
@@ -59,6 +69,7 @@ void AtariSioIngressRouter::begin_command()
     const auto result = _disk.begin(command);
     _send(result.bytes);
     if (result.high_speed && _high_speed) _high_speed();
+    if (!result.accepted && result.bytes.size() == 1) note_refused(command);
     if (result.accepted && result.expected_write_bytes != 0) {
         start_write(PendingWrite::Disk, result.expected_write_bytes);
     }

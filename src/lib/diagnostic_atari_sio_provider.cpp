@@ -27,6 +27,7 @@ std::string hex2(std::uint8_t v)
 // Names the SIO commands an Atari disk or the native endpoint is likely to send.
 const char* command_name(std::uint8_t device, std::uint8_t command)
 {
+    if (command == 0x3f) return "high-speed query";
     if (device == 0x7f) {
         switch (command) {
         case 'Q': return "query";
@@ -187,6 +188,15 @@ private:
         return DiagResult::ok(hsio_line(_snapshot()));
     }
 
+    static std::string frame_text(const std::array<std::uint8_t, 5>& f)
+    {
+        std::string text;
+        for (std::size_t i = 0; i < f.size(); ++i) text += (i ? " " : "") + hex2(f[i]);
+        text += " (device " + hex2(f[0]) + ", command " + hex2(f[1]);
+        if (const char* name = command_name(f[0], f[1])) text += std::string(" ") + name;
+        return text + ")";
+    }
+
     static std::string bad_frame_text(const io::AtariSioBadFrame& b)
     {
         using Reason = io::AtariSioBadFrame::Reason;
@@ -287,6 +297,11 @@ private:
         } else {
             line(text, "last_frame: none yet");
         }
+        if (s.router.refused != 0) {
+            line(text, "refused (answered NAK, for our devices): " + n(s.router.refused) + "   first " +
+                           frame_text(s.router.first_refused) + "   last " + frame_text(s.router.last_refused));
+        }
+        if (s.router.has_last_other) line(text, "last frame for another device: " + frame_text(s.router.last_other));
         line(text, "reading: " + reading(s));
         for (const auto& w : watch(s)) {
             line(text, "watch: " + w);

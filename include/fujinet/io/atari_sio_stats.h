@@ -75,6 +75,14 @@ struct AtariSioRouterStats {
     std::uint32_t other_commands{0};   // frames for other bus devices, ignored on purpose
     bool has_last_frame{false};
     std::array<std::uint8_t, 5> last_frame{};  // device, command, aux1, aux2, checksum
+    // Frames for our devices that we answered with NAK: a command we do not have, or one that is not
+    // allowed in the current state. The first and the latest, to show what a driver asks that we lack.
+    std::uint32_t refused{0};
+    std::array<std::uint8_t, 5> first_refused{};
+    std::array<std::uint8_t, 5> last_refused{};
+    // The latest frame for a device that is not ours (ignored on purpose).
+    bool has_last_other{false};
+    std::array<std::uint8_t, 5> last_other{};
 };
 
 // The whole picture the console shows; the ingress fills in the hardware parts.

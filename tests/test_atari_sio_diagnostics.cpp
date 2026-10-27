@@ -259,6 +259,16 @@ TEST_CASE("sio.hsio sets or clears the index, and sio.status shows the high-spee
     CHECK(run(*provider, {"sio.hsio", "fast"}).status == DiagStatus::InvalidArgs);
     CHECK(set_to == -1);
 
+    stats.router.refused = 3;
+    stats.router.first_refused = {0x31, 0xd2, 0x01, 0x00, 0x00};
+    stats.router.last_refused = {0x7f, 0x3f, 0x20, 0x00, 0x00};
+    stats.router.has_last_other = true;
+    stats.router.last_other = {0x70, 0x3f, 0x20, 0x00, 0xcf};
+    const auto refused = run(*provider, {"sio.status"}).text;
+    CHECK(contains(refused, "refused (answered NAK, for our devices): 3   first 0x31 0xd2 0x01 0x00 0x00 (device 0x31, command 0xd2)"));
+    CHECK(contains(refused, "last 0x7f 0x3f 0x20 0x00 0x00 (device 0x7f, command 0x3f high-speed query)"));
+    CHECK(contains(refused, "last frame for another device: 0x70 0x3f 0x20 0x00 0xcf (device 0x70, command 0x3f high-speed query)"));
+
     stats.hsio_index = 6;
     stats.hsio_high = true;
     stats.hsio_switches = 2;

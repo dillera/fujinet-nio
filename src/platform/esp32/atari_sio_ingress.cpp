@@ -163,6 +163,7 @@ bool AtariSioIngress::set_hsio_index(int index, bool fallback)
     if (!_speed.set_index(index)) return false;
     _speed.set_fallback(fallback);
     _disk.set_hsio_index(index);
+    _nio.set_hsio_index(index);
     // Off while the UART is fast, or a new index while it is: the UART follows what is now set.
     if (_uart && _uart->uart_config().baudRate != _speed.baud()) {
         _uart->discardInput();

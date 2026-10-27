@@ -20,6 +20,7 @@ public:
         std::vector<std::uint8_t> bytes;
         std::size_t expected_write_bytes{0};
         bool accepted{false};
+        bool high_speed{false};   // a 3F reply: the ingress switches its UART speed after sending it
     };
 
     explicit AtariSioNioFrontend(IRequestHandler& handler) : _handler(handler) {}
@@ -45,6 +46,10 @@ public:
     void set_clock(Clock clock) { _clock = clock; }
     std::uint32_t stale_replies_dropped() const { return _stale_dropped; }
 
+    // High-speed SIO (docs/atari/hsio.md): -1 off, else the index answered to a 3F query. As on the disk
+    // frontend, so a driver that probes each device speeds up the native endpoint too.
+    void set_hsio_index(int index) { _hsio_index = index; }
+
     static std::uint8_t checksum(const std::uint8_t* data, std::size_t len);
 
 private:
@@ -68,6 +73,7 @@ private:
     Clock _clock{nullptr};
     std::uint64_t _ready_at_us{0};
     std::uint32_t _stale_dropped{0};
+    int _hsio_index{-1};
     std::vector<std::uint8_t> _response;
 };
 

@@ -9,6 +9,7 @@ constexpr std::uint8_t command_query = 'Q';
 constexpr std::uint8_t command_write = 'W';
 constexpr std::uint8_t command_poll = 'P';
 constexpr std::uint8_t command_read = 'R';
+constexpr std::uint8_t command_hsio_index = 0x3f;
 
 constexpr std::uint8_t wire_revision = 1;
 constexpr std::uint8_t feature_flags = 0;
@@ -64,6 +65,15 @@ AtariSioNioFrontend::Result AtariSioNioFrontend::begin(
 
     const auto length = aux(command);
     switch (command[1]) {
+    case command_hsio_index: {
+        // Stateless: it does not touch a transaction in progress. Off: NAK, as for any unknown command.
+        if (_hsio_index < 0) return reject();
+        const auto index = static_cast<std::uint8_t>(_hsio_index);
+        Result result = data_reply({index});
+        result.high_speed = true;
+        return result;
+    }
+
     case command_query:
         drop_stale_reply();
         if (_state != State::Idle || length != 0) return reject();

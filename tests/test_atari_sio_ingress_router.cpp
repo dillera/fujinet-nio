@@ -288,6 +288,45 @@ TEST_CASE("Atari SIO answers the high-speed index query only when high-speed SIO
     CHECK(switches == 2);
 }
 
+TEST_CASE("Atari SIO native endpoint answers the high-speed index query too, without disturbing a transaction")
+{
+    Harness harness;
+    int switches = 0;
+    harness.router.set_high_speed_handler([&] { ++switches; });
+
+    feed(harness.router, command(0x7f, '?', 0x20));          // off: NAK, counted as refused
+    CHECK(harness.replies.back() == std::vector<std::uint8_t>{'N'});
+    CHECK(switches == 0);
+    CHECK(harness.router.stats().refused == 1);
+
+    harness.nio_frontend.set_hsio_index(6);
+    feed(harness.router, command(0x7f, 'Q', 0));             // a query leaves the endpoint idle
+    feed(harness.router, command(0x7f, '?', 0x20));
+    CHECK(harness.replies.back() == std::vector<std::uint8_t>{'A', 'C', 6, 6});
+    CHECK(switches == 1);
+    feed(harness.router, command(0x7f, 'Q', 0));             // still works afterwards
+    CHECK(harness.replies.back().size() == 7);
+}
+
+TEST_CASE("Atari SIO router remembers the first and latest refused frame and the latest other-device frame")
+{
+    Harness harness;
+    CHECK(harness.router.stats().refused == 0);
+    CHECK_FALSE(harness.router.stats().has_last_other);
+
+    feed(harness.router, command(0x31, 'S', 0));              // answered: not refused
+    feed(harness.router, command(0x31, 0x80 | 'R', 1));       // a command the disk does not have
+    feed(harness.router, command(0x7f, 'X', 0));
+    feed(harness.router, command(0x70, 0x3f, 0x20));          // another device
+
+    const auto& stats = harness.router.stats();
+    CHECK(stats.refused == 2);
+    CHECK(stats.first_refused == command(0x31, 0x80 | 'R', 1));
+    CHECK(stats.last_refused == command(0x7f, 'X', 0));
+    REQUIRE(stats.has_last_other);
+    CHECK(stats.last_other == command(0x70, 0x3f, 0x20));
+}
+
 TEST_CASE("Atari SIO speed state: legacy baud table, range, and falling back")
 {
     using fujinet::io::AtariSioSpeed;

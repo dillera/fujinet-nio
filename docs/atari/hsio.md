@@ -88,6 +88,22 @@ speed that we did not: 250 us after ACK, and 1 ms from COMPLETE to the data fram
 `DELAY_HSIO_DATA`, "SpartaDOS X's own HSIO driver misses a data frame that follows COMPLETE straight
 away"). The ingress now adds both when the UART is at high speed; at 19200 nothing changes.
 
+Fourth result (gaps added): the boot is fast (112 sectors at about 50 ms each, one switch). After the
+boot, the app's `0x7f` commands go out at 19200 because the driver only ever asked `3F` of `D1:`, so
+we saw breaks and fell back (two commands lost to the library's retry). NOS calls the OS `SIOV` with
+no speed logic of its own (`fujinet-nhandler/nos/src/nos.s`), so the speed a device gets is the SIO
+driver's decision, and the legacy network device answers `3F` for that reason (`sioNetwork.cpp`).
+The native endpoint now answers `3F` too (same reply, off by default). `sio.status` also shows the
+first and latest refused frame for our devices and the latest frame for another device, which is how
+to see what a driver asks that we do not have.
+
+Portable and ESP-only: the `3F` replies, the refused-frame record and the router's high-speed hook are
+in the shared frontends and router (host-tested). Only the UART baud switch, the bad-frame toggle and
+the high-speed reply gaps are ESP32-only (`atari_sio_ingress.cpp`): the POSIX NetSIO carrier has no
+baud, so its frontends keep the default (off, `3F` is NAKed). TODO: decide whether AltirraSDL (NetSIO)
+needs `sio.hsio`-style setting to answer `3F` (an emulated HSIO driver would otherwise stay at standard
+speed, which is correct but never exercises the high-speed path there).
+
 First hardware result (U1MB, index 6): the Atari asked `3F` once and we switched, but two command
 frames were unreadable and the fallback returned us to 19200. The Atari never asks again and keeps
 retrying at high speed (about 14 times per command, then once at standard), so every sector took

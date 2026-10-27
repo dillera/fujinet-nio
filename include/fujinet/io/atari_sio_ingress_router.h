@@ -39,6 +39,7 @@ private:
     enum class PendingWrite : std::uint8_t { None, Disk, Nio };
 
     void begin_command();
+    void note_refused(const std::array<std::uint8_t, AtariSioDiskFrontend::command_bytes>& command);
     void complete_write();
     void start_write(PendingWrite kind, std::size_t bytes);
 
