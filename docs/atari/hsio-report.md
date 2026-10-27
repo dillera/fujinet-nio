@@ -108,6 +108,34 @@ What this says:
 | Short frames (1-4 bytes at CMD release) count as bad | capture | A high-speed frame read by a 19200 UART arrives as one or two garbage bytes (`0xe0 ...`), never five. | Observed in every run. |
 | Drop CMD edges pending at end of a reply when CMD is high | `drop_tx_noise_edges` | Trial 8. | **Did not fix what it was for.** Harmless; kept because the Atari never touches CMD during our reply. |
 
+## The FujiNet patch of Hias's driver (mozzwald, `highspeed-sio` branch `fujinet`)
+
+The legacy firmware team's patched HISIO (compared against Hias's `master`). It explains the device
+coverage we saw; it does not touch the timing.
+
+- **Stock HISIO speeds only disks.** The original detection code is `LDA DDEVIC; CMP #$31; BNE STDSIO`:
+  anything that is not device `$31` goes at standard speed, and the speed table is indexed by `DUNIT`.
+  A driver derived from it that kept this would send `0x70`, `0x71` and `0x7f` at 19200 without a `3F`,
+  which is what the U1MB does. This is a second explanation for trial 4, next to the U1MB's own settings;
+  I have not seen the U1MB's source, so it is an inference.
+- **The patch widens that to `$31-$38` and `$70-$78`** (build option `FUJINET`). It works on the
+  effective device ID, `DDEVIC + DUNIT - 1`, and probes each with `3F` the way a disk is probed. Speeds
+  are cached per effective ID in a 4-entry rotating table (`DEVICETB`/`SPEEDTB`) instead of per `DUNIT`.
+- **`$7F` is outside that range.** Even this patched driver would not speed up our native endpoint. The
+  library driver is still needed, or the native endpoint would have to answer on an ID in `$70-$78`.
+- **No timing changes.** The engine, retries, ACK wait and receive loop are as in Hias's code; the diff
+  adds no gaps and no timeouts. It cannot explain the ACK timeouts or the per-byte cost.
+- **It confirms how the legacy firmware's `3F` behaves.** The chain-boot prototype sends one `3F` to
+  `D1:` "to force FujiNet's disk baud toggle back to standard speed" and then clears the cache so the
+  next boot probes again, so the legacy firmware toggles its baud on `3F` as we found, and a driver that
+  forgets its cache re-probes.
+- **Other changes** are unrelated to timing: a FujiNet chain-boot (mount all slots with `$70 $D7` then
+  boot D1:), the keyboard-IRQ patch switched off, and a fix to a one-byte timer comment.
+
+What it changes for us: (1) for NOS, whose network devices are `$71`-`$78`, the answer on the firmware
+side is whether nio should serve `3F` on those IDs, as the legacy firmware does, so stock-patched drivers
+speed them up; (2) our `0x7f` still needs the library driver (or a patch that includes `$7F`).
+
 ## Open items
 
 - **The ACK timeouts** (about 3 percent of native transactions, each retried at the same speed for
