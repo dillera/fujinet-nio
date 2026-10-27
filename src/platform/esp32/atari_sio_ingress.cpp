@@ -26,6 +26,11 @@ config::UartConfig sio_config(config::UartConfig cfg)
     cfg.parity = config::UartParity::None;
     cfg.stopBits = config::UartStopBits::One;
     cfg.flowControl = config::UartFlowControl::None;
+    // TX pacing exists to stop an Amiga RS-232 host overrunning its UART. A POKEY needs none, and the
+    // default 2 ms after every 16 bytes added about 30 ms to each 256-byte sector reply.
+    cfg.txGapUs = 0;
+    cfg.txByteGapUs = 0;
+    cfg.txChunkGapUs = 0;
     return cfg;
 }
 
@@ -114,6 +119,10 @@ io::AtariSioStats AtariSioIngress::stats() const
     out.cmd_line_low = _cmd_pin >= 0 && _cmd_pin < GPIO_NUM_MAX &&
                        gpio_get_level(static_cast<gpio_num_t>(_cmd_pin)) == 0;
     out.uart_rx_errors = _uart ? _uart->rx_errors() : 0;
+    if (_uart) {
+        out.uart_baud_set = _uart->uart_config().baudRate;
+        out.uart_baud_hw = _uart->getBaudrate();
+    }
     out.capture = _capture.stats();
     out.router = _router.stats();
     out.reply = _reply;
@@ -121,6 +130,16 @@ io::AtariSioStats AtariSioIngress::stats() const
     out.poll_gap_at_us = _poll_gap_at_us;
     out.stale_replies_dropped = _nio.stale_replies_dropped();
     return out;
+}
+
+std::uint32_t AtariSioIngress::probe_baud(std::uint32_t target)
+{
+    if (!_uart || target == 0) return 0;
+    const auto original = _uart->uart_config().baudRate;
+    _uart->setBaudrate(target);
+    const auto hardware = _uart->getBaudrate();
+    _uart->setBaudrate(original);
+    return hardware;
 }
 
 void AtariSioIngress::reset_stats()

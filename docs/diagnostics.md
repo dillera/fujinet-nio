@@ -122,6 +122,9 @@ tight, so this is how to see what the Atari is doing:
   handler or other work blocked the task) and a
   first CMD edge before the ingress was ready. A native reply the Atari never read is discarded
   by the next Q or W after 2 s, so a timed-out call no longer leaves the endpoint stuck.
+- `sio.baud` — the ESP32 UART baud for each high-speed SIO index against the POKEY rate for PAL
+  and NTSC clocks (see [hsio](atari/hsio.md)); run it with the Atari idle, because it retunes the
+  UART for a moment. `sio.status` also shows the current UART baud.
 - `sio.reset` — zero the counters; do this before powering the Atari. The ingress-ready time is
   kept, since it is not a counter
 

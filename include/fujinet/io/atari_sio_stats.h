@@ -79,6 +79,8 @@ struct AtariSioStats {
     // SIO task that could miss a command). Idle gaps with no CMD edge are not counted.
     std::uint32_t poll_gap_us_max{0};
     std::uint32_t poll_gap_at_us{0};   // when that longest gap began (same clock as first_edge_us)
+    std::uint32_t uart_baud_set{0};    // the baud the SIO UART was last told to use (0 = unknown)
+    std::uint32_t uart_baud_hw{0};     // what the UART hardware reports back after its divider rounding
     std::uint32_t stale_replies_dropped{0};  // native replies the Atari never read, discarded after 2 s
 };
 

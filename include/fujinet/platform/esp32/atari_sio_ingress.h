@@ -29,6 +29,9 @@ public:
     // Counters for bring-up (sio.status). stats() reads the CMD line too.
     io::AtariSioStats stats() const;
     void reset_stats();
+    // Briefly sets the SIO UART to `target` baud, returns what the hardware reports, and restores the
+    // current baud. For the sio.baud check only: run it with the Atari idle.
+    std::uint32_t probe_baud(std::uint32_t target);
     // ISR-safe edge recorder; UART/event work remains the sole wake source.
     void note_cmd_edge() noexcept;
     bool supports_work_wait() const override;

@@ -20,6 +20,7 @@ Principal evergreen documents include:
 | `driver_architecture.md` | Client driver, session, and channel architecture |
 | `packet_link.md` | FujiBus packets over a byte stream (UART, TCP) from a bridge microcontroller |
 | `amiga/amiga-floppy-channel.md` | Amiga floppy/Pico channel trade study |
+| `atari/hsio.md` | Atari high-speed SIO: legacy behaviour and plan |
 | `atari/sio-bringup-findings.md` | Atari SIO hardware measurements, healthy timings and design rules |
 | `testing.md` | Test strategy and commands |
 | `developer_onboarding.md` | Development environment and onboarding |

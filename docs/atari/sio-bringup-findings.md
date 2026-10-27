@@ -46,6 +46,12 @@ question, not a firmware one.
    pinned to core 0) brought it to 9.2 ms with the same bad SSID. The CMD interrupt and SIO
    UART are installed by that task, so they run on core 1 too.
 
+## TX pacing
+
+The SIO UART used the default `tx_chunk_gap_us` of 2000 (a 2 ms idle after every 16 bytes), meant for
+Amiga RS-232 overruns. The SIO ingress now forces all TX pacing off, whatever `fujinet.yaml` says:
+a POKEY needs none, and the gaps added about 30 ms to each 256-byte sector reply.
+
 ## Misreadings to avoid
 
 - The "first CMD edge" in `sio.status` is often not a command. With Wi-Fi active a transient

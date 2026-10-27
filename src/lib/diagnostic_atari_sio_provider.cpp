@@ -66,10 +66,38 @@ void line(std::string& out, std::string_view text)
     out += "\r\n";
 }
 
+// POKEY clocks the serial port from the machine clock: bit rate = clock / (2 * (index + 7)) for
+// high-speed index 0..10. The legacy firmware targets the PAL clock and adds 3 CPU cycles per byte
+// to compensate for late sampling.
+constexpr std::uint32_t pal_clock_hz = 1773447;
+constexpr std::uint32_t ntsc_clock_hz = 1789790;
+constexpr std::uint32_t max_hsio_index = 10;
+
+std::uint32_t pokey_baud(std::uint32_t clock_hz, std::uint32_t index)
+{
+    return clock_hz / (2 * (index + 7));
+}
+
+std::uint32_t legacy_target_baud(std::uint32_t index)
+{
+    return static_cast<std::uint32_t>(static_cast<std::uint64_t>(pal_clock_hz) * 10 / (10 * (2 * (index + 7)) + 3));
+}
+
+// Signed error of `actual` against `reference`, in tenths of a percent: "+0.1%".
+std::string error_pct(std::uint32_t actual, std::uint32_t reference)
+{
+    const long long diff = static_cast<long long>(actual) - static_cast<long long>(reference);
+    long long tenths = diff * 1000 / static_cast<long long>(reference);
+    std::string s = tenths < 0 ? "-" : "+";
+    if (tenths < 0) tenths = -tenths;
+    return s + std::to_string(tenths / 10) + "." + std::to_string(tenths % 10) + "%";
+}
+
 class AtariSioDiagnosticProvider final : public IDiagnosticProvider {
 public:
-    AtariSioDiagnosticProvider(std::function<io::AtariSioStats()> snapshot, std::function<void()> reset)
-        : _snapshot(std::move(snapshot)), _reset(std::move(reset))
+    AtariSioDiagnosticProvider(std::function<io::AtariSioStats()> snapshot, std::function<void()> reset,
+                               std::function<std::uint32_t(std::uint32_t)> probe_baud)
+        : _snapshot(std::move(snapshot)), _reset(std::move(reset)), _probe_baud(std::move(probe_baud))
     {}
 
     std::string_view provider_id() const noexcept override { return "sio"; }
@@ -82,6 +110,14 @@ public:
             .usage = "sio.status",
             .safe = true,
         });
+        if (_probe_baud) {
+            out.push_back(DiagCommandSpec{
+                .name = "sio.baud",
+                .summary = "high-speed SIO baud check: UART rates against POKEY index rates (Atari idle)",
+                .usage = "sio.baud",
+                .safe = false,
+            });
+        }
         out.push_back(DiagCommandSpec{
             .name = "sio.reset",
             .summary = "zero the SIO counters (do this before powering the Atari)",
@@ -99,6 +135,9 @@ public:
         if (cmd == "sio.status") {
             return status();
         }
+        if (cmd == "sio.baud" && _probe_baud) {
+            return baud();
+        }
         if (cmd == "sio.reset") {
             _reset();
             return DiagResult::ok("sio counters reset\r\n");
@@ -107,12 +146,43 @@ public:
     }
 
 private:
+    DiagResult baud() const
+    {
+        const auto s = _snapshot();
+        std::string text;
+        line(text, "SIO UART now: set " + std::to_string(s.uart_baud_set) + ", hardware " + std::to_string(s.uart_baud_hw));
+        line(text, "idx  POKEY PAL  POKEY NTSC  target   UART     vs PAL  vs NTSC  vs target");
+        for (std::uint32_t i = 0; i <= max_hsio_index; ++i) {
+            const auto pal = pokey_baud(pal_clock_hz, i);
+            const auto ntsc = pokey_baud(ntsc_clock_hz, i);
+            const auto target = legacy_target_baud(i);
+            const auto actual = _probe_baud(target);
+            if (actual == 0) {
+                line(text, std::to_string(i) + "    probe failed");
+                continue;
+            }
+            std::string row = std::to_string(i);
+            row.resize(5, ' ');
+            for (const auto v : {pal, ntsc, target, actual}) {
+                std::string col = std::to_string(v);
+                col.resize(11, ' ');
+                row += col;
+            }
+            line(text, row + error_pct(actual, pal) + "   " + error_pct(actual, ntsc) + "   " + error_pct(actual, target));
+        }
+        line(text, "target: legacy firmware baud (PAL clock, +3 cycles per byte). A few tenths of a percent is fine; "
+                   "run with the Atari idle: this retunes the UART for a moment.");
+        return DiagResult::ok(std::move(text));
+    }
+
     DiagResult status() const
     {
         const io::AtariSioStats s = _snapshot();
         const auto n = [](std::uint32_t v) { return std::to_string(v); };
         std::string text;
         line(text, "cmd_edges: " + n(s.cmd_edges) + "   cmd_line: " + (s.cmd_line_low ? "low (asserted)" : "high (idle)"));
+        line(text, "baud: set " + n(s.uart_baud_set) + ", UART hardware reports " + n(s.uart_baud_hw) +
+                       "   high-speed SIO: not supported (3F is NAKed)");
         line(text, "rx_bytes: " + n(s.capture.rx_bytes) + "   uart_rx_errors: " + n(s.uart_rx_errors));
         line(text, "frames: " + n(s.capture.frames) + "   disk(D1:-D8:): " + n(s.router.disk_commands) +
                        "   nio(0x7f): " + n(s.router.nio_commands) + "   other devices: " + n(s.router.other_commands));
@@ -201,18 +271,20 @@ private:
 
     std::function<io::AtariSioStats()> _snapshot;
     std::function<void()> _reset;
+    std::function<std::uint32_t(std::uint32_t)> _probe_baud;
 };
 
 } // namespace
 
 std::unique_ptr<IDiagnosticProvider> create_atari_sio_diagnostic_provider(
     std::function<io::AtariSioStats()> snapshot,
-    std::function<void()> reset)
+    std::function<void()> reset,
+    std::function<std::uint32_t(std::uint32_t)> probe_baud)
 {
     if (!snapshot || !reset) {
         return nullptr;
     }
-    return std::make_unique<AtariSioDiagnosticProvider>(std::move(snapshot), std::move(reset));
+    return std::make_unique<AtariSioDiagnosticProvider>(std::move(snapshot), std::move(reset), std::move(probe_baud));
 }
 
 } // namespace fujinet::diag

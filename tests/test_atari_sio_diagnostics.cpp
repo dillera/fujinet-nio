@@ -192,3 +192,35 @@ TEST_CASE("sio.status warns about late ACKs, slow handlers and a first edge befo
     f.stats.first_edge_us = 1'900'000;
     CHECK(contains(run(*f.provider, {"sio.status"}).text, "watch: the first CMD edge came before the ingress was ready"));
 }
+
+TEST_CASE("sio.status shows the UART baud and sio.baud is offered only with a probe")
+{
+    Fixture f;
+    f.stats.uart_baud_set = 19200;
+    f.stats.uart_baud_hw = 19201;
+    CHECK(contains(run(*f.provider, {"sio.status"}).text, "baud: set 19200, UART hardware reports 19201"));
+    CHECK(run(*f.provider, {"sio.baud"}).status == DiagStatus::NotFound);
+}
+
+TEST_CASE("sio.baud compares the UART rate with the POKEY rate for each high-speed index")
+{
+    AtariSioStats stats;
+    stats.uart_baud_set = 19200;
+    stats.uart_baud_hw = 19200;
+    std::vector<std::uint32_t> probed;
+    auto provider = fujinet::diag::create_atari_sio_diagnostic_provider(
+        [&] { return stats; }, [] {},
+        [&](std::uint32_t target) { probed.push_back(target); return target + target / 100; });  // 1% fast
+    std::vector<fujinet::diag::DiagCommandSpec> cmds;
+    provider->list_commands(cmds);
+    REQUIRE(cmds.size() == 3);
+
+    const auto text = run(*provider, {"sio.baud"}).text;
+    REQUIRE(probed.size() == 11);                 // indexes 0..10
+    CHECK(probed[0] == 124017);                   // the legacy table: index 0 is 124,017 baud
+    CHECK(probed[6] == 67431);                    // index 6 is 67,431 baud
+    CHECK(contains(text, "SIO UART now: set 19200, hardware 19200"));
+    CHECK(contains(text, "125257"));              // 1% above the index 0 target
+    CHECK(contains(text, "+1.0%"));               // against the target
+    CHECK(contains(text, "run with the Atari idle"));
+}
