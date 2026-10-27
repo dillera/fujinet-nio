@@ -416,3 +416,51 @@ TEST_CASE("Atari SIO capture counts command frames that cannot be read, for the 
     time += 50001; poll();
     CHECK(capture.bad_frames_in_a_row() == 0);
 }
+
+TEST_CASE("Atari SIO capture takes the frame a second listener decoded when the main UART could not read it")
+{
+    fujinet::io::AtariSioCapture capture;
+    fujinet::io::AtariSioTransactionBoundary boundary;
+    CaptureUart uart;
+    CaptureRouter router;
+    bool low = false;
+    std::int64_t time = 1;
+    bool alt_ready = false;
+    int alt_taken = 0;
+    const std::array<std::uint8_t, 5> heard{0x7f, 0x51, 0, 0, 0xd0};
+    auto poll = [&] {
+        capture.poll(boundary, router, uart, [&] { return low; }, [&] { return time; },
+                     [&](std::array<std::uint8_t, 5>& frame) {
+                         if (!alt_ready) return false;
+                         alt_ready = false;
+                         ++alt_taken;
+                         frame = heard;
+                         return true;
+                     });
+    };
+
+    // The main UART read stretched garbage: more than 5 bytes while CMD was low (an overflow abort).
+    low = true; boundary.note_cmd_edge();
+    uart.driver = {0xf8, 0x38, 0x00, 0x38, 0x00, 0x00, 0x38};
+    poll();
+    CHECK(router.command.empty());
+    // CMD released; the second listener has the real frame. It is handled, once, and counted.
+    low = false; boundary.note_cmd_edge();
+    alt_ready = true;
+    poll();
+    CHECK((router.command == std::vector<std::uint8_t>{0x7f, 0x51, 0, 0, 0xd0}));
+    CHECK(alt_taken == 1);
+    CHECK(capture.stats().frames_from_second_listener == 1);
+    CHECK(capture.bad_frames_in_a_row() == 0);
+
+    // The next command is read by the main UART as usual, and the listener is not asked for it again.
+    router.command.clear();
+    low = true; boundary.note_cmd_edge();
+    uart.driver = {0x31, 'S', 0, 0, 0x84};
+    poll();
+    low = false; boundary.note_cmd_edge();
+    poll();
+    CHECK((router.command == std::vector<std::uint8_t>{0x31, 'S', 0, 0, 0x84}));
+    CHECK(alt_taken == 1);
+    CHECK(capture.stats().frames_from_second_listener == 1);
+}

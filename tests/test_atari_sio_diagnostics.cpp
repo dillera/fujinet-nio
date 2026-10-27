@@ -263,7 +263,7 @@ TEST_CASE("sio.hsio sets or clears the index, and sio.status shows the high-spee
     stats.alt_valid_frames = 7;
     stats.alt_last_frame = {0x7f, 0x51, 0x00, 0x00, 0xd0};
     CHECK(contains(run(*provider, {"sio.status"}).text,
-                   "second listener (UART2, same RX pin) at 19200 baud: command frames decoded 7, last 0x7f 0x51 0x00 0x00 0xd0 (device 0x7f, command 0x51 query)"));
+                   "second listener (UART2, same RX pin) at 19200 baud: command frames decoded 7, used instead of the main UART's 0, last 0x7f 0x51 0x00 0x00 0xd0 (device 0x7f, command 0x51 query)"));
     stats.alt_baud = 0;
     CHECK_FALSE(contains(run(*provider, {"sio.status"}).text, "second listener"));
     stats.router.refused = 3;

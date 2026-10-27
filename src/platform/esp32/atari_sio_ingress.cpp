@@ -242,9 +242,36 @@ void AtariSioIngress::poll_alt()
             if (io::AtariSioNioFrontend::checksum(_alt_window.data(), 4) != _alt_window[4]) continue;
             ++_alt_valid;
             _alt_last = _alt_window;
+            _alt_pending = true;
+            _alt_found_us = static_cast<std::uint32_t>(esp_timer_get_time());
             _alt_used = 0;
         }
     }
+}
+
+void AtariSioIngress::toggle_speed()
+{
+    if (_speed.high()) {
+        leave_high_speed();
+    } else if (_speed.enabled()) {
+        _capture.clear_bad_frames();
+        _speed.enter_high();
+        _uart->discardInput();
+        _uart->setBaudrate(_speed.baud());
+        ++_hsio_switches;
+        retune_alt();
+    }
+}
+
+// A frame heard at the other speed only counts for the command that has just ended, so it expires fast.
+bool AtariSioIngress::take_alt_frame(std::array<std::uint8_t, 5>& frame)
+{
+    if (!_alt_pending) return false;
+    _alt_pending = false;
+    if (!_speed.enabled() || static_cast<std::uint32_t>(esp_timer_get_time()) - _alt_found_us > 10000) return false;
+    frame = _alt_last;
+    toggle_speed();
+    return true;
 }
 
 std::uint32_t AtariSioIngress::probe_baud(std::uint32_t target)
@@ -292,22 +319,13 @@ void AtariSioIngress::poll()
     poll_alt();
     _capture.poll(_boundary, _router, *_uart,
                   [this] { return gpio_get_level(static_cast<gpio_num_t>(_cmd_pin)) == 0; },
-                  [] { return esp_timer_get_time(); });
-    // The legacy firmware's rule: two unreadable command frames in a row mean the Atari is at the other
-    // speed, so toggle. High to standard is a reset or a driver that gave up; standard to high is a
-    // driver whose command frames go at high speed after an earlier switch we lost.
+                  [] { return esp_timer_get_time(); },
+                  [this](std::array<std::uint8_t, 5>& frame) { return take_alt_frame(frame); });
+    // The legacy firmware's rule, kept as the backup for when the second listener does not catch it: two
+    // unreadable command frames in a row mean the Atari is at the other speed, so toggle.
     if (_speed.enabled() && _speed.fallback() &&
         _capture.bad_frames_in_a_row() >= io::AtariSioSpeed::fallback_after_bad_frames) {
-        if (_speed.high()) {
-            leave_high_speed();
-        } else {
-            _capture.clear_bad_frames();
-            _speed.enter_high();
-            _uart->discardInput();
-            _uart->setBaudrate(_speed.baud());
-            ++_hsio_switches;
-            retune_alt();
-        }
+        toggle_speed();
     }
     _last_poll_us = static_cast<std::uint32_t>(esp_timer_get_time());
     _edges_at_last_poll = _boundary.total_edges();

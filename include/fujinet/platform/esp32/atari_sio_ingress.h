@@ -48,6 +48,11 @@ private:
     // The second listener follows whichever speed the main UART is not at.
     void retune_alt();
     void poll_alt();
+    // The Atari used the other speed: switch the main UART to it. Used by the bad-frame rule and by the
+    // second listener.
+    void toggle_speed();
+    // For the capture: a command frame the second listener decoded for the command that just ended.
+    bool take_alt_frame(std::array<std::uint8_t, 5>& frame);
     void leave_high_speed();
 
     std::unique_ptr<UartChannel> _uart;
@@ -56,6 +61,8 @@ private:
     std::size_t _alt_used{0};
     std::uint32_t _alt_valid{0};
     std::array<std::uint8_t, 5> _alt_last{};
+    bool _alt_pending{false};
+    std::uint32_t _alt_found_us{0};
     io::AtariSioDiskFrontend _disk;
     io::AtariSioNioFrontend _nio;
     io::AtariSioIngressRouter _router;

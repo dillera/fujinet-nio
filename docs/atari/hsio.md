@@ -140,6 +140,15 @@ cause: at 19200 we sent ACK, COMPLETE and the data back to back, where the legac
 The 250 us ACK gap now applies at standard speed too (the 1 ms COMPLETE-to-data gap stays high-speed
 only). Same cause could be behind the long first Query in 007. To confirm: no 9 s stalls at 19200.
 
+Eighth result (second listener, index 1): UART2 on the shared RX pin decoded the app's first `0x7f` Query
+at 19200 while the main UART was at 108,800 and failing, so the pin sharing works. Sector time at index 1
+is about 33 ms (19200 with the U1MB driver on and no index set: about 200 ms; U1MB driver off: about 150 ms).
+Now built: when the second listener decodes a good command frame for the command that just ended, the
+capture drops the main UART's reading of it, the ingress switches the main UART to that speed
+(TX follows: it is the same UART) and the frame is handled at once, so no command is lost and no retries
+are needed. The two-bad-frames toggle stays as the backup. `sio.status` shows how many frames were used
+this way.
+
 First hardware result (U1MB, index 6): the Atari asked `3F` once and we switched, but two command
 frames were unreadable and the fallback returned us to 19200. The Atari never asks again and keeps
 retrying at high speed (about 14 times per command, then once at standard), so every sector took

@@ -21,6 +21,7 @@ struct AtariSioBadFrame {
 struct AtariSioCaptureStats {
     std::uint32_t rx_bytes{0};         // bytes read from the SIO UART
     std::uint32_t frames{0};           // complete 5-byte command frames handed to the router
+    std::uint32_t frames_from_second_listener{0};  // frames the second listener decoded when the main UART could not
     std::uint32_t frames_bad{0};       // command frames that could not be read: bad checksum, UART error or overflow
     AtariSioBadFrame first_bad;        // the first and the most recent of them
     AtariSioBadFrame last_bad;

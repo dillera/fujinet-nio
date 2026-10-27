@@ -51,6 +51,17 @@ public:
     void poll(AtariSioTransactionBoundary& boundary, Router& router, Uart& uart,
               Asserted asserted, Now now)
     {
+        poll(boundary, router, uart, asserted, now, [](std::array<std::uint8_t, 5>&) { return false; });
+    }
+
+    // `alt_frame(frame)` (a second listener at the other speed): true, with a good command frame, when
+    // one was decoded for the command that just ended. The capture then drops what the main UART made
+    // of it and handles that frame instead. The callable switches the speed before it returns true, so
+    // the reply goes out at the speed the Atari used.
+    template<class Router, class Uart, class Asserted, class Now, class AltFrame>
+    void poll(AtariSioTransactionBoundary& boundary, Router& router, Uart& uart,
+              Asserted asserted, Now now, AltFrame alt_frame)
+    {
         const auto abort = [this, &router, &uart](std::uint32_t AtariSioCaptureStats::* reason) {
             ++(_stats.*reason);
             // A command frame the UART could not read (framing errors or too many bytes) is what the
@@ -82,6 +93,23 @@ public:
         }
         const std::uint32_t edges = boundary.consume();
         const bool low = asserted();
+        if (!low) {
+            std::array<std::uint8_t, 5> from_alt{};
+            if (alt_frame(from_alt)) {
+                router.reset_command_collection();
+                uart.discardInput();
+                _rx_errors = uart.rx_errors();
+                _frame = from_alt;
+                _collecting = false;
+                _released = false;
+                _discard_until_release = false;
+                _write_started_us = 0;
+                ++_stats.frames_from_second_listener;
+                _bad_frames_in_a_row = 0;   // the garbage the main UART made of it was this frame
+                dispatch_frame(boundary, router, now);
+                return;
+            }
+        }
         if (_discard_until_release) {
             uart.discardInput();
             if (!low && edges == 0) _discard_until_release = false;
@@ -137,21 +165,12 @@ public:
             }
             _collecting = false;
             _released = false;
-            ++_stats.frames;
             if (frame_checksum_ok()) {
                 _bad_frames_in_a_row = 0;
             } else {
                 note_bad_frame(AtariSioBadFrame::Reason::Checksum);
             }
-            const auto start = static_cast<std::uint32_t>(now());
-            if (_stats.frames == 1) _stats.first_frame_us = start;
-            const std::uint32_t lag = start - boundary.last_edge_us();
-            if (lag > _stats.lag_us_max) _stats.lag_us_max = lag;
-            _processing_start_us = start;
-            _processing_command = true;
-            for (const auto byte : _frame) router.consume(byte);
-            _write_started_us = router.pending_write_bytes() ? now() : 0;
-            _frame_used = 0;
+            dispatch_frame(boundary, router, now);
         }
         if (!_collecting && !router.pending_write_bytes()) _rx_errors = uart.rx_errors();
     }
@@ -165,6 +184,21 @@ public:
     std::uint32_t bad_frames_in_a_row() const noexcept { return _bad_frames_in_a_row; }
     void clear_bad_frames() noexcept { _bad_frames_in_a_row = 0; }
 private:
+    // Hands the complete command frame in `_frame` to the router and starts timing its reply.
+    template<class Router, class Now>
+    void dispatch_frame(AtariSioTransactionBoundary& boundary, Router& router, Now now)
+    {
+        ++_stats.frames;
+        const auto start = static_cast<std::uint32_t>(now());
+        if (_stats.frames == 1) _stats.first_frame_us = start;
+        const std::uint32_t lag = start - boundary.last_edge_us();
+        if (lag > _stats.lag_us_max) _stats.lag_us_max = lag;
+        _processing_start_us = start;
+        _processing_command = true;
+        for (const auto byte : _frame) router.consume(byte);
+        _write_started_us = router.pending_write_bytes() ? now() : 0;
+        _frame_used = 0;
+    }
     void note_bad_frame(AtariSioBadFrame::Reason reason) noexcept
     {
         AtariSioBadFrame bad;
