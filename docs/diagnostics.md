@@ -125,7 +125,7 @@ tight, so this is how to see what the Atari is doing:
 - `sio.hsio [<0-9> [nofallback]|off]` — high-speed SIO (see [hsio](atari/hsio.md)): with no argument, show the state;
   with an index, answer it to `3F` queries (0 is about 124 kbaud, 6 about 67 kbaud); `off` turns it
   off. `nofallback` keeps the UART at the high speed even when command frames cannot be read (by
-  default two in a row switch it back to 19200). Not saved, and it takes effect when the Atari next
+  default two in a row toggle between 19200 and the high speed, as the legacy firmware does). Not saved, and it takes effect when the Atari next
   asks. `sio.status` shows the `hsio:` line and, after any unreadable command frame, the first and
   the latest one's bytes and why it was rejected.
 - `sio.baud` — the ESP32 UART baud for each high-speed SIO index against the POKEY rate for PAL

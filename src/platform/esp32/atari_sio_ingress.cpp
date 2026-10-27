@@ -215,10 +215,20 @@ void AtariSioIngress::poll()
     _capture.poll(_boundary, _router, *_uart,
                   [this] { return gpio_get_level(static_cast<gpio_num_t>(_cmd_pin)) == 0; },
                   [] { return esp_timer_get_time(); });
-    // The Atari went back to the standard speed (a reset, or its driver gave up on high speed): its
-    // command frames no longer read, so follow it.
-    if (_speed.high() && _speed.fallback() && _capture.bad_frames_in_a_row() >= io::AtariSioSpeed::fallback_after_bad_frames) {
-        leave_high_speed();
+    // The legacy firmware's rule: two unreadable command frames in a row mean the Atari is at the other
+    // speed, so toggle. High to standard is a reset or a driver that gave up; standard to high is a
+    // driver whose command frames go at high speed after an earlier switch we lost.
+    if (_speed.enabled() && _speed.fallback() &&
+        _capture.bad_frames_in_a_row() >= io::AtariSioSpeed::fallback_after_bad_frames) {
+        if (_speed.high()) {
+            leave_high_speed();
+        } else {
+            _capture.clear_bad_frames();
+            _speed.enter_high();
+            _uart->discardInput();
+            _uart->setBaudrate(_speed.baud());
+            ++_hsio_switches;
+        }
     }
     _last_poll_us = static_cast<std::uint32_t>(esp_timer_get_time());
     _edges_at_last_poll = _boundary.total_edges();
