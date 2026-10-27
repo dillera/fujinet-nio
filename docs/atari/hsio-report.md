@@ -273,9 +273,42 @@ counter at marks (run with `-v`; `make check` asserts a ceiling). One PAL cycle 
   driver's work around each transfer, about 5 ms. The expected result of this change is `idle after R`
   near 14 ms and a 256-byte read near 57 ms.
 
-## Next trials
+## After the copy change (hardware)
 
-1. Run the T page again at high speed with the new boot disk: `idle after R` and read 256.
+| | 19200 | high speed (index 1) |
+|---|---|---|
+| native info | 84.4 ms | 28.6 |
+| native read 128 | 145.0 | 41.0 |
+| native read 256 | 198.4 | 55.0 |
+| `R` idle after (the Atari's time) | 17.7 ms | 14.0 |
+| `hs errors` timeouts in the run | | 10 |
+
+The prediction held (55 ms against 57 expected, `idle after R` 14.0 against 14). The Atari's time after a
+response fell from 34 to 17.7 ms at 19200 and from 31.5 to 14.0 ms at high speed.
+
+## Where a 256-byte read stands
+
+| | Native read of 256 bytes | Per second |
+|---|---|---|
+| Start of the work, 19200 | 246 ms | 1.0 KB/s |
+| Library driver at high speed | 87-94 ms | 2.9 KB/s |
+| Glitch filter, data gap 0 | 79 ms | 3.2 KB/s |
+| Faster checksum | 64 ms | 4.0 KB/s |
+| Faster copy | **55 ms** | **4.7 KB/s** |
+| Wire time alone for the 275 byte response at 108,800 baud | 25.3 ms | |
+
+What the 55 ms is made of: the response on the wire 25.3 ms (46 percent); the Atari's time after it
+about 14-17 ms (the library's 7.9 ms, and the driver's work and the next request's build); the request
+transaction (`W`) 9.3 ms; the poll (`P`) 4.6 ms; the rest per-transaction overhead.
+
+What could still be gained, with the estimated saving per 256-byte read, none of it done:
+
+| Change | Saves | Cost |
+|---|---|---|
+| Skip the second copy of the response (parse in the response buffer) | about 2.4 ms | restructures the read path |
+| Skip the poll `P` when the `W` reply says the response is ready | about 4.6 ms | a protocol change (older clients must keep working) |
+| Index 0 (124,017 baud) instead of 1 | about 3 ms | the receive loop only just fits, not tested with native calls |
+| Fewer bytes of header in each response (19 of 275) | about 1.7 ms | a protocol change |
 
 ## Open items
 
