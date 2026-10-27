@@ -122,6 +122,12 @@ tight, so this is how to see what the Atari is doing:
   handler or other work blocked the task) and a
   first CMD edge before the ingress was ready. A native reply the Atari never read is discarded
   by the next Q or W after 2 s, so a timed-out call no longer leaves the endpoint stuck.
+  Also shown: `refused` (frames for our devices answered with NAK: how many, the first and the
+  latest, with the command named where known), the first eight frames for other devices and the
+  latest one (a driver's probe for a device we do not serve), `3F asked` per owner on the `hsio:`
+  line, and, on the ESP32, the `second listener` line: a UART on the same RX pin at the speed the
+  main one is not using, how many command frames it decoded and how many of those it handled
+  because the main UART could not read them.
 - `sio.hsio [<0-9> [nofallback]|off]` — high-speed SIO (see [hsio](atari/hsio.md)): with no argument, show the state;
   with an index, answer it to `3F` queries (0 is about 124 kbaud, 6 about 67 kbaud); `off` turns it
   off. `nofallback` keeps the UART at the high speed even when command frames cannot be read (by

@@ -271,9 +271,14 @@ TEST_CASE("sio.hsio sets or clears the index, and sio.status shows the high-spee
     stats.router.last_refused = {0x7f, 0x3f, 0x20, 0x00, 0x00};
     stats.router.has_last_other = true;
     stats.router.last_other = {0x70, 0x3f, 0x20, 0x00, 0xcf};
+    stats.router.other_first_count = 2;
+    stats.router.other_first[0] = {0x71, 0x3f, 0x20, 0x00, 0xd0};
+    stats.router.other_first[1] = {0x71, 0x53, 0x00, 0x00, 0xc5};
     const auto refused = run(*provider, {"sio.status"}).text;
     CHECK(contains(refused, "refused (answered NAK, for our devices): 3   first 0x31 0xd2 0x01 0x00 0x00 (device 0x31, command 0xd2)"));
     CHECK(contains(refused, "last 0x7f 0x3f 0x20 0x00 0x00 (device 0x7f, command 0x3f high-speed query)"));
+    CHECK(contains(refused, "other device, frame 1: 0x71 0x3f 0x20 0x00 0xd0 (device 0x71, command 0x3f high-speed query)"));
+    CHECK(contains(refused, "other device, frame 2: 0x71 0x53"));
     CHECK(contains(refused, "last frame for another device: 0x70 0x3f 0x20 0x00 0xcf (device 0x70, command 0x3f high-speed query)"));
 
     stats.hsio_index = 6;

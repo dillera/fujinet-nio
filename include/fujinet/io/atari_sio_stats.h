@@ -87,6 +87,11 @@ struct AtariSioRouterStats {
     // The latest frame for a device that is not ours (ignored on purpose).
     bool has_last_other{false};
     std::array<std::uint8_t, 5> last_other{};
+    // The first few frames for other devices since the reset, in order: a driver's probe (3F) comes
+    // before the command it probes for, and the retries that follow would otherwise hide it.
+    static constexpr std::size_t other_kept = 8;
+    std::uint8_t other_first_count{0};
+    std::array<std::array<std::uint8_t, 5>, other_kept> other_first{};
 };
 
 // The whole picture the console shows; the ingress fills in the hardware parts.

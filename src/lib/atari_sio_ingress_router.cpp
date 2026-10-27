@@ -63,6 +63,9 @@ void AtariSioIngressRouter::begin_command()
         ++_stats.other_commands;
         _stats.has_last_other = true;
         _stats.last_other = command;
+        if (_stats.other_first_count < AtariSioRouterStats::other_kept) {
+            _stats.other_first[_stats.other_first_count++] = command;
+        }
         return;
     }
 

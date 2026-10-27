@@ -327,6 +327,13 @@ TEST_CASE("Atari SIO router remembers the first and latest refused frame and the
     CHECK(stats.last_refused == command(0x7f, 'X', 0));
     REQUIRE(stats.has_last_other);
     CHECK(stats.last_other == command(0x70, 0x3f, 0x20));
+    REQUIRE(stats.other_first_count == 1);
+    CHECK(stats.other_first[0] == command(0x70, 0x3f, 0x20));
+
+    for (int i = 0; i < 12; ++i) feed(harness.router, command(0x71, 'S', 0));
+    CHECK(harness.router.stats().other_first_count == 8);           // only the first eight are kept
+    CHECK(harness.router.stats().other_first[0] == command(0x70, 0x3f, 0x20));
+    CHECK(harness.router.stats().other_first[7] == command(0x71, 'S', 0));
 }
 
 TEST_CASE("Atari SIO speed state: legacy baud table, range, and falling back")

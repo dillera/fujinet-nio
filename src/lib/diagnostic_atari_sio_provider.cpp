@@ -308,6 +308,9 @@ private:
             line(text, "refused (answered NAK, for our devices): " + n(s.router.refused) + "   first " +
                            frame_text(s.router.first_refused) + "   last " + frame_text(s.router.last_refused));
         }
+        for (std::size_t i = 0; i < s.router.other_first_count; ++i) {
+            line(text, "other device, frame " + std::to_string(i + 1) + ": " + frame_text(s.router.other_first[i]));
+        }
         if (s.router.has_last_other) line(text, "last frame for another device: " + frame_text(s.router.last_other));
         line(text, "reading: " + reading(s));
         for (const auto& w : watch(s)) {
