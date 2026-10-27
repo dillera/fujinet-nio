@@ -44,6 +44,7 @@ public:
 
 private:
     void send(const std::vector<std::uint8_t>& bytes);
+    void drop_tx_noise_edges();
     void enter_high_speed();
     // The second listener follows whichever speed the main UART is not at.
     void retune_alt();
@@ -70,6 +71,7 @@ private:
     io::AtariSioCapture _capture;
     io::AtariSioReplyStats _reply;
     io::AtariSioSpeed _speed;
+    std::uint32_t _tx_noise_edges{0};
     std::uint32_t _hsio_switches{0};
     std::uint32_t _hsio_fallbacks{0};
     std::uint32_t _last_poll_us{0};

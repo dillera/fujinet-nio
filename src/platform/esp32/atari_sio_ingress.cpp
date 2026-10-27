@@ -136,10 +136,23 @@ void AtariSioIngress::send(const std::vector<std::uint8_t>& bytes)
             _uart->write(bytes.data() + 1, bytes.size() - 1);
         }
         _uart->flushOutput();
+        drop_tx_noise_edges();
         return;
     }
     _uart->write(bytes.data(), bytes.size());
     _uart->flushOutput();
+    drop_tx_noise_edges();
+}
+
+// The Atari holds CMD high while we answer, so a CMD edge pending when a reply ends with CMD still high
+// can only be noise from our own transmission. Left in, it aborts the next thing the capture is doing,
+// and after an ACK that is the write's data frame: the Atari gets no ACK for it and times out (9 s on
+// the OS SIO, 40 ms plus a retry on the high-speed driver). A real assertion leaves the pin low and is kept.
+void AtariSioIngress::drop_tx_noise_edges()
+{
+    if (_cmd_pin < 0 || _cmd_pin >= GPIO_NUM_MAX) return;
+    if (gpio_get_level(static_cast<gpio_num_t>(_cmd_pin)) == 0) return;
+    _tx_noise_edges += _boundary.consume();
 }
 
 io::AtariSioStats AtariSioIngress::stats() const
@@ -165,6 +178,7 @@ io::AtariSioStats AtariSioIngress::stats() const
     out.hsio_switches = _hsio_switches;
     out.hsio_fallbacks = _hsio_fallbacks;
     out.hsio_fallback_enabled = _speed.fallback();
+    out.tx_noise_edges = _tx_noise_edges;
     if (_alt) {
         out.alt_baud = _alt->uart_config().baudRate;
         out.alt_valid_frames = _alt_valid;
@@ -292,6 +306,7 @@ void AtariSioIngress::reset_stats()
     _reply.reset();
     _hsio_switches = 0;
     _hsio_fallbacks = 0;
+    _tx_noise_edges = 0;
     _poll_gap_us_max = 0;
     _poll_gap_at_us = 0;
 }

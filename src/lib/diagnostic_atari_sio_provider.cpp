@@ -287,6 +287,8 @@ private:
                        ", over 16 ms: " + n(r.reply_over_deadline) + "   (replies " + n(r.replies) + ")");
         line(text, "poll gap: longest time between polls (not counting serving a command) while CMD was active, " + ms1(s.poll_gap_us_max) +
                        (s.poll_gap_us_max ? ", starting at " + at_ms(s.poll_gap_at_us) + " ms" : ""));
+        if (s.tx_noise_edges != 0)
+            line(text, "CMD edges while we transmitted, dropped as noise: " + n(s.tx_noise_edges));
         if (s.stale_replies_dropped != 0)
             line(text, "native replies never read, discarded: " + n(s.stale_replies_dropped));
         line(text, "handler: last " + ms1(r.handle_us_last) + ", max " + ms1(r.handle_us_max));

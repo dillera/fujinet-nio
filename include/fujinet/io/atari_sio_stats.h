@@ -119,6 +119,9 @@ struct AtariSioStats {
     std::uint32_t alt_baud{0};         // 0 = no second listener
     std::uint32_t alt_valid_frames{0};
     std::array<std::uint8_t, 5> alt_last_frame{};
+    // CMD edges that arrived while we were transmitting a reply and were still pending when it ended with
+    // CMD high: the Atari does not touch CMD then, so they were noise (the data-out line coupling onto it).
+    std::uint32_t tx_noise_edges{0};
     std::uint32_t stale_replies_dropped{0};  // native replies the Atari never read, discarded after 2 s
 };
 

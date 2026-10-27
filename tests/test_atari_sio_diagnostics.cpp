@@ -259,6 +259,10 @@ TEST_CASE("sio.hsio sets or clears the index, and sio.status shows the high-spee
     CHECK(run(*provider, {"sio.hsio", "fast"}).status == DiagStatus::InvalidArgs);
     CHECK(set_to == -1);
 
+    stats.tx_noise_edges = 12;
+    CHECK(contains(run(*provider, {"sio.status"}).text, "CMD edges while we transmitted, dropped as noise: 12"));
+    stats.tx_noise_edges = 0;
+    CHECK_FALSE(contains(run(*provider, {"sio.status"}).text, "dropped as noise"));
     stats.alt_baud = 19200;
     stats.alt_valid_frames = 7;
     stats.alt_last_frame = {0x7f, 0x51, 0x00, 0x00, 0xd0};

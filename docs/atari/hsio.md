@@ -160,6 +160,16 @@ the reply gaps are all in place. The U1MB author (flashjazzcat) has been asked w
 not sped up. The U1MB manual says `SIO devices: All` covers every device except cassette and the OS
 "New Poll"; this is not what is observed.
 
+Tenth result (the library driver, index 1): a native read went from 246 ms (19200) to 94 ms, then 87 ms
+after the loop stopped sleeping a tick while a write waits for its data. The driver counted 5 errors in
+100 reads, all timeouts (`$8A`): no framing, overrun, checksum or NAK, so the receive loop and the baud are
+fine. Timeouts at the ACK retry at the same speed (about 40 ms each); the standard-speed fallback is now
+rare (3 rescues against 9). About one CMD edge per frame aborts the capture (`aborts: edge` is about the
+frame count at every speed): an edge during a write's data phase kills the write, so the Atari gets no
+ACK for its data frame. Edges still pending when a reply ends with CMD high are now dropped as noise from
+our own transmission (the Atari does not touch CMD then); `sio.status` counts them as `CMD edges while we
+transmitted, dropped as noise`. To confirm: fewer timeouts and `aborts: edge` falling.
+
 First hardware result (U1MB, index 6): the Atari asked `3F` once and we switched, but two command
 frames were unreadable and the fallback returned us to 19200. The Atari never asks again and keeps
 retrying at high speed (about 14 times per command, then once at standard), so every sector took
