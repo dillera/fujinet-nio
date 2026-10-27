@@ -489,3 +489,84 @@ TEST_CASE("Atari SIO capture takes the frame a second listener decoded when the 
     CHECK(alt_taken == 1);
     CHECK(capture.stats().frames_from_second_listener == 1);
 }
+
+TEST_CASE("Atari SIO per-command time splits our service time from the Atari's idle time")
+{
+    fujinet::io::AtariSioTxnStats txn;
+    txn.begin('W', 1000);       // the first command only opens
+    txn.end(1500);
+    txn.begin('P', 3000);       // W: served 1000..1500, then the Atari took until 3000
+    txn.end(3200);
+    txn.begin('R', 4000);       // P: served 3000..3200, idle 800
+    txn.end(9000);
+    txn.begin('W', 12000);      // R: served 4000..9000, idle 3000
+    CHECK(txn.entry[1].count == 1);
+    CHECK(txn.entry[1].service_us == 500);
+    CHECK(txn.entry[1].idle_us == 1500);
+    CHECK(txn.entry[2].service_us == 200);
+    CHECK(txn.entry[2].idle_us == 800);
+    CHECK(txn.entry[3].service_us == 5000);
+    CHECK(txn.entry[3].idle_us == 3000);
+
+    // A pause of seconds (the user at the keyboard) is not protocol time.
+    txn.end(12100);
+    txn.begin('Q', 12100 + 5'000'000);
+    CHECK(txn.entry[1].count == 1);
+    // Another device's commands go in the last bucket.
+    CHECK(fujinet::io::AtariSioTxnStats::bucket_for(0x3f) == 4);
+}
+
+namespace {
+struct GlitchUart {
+    std::vector<std::uint8_t> data;
+    bool available() const { return !data.empty(); }
+    std::size_t read(std::uint8_t* out, std::size_t cap)
+    {
+        const auto n = std::min(cap, data.size());
+        std::copy(data.begin(), data.begin() + static_cast<std::ptrdiff_t>(n), out);
+        data.erase(data.begin(), data.begin() + static_cast<std::ptrdiff_t>(n));
+        return n;
+    }
+    std::uint32_t rx_errors() const { return 0; }
+    void discardInput() { data.clear(); }
+};
+struct GlitchRouter {
+    std::size_t pending{0};
+    std::size_t pending_write_bytes() const { return pending; }
+    void reset_command_collection() { pending = 0; }
+    void consume(std::uint8_t) {}
+};
+} // namespace
+
+TEST_CASE("Atari SIO capture can ignore CMD glitches while a write waits for its data")
+{
+    for (const bool filter : {false, true}) {
+        fujinet::io::AtariSioTransactionBoundary boundary;
+        fujinet::io::AtariSioCapture capture;
+        capture.set_ignore_write_glitches(filter);
+        GlitchRouter router;
+        GlitchUart uart;
+        std::int64_t t = 1'000'000;
+        const auto asserted = [] { return false; };    // CMD reads high
+        const auto now = [&t] { return t; };
+
+        // The write was accepted by a command frame: the router waits for 8 data bytes.
+        router.pending = 8;
+        capture.poll(boundary, router, uart, asserted, now);
+        CHECK(capture.needs_immediate_poll() == false);   // no write start time yet in this harness
+        // A glitch: two CMD edges while the line is high, then data arrives.
+        boundary.note_cmd_edge(t);
+        boundary.note_cmd_edge(t + 10);
+        uart.data = {1, 2, 3};
+        capture.poll(boundary, router, uart, asserted, now);
+        if (filter) {
+            CHECK(capture.stats().aborts_edge == 0);
+            CHECK(capture.stats().write_glitches_ignored == 2);
+            CHECK(router.pending == 8);
+        } else {
+            CHECK(capture.stats().aborts_edge == 1);
+            CHECK(capture.stats().aborts_edge_in_write == 1);
+            CHECK(router.pending == 0);
+        }
+    }
+}

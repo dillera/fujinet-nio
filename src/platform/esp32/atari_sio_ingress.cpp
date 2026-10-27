@@ -121,6 +121,7 @@ void AtariSioIngress::send(const std::vector<std::uint8_t>& bytes)
     // Timed before the write: this is when the reply starts, which is what the Atari waits for.
     _reply.record(static_cast<std::uint32_t>(esp_timer_get_time()), _capture.processing_start_us(),
                   _capture.processing_command(), _boundary.last_edge_us());
+    if (_capture.processing_command()) _txn.begin(_capture.last_frame()[1], _boundary.last_edge_us());
     if (bytes.size() >= 2 && bytes[0] == sio_ack && (bytes[1] == sio_complete || bytes[1] == sio_error)) {
         _uart->write(bytes.data(), 1);
         _uart->flushOutput();
@@ -140,11 +141,13 @@ void AtariSioIngress::send(const std::vector<std::uint8_t>& bytes)
         _reply.record_data(static_cast<std::uint32_t>(data_bytes),
                            static_cast<std::uint32_t>(esp_timer_get_time()) - data_start);
         drop_tx_noise_edges();
+        _txn.end(static_cast<std::uint32_t>(esp_timer_get_time()));
         return;
     }
     _uart->write(bytes.data(), bytes.size());
     _uart->flushOutput();
     drop_tx_noise_edges();
+    _txn.end(static_cast<std::uint32_t>(esp_timer_get_time()));
 }
 
 // The Atari holds CMD high while we answer, so a CMD edge pending when a reply ends with CMD still high
@@ -182,6 +185,7 @@ io::AtariSioStats AtariSioIngress::stats() const
     out.hsio_fallbacks = _hsio_fallbacks;
     out.hsio_fallback_enabled = _speed.fallback();
     out.tuning = _tuning;
+    out.txn = _txn;
     out.tx_noise_edges = _tx_noise_edges;
     if (_alt) {
         out.alt_baud = _alt->uart_config().baudRate;
@@ -308,6 +312,7 @@ void AtariSioIngress::reset_stats()
     _capture.reset_stats();
     _router.reset_stats();
     _reply.reset();
+    _txn.reset();
     _hsio_switches = 0;
     _hsio_fallbacks = 0;
     _tx_noise_edges = 0;

@@ -50,6 +50,12 @@ public:
     // up to 10 ms to every write, native or disk).
     bool needs_immediate_poll() const noexcept { return _collecting || _write_started_us != 0; }
 
+    // While a write waits for its data frame the Atari does not touch CMD, so edges seen with the line
+    // high are noise; ignoring them keeps the write going instead of aborting it (the Atari would time out).
+    void set_ignore_write_glitches(bool on) noexcept { _ignore_write_glitches = on; }
+    // The command frame handled last (the command letter is byte 1).
+    const std::array<std::uint8_t, 5>& last_frame() const noexcept { return _frame; }
+
     template<class Router, class Uart, class Asserted, class Now>
     void poll(AtariSioTransactionBoundary& boundary, Router& router, Uart& uart,
               Asserted asserted, Now now)
@@ -67,6 +73,9 @@ public:
     {
         const auto abort = [this, &router, &uart](std::uint32_t AtariSioCaptureStats::* reason) {
             ++(_stats.*reason);
+            if (reason == &AtariSioCaptureStats::aborts_edge && !_collecting && router.pending_write_bytes()) {
+                ++_stats.aborts_edge_in_write;
+            }
             // A command frame the UART could not read (framing errors or too many bytes) is what the
             // Atari sending at another speed looks like. Edge and timeout aborts are noise, not speed.
             // A frame that ended (CMD released) with some bytes but fewer than 5: what a frame at a faster
@@ -94,8 +103,12 @@ public:
             abort(&AtariSioCaptureStats::aborts_timeout);
             return;
         }
-        const std::uint32_t edges = boundary.consume();
+        std::uint32_t edges = boundary.consume();
         const bool low = asserted();
+        if (_ignore_write_glitches && edges != 0 && !low && !_collecting && router.pending_write_bytes()) {
+            _stats.write_glitches_ignored += edges;
+            edges = 0;
+        }
         if (!low) {
             std::array<std::uint8_t, 5> from_alt{};
             if (alt_frame(from_alt)) {
@@ -139,7 +152,14 @@ public:
             const auto count = uart.read(bytes, sizeof(bytes));
             _stats.rx_bytes += static_cast<std::uint32_t>(count);
             const bool rx_error = uart.rx_errors() != _rx_errors;
-            if (rx_error || boundary.consume() != 0 || asserted() != low) {
+            std::uint32_t seen = boundary.consume();
+            const bool low_now = asserted();
+            if (_ignore_write_glitches && seen != 0 && !low_now && !low && !_collecting &&
+                router.pending_write_bytes()) {
+                _stats.write_glitches_ignored += seen;
+                seen = 0;
+            }
+            if (rx_error || seen != 0 || low_now != low) {
                 abort(rx_error ? &AtariSioCaptureStats::aborts_rx_error : &AtariSioCaptureStats::aborts_edge);
                 return;
             }
@@ -235,6 +255,7 @@ private:
     bool _collecting{false};
     bool _released{false};
     bool _discard_until_release{false};
+    bool _ignore_write_glitches{false};
 };
 
 } // namespace fujinet::io

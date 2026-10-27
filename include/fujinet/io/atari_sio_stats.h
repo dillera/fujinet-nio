@@ -26,6 +26,8 @@ struct AtariSioCaptureStats {
     AtariSioBadFrame first_bad;        // the first and the most recent of them
     AtariSioBadFrame last_bad;
     std::uint32_t aborts_edge{0};      // CMD edges that did not fit a frame (extra, early or missing)
+    std::uint32_t aborts_edge_in_write{0};  // ... of which while an accepted write waited for its data frame
+    std::uint32_t write_glitches_ignored{0};  // CMD edges ignored there because the line read high (sio.tune glitch)
     std::uint32_t aborts_timeout{0};   // frame not complete in 50 ms, or write data not in 200 ms
     std::uint32_t aborts_overflow{0};  // more than 5 command bytes while CMD was low
     std::uint32_t aborts_rx_error{0};  // UART framing/parity/overflow error during a frame or data
@@ -113,12 +115,61 @@ struct AtariSioRouterStats {
     std::array<std::array<std::uint8_t, 5>, other_kept> other_first{};
 };
 
+// Where the time goes, per command: for each native command (Q, W, P, R; everything else in one bucket)
+// the time we took from the CMD release to the end of the last byte we sent for it (`service`), and the
+// time from then to the CMD release of the Atari's next command (`idle`: the Atari's own processing and
+// the time its next command frame takes to send). Summed over all the commands, service plus idle is the
+// elapsed time of a run, so what the Atari side costs can be told apart from what the FujiNet costs.
+struct AtariSioTxnStats {
+    static constexpr std::size_t buckets = 5;   // Q, W, P, R, other
+    static constexpr std::uint32_t max_idle_us = 1'000'000;  // a longer pause is the user, not the protocol
+    struct Entry {
+        std::uint32_t count{0};
+        std::uint64_t service_us{0};
+        std::uint64_t idle_us{0};
+    };
+    std::array<Entry, buckets> entry{};
+
+    static std::size_t bucket_for(std::uint8_t command) noexcept
+    {
+        return command == 'Q' ? 0 : command == 'W' ? 1 : command == 'P' ? 2 : command == 'R' ? 3 : 4;
+    }
+    // A command frame was released at `release_us` and its first reply is about to go out. This closes the
+    // previous command: its service ran to `_end_us` and its idle time to this release.
+    void begin(std::uint8_t command, std::uint32_t release_us) noexcept
+    {
+        if (_open) {
+            const auto idle = static_cast<std::int32_t>(release_us - _end_us);
+            const auto service = static_cast<std::int32_t>(_end_us - _release_us);
+            if (idle >= 0 && static_cast<std::uint32_t>(idle) <= max_idle_us && service >= 0) {
+                Entry& e = entry[_bucket];
+                ++e.count;
+                e.service_us += static_cast<std::uint32_t>(service);
+                e.idle_us += static_cast<std::uint32_t>(idle);
+            }
+        }
+        _open = true;
+        _bucket = bucket_for(command);
+        _release_us = release_us;
+        _end_us = release_us;
+    }
+    // The last byte of a reply to the open command left the UART at `end_us`.
+    void end(std::uint32_t end_us) noexcept { _end_us = end_us; }
+    void reset() noexcept { *this = {}; }
+private:
+    bool _open{false};
+    std::size_t _bucket{4};
+    std::uint32_t _release_us{0};
+    std::uint32_t _end_us{0};
+};
+
 // Values the ingress uses that are tunable from the console (sio.tune) to find out what each one buys;
 // the defaults are the ones the evidence in docs/atari/hsio-report.md supports.
 struct AtariSioTuning {
     std::uint32_t ack_gap_us{250};      // ACK -> COMPLETE (the legacy DELAY_T5)
     std::uint32_t data_gap_us{1000};    // COMPLETE -> data frame, at high speed only (DELAY_HSIO_DATA)
     std::uint32_t alt_window_us{10000}; // how long a frame heard by the second listener stays usable
+    bool ignore_write_glitches{false};  // while a write waits for its data, CMD edges with the line high are noise
 };
 
 // The whole picture the console shows; the ingress fills in the hardware parts.
@@ -150,6 +201,7 @@ struct AtariSioStats {
     // CMD high: the Atari does not touch CMD then, so they were noise (the data-out line coupling onto it).
     std::uint32_t tx_noise_edges{0};
     AtariSioTuning tuning;
+    AtariSioTxnStats txn;
     std::uint32_t stale_replies_dropped{0};  // native replies the Atari never read, discarded after 2 s
 };
 

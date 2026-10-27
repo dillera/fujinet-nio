@@ -98,11 +98,11 @@ What this says:
 
 | Value | Where | Basis | How solid |
 |---|---|---|---|
-| ACK gap 250 us, at every speed | `ack_gap_us` | The legacy firmware's `DELAY_T5`. Trial 5: without it at 19200, about twenty 9 s stalls in a 112-sector boot; with it, none. | Tested for the effect; the 250 us size is the legacy value, not tuned. |
-| COMPLETE-to-data gap 1 ms, high speed only | `hsio_data_gap_us` | The legacy `DELAY_HSIO_DATA`, kept for SpartaDOS X's driver, which misses a data frame that follows COMPLETE at once. Added together with the ACK gap in trial 3, when the boot went from flapping to steady. | **Not isolated.** Its cost is 1 ms of about 11.5 per transaction. A run with it set to 0 would show whether our drivers need it. |
+| ACK gap 250 us, at every speed | `ack_gap_us` | The legacy firmware's `DELAY_T5`. Trial 5: without it at 19200, about twenty 9 s stalls in a 112-sector boot; with it, none. | Tested for the effect (and at high speed: 0 is unusable, 346 fallbacks); the 250 us size is the legacy value, not tuned. |
+| COMPLETE-to-data gap 1 ms, high speed only | `hsio_data_gap_us` | The legacy `DELAY_HSIO_DATA`, kept for SpartaDOS X's driver, which misses a data frame that follows COMPLETE at once. Added together with the ACK gap in trial 3, when the boot went from flapping to steady. | Isolated once: 0 saves about 1 ms per reply with data (4 percent of a read) and broke nothing, but timeouts and fallbacks were higher in three single runs. Kept until repeated runs show it is free. |
 | Speed index 1 (108,800 baud) as the suggested value | `sio.hsio 1` | Sector times: index 6 about 50 ms, index 1 about 33 ms, index 0 about 30 ms. Index 0 is 124,017 baud, which the Atari-side receive loop only just meets (it crosses a page in our port, which costs cycles), for 3 ms more. | Measured on disk boot only; index 0 not tested with native calls. |
 | Fall back to 19200 after 2 bad command frames, and back up after 2 more | `AtariSioCapture` | The legacy `COMMAND_FRAME_SPEED_CHANGE_THRESHOLD`. Trial 1 shows a one-way fallback strands the Atari at high speed; trial 2 shows the toggle follows it. | The threshold is the legacy value. The second listener is now the main mechanism and this is the backup (final run: 4 fallbacks, 11 frames decoded by the second listener, 8 of them used). |
-| A frame decoded by the second listener is valid for 10 ms | `atari_sio_ingress.cpp` | A heuristic: it must outlast one poll of the SIO task (the longest idle poll gap measured is about 10 ms) and be much shorter than the Atari's retry interval. | **Not measured.** No trial varied it. |
+| A frame decoded by the second listener is valid for 10 ms | `atari_sio_ingress.cpp` | A heuristic: it must outlast one poll of the SIO task (the longest idle poll gap measured is about 10 ms) and be much shorter than the Atari's retry interval. | Varied (5, 10, 20 ms): no measurable difference. Kept at 10. |
 | Command ACK within 16 ms of CMD release | `AtariSioReplyStats::ack_deadline_us` | The SIO timing limit (T2 maximum) for the device's ACK. | A specification value. Measured worst case is 13.4-14.9 ms, which is too close; typical is 1.1 ms. The worst cases happen when the console prints `sio.status` and blocks the SIO task, so they are a measurement artefact for now, but the margin is real. |
 | Device whitelist (`0x31-0x38`, `0x7f`) and a checksum for second-listener frames | `AtariSioIngress` | A 5-byte window slides over arbitrary bytes at the other speed, so a frame must look like one for a device we serve. | By construction. |
 | Short frames (1-4 bytes at CMD release) count as bad | capture | A high-speed frame read by a 19200 UART arrives as one or two garbage bytes (`0xe0 ...`), never five. | Observed in every run. |
@@ -136,21 +136,53 @@ What it changes for us: (1) for NOS, whose network devices are `$71`-`$78`, the 
 side is whether nio should serve `3F` on those IDs, as the legacy firmware does, so stock-patched drivers
 speed them up; (2) our `0x7f` still needs the library driver (or a patch that includes `$7F`).
 
-## Next trials (dials and measurements)
+## Dial trials (index 1, high speed, T page, 100 calls per row)
 
-`sio.tune` changes the ACK gap, the data gap and the second-listener window without a reflash, and
-`sio.status` now shows the average time per byte of data frames next to the wire time. ftestnio's T page
-also times a single `Q` and a single `P` to `0x7f` through the library's SIO entry, which gives the cost of
-one high-speed transaction directly (the OS rows always go at 19200 for `0x7f`). To run, for each setting
-reset the counters, run **T** at high speed and record the table:
+Same setup as above. Each setting was run once; the counters and the T page were reset between runs.
 
-| Trial | Setting | Question |
-|---|---|---|
-| a | defaults | baseline with the new rows |
-| b | `sio.tune data 0` | does anything fail without the 1 ms gap, and how much of the per-transaction cost is it? |
-| c | `sio.tune ack 0`, then `ack 100` | how small can the ACK gap be before 9 s stalls return (standard speed) or timeouts rise? |
-| d | `sio.tune window 5` and `window 20` | does the window change rescues or timeouts? |
-| e | `sio.status` after b-d | data frames: us/byte against the wire, which shows whether the per-byte excess is on the ESP's side |
+| Setting | D1: status | lib Q | lib P | info | read 256 | `hs errors` timeouts | switches | edge aborts |
+|---|---|---|---|---|---|---|---|---|
+| defaults (ack 250, data 1000, window 10) | 6.0 | 6.0 | 6.4 | 34.6 | 82.2 | 26 | 4 | 182 |
+| data gap 0 | 5.4 | 5.0 | 4.6 | 33.6 | 79.0 | 44 | 9 | 383 |
+| data 0, window 5 | 5.0 | 5.0 | 4.6 | 34.2 | 79.4 | 17 | 7 | 228 |
+| data 0, window 20 | 5.0 | 5.2 | 4.6 | 33.4 | 80.8 | 40 | 8 | 482 |
+| ack gap 0 (and data 0) | 15.8 | 134 | 171 | the application hung | | | 346 | 1099 |
+
+- **Single high-speed transactions are cheap**: a `Q` or `P` to `0x7f` through the library driver takes
+  4.6-6.4 ms, against 15.2 ms for the same `Q` at 19200 through the OS. So the ESP and the Atari driver can
+  turn a frame round in about 5 ms; a native call's 34 ms for three transactions is more than three times that.
+- **ESP data frames go out at the wire rate**: 92.0 us/byte on average against 91.9 for 108,800 baud, 275
+  bytes in 25.3 ms for a 256-byte sector (the FujiBus header and checksum are 19 bytes more than the sector).
+  The excess per byte is not in our UART write.
+- **ACK gap 0 is unusable** at high speed too: 346 fallbacks, 243 overflows, and `0x7f` frames were
+  refused after the stream went out of step. The 250 us ACK gap stays. A value between 0 and 250 would save
+  at most that much per command and was not tried.
+- **Data gap 0 saves about 1 ms per reply that carries data**: lib Q 6.0 to 5.0, lib P 6.4 to 4.6, about 3 ms
+  of a 82 ms read (4 percent). It did not break anything, but timeouts and fallbacks were higher in all
+  three runs (17-44 against 26; switches 7-9 against 4). One run each is too noisy to call that a
+  difference, so the gap stays at 1 ms until repeated runs show it is free.
+- **The second-listener window (5, 10, 20 ms) made no measurable difference** (read 256: 79.4, 82.2, 80.8
+  with other settings varying too; timeouts 17, 26, 40). It stays at 10 ms: nothing says another value is
+  better, and 5 and 20 are both inside the noise.
+- **Timeouts vary a lot between identical runs** (17 to 44 in about 600 calls) and appear to follow the
+  number of edge aborts (182 to 482; 17 and 26 at the low end, 40 and 44 at the high end). Four runs is
+  suggestive only. If the abort is the cause, an abort while a write waits for its data would explain it:
+  the Atari gets no ACK for its data frame and times out. The firmware now counts those separately, and
+  `sio.tune glitch 1` ignores CMD edges seen with the line high while a write waits.
+
+## Next trials
+
+New measurements and one dial, all in `sio.status`:
+
+- `per command (...)`: for each of `Q`, `W`, `P`, `R` the average time the FujiNet took from the CMD
+  release to the end of its last reply byte (service), and then how long the Atari took until the CMD
+  release of its next command (idle). Summed over a run these equal the elapsed time, so they show which
+  side the remaining 40 ms of a read belongs to. If the idle time after `R` is large, it is the Atari's
+  decoding of the response; if the service time of `W` is large, it is the FujiNet.
+- `edge aborts while a write waited for its data` and `CMD edges ignored there`.
+- `sio.tune glitch 1`: ignore CMD edges seen with the line high while a write waits for its data. Run
+  **B** or **T** three times with it off and three times on, `sio.reset` before each, and compare
+  `hs errors to`, `switches` and the read times.
 
 ## Open items
 

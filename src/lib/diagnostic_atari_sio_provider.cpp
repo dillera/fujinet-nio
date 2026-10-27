@@ -129,8 +129,8 @@ public:
         if (_set_tuning) {
             out.push_back(DiagCommandSpec{
                 .name = "sio.tune",
-                .summary = "SIO timing dials: ACK gap, data gap (us), second-listener window (ms); not saved",
-                .usage = "sio.tune [ack <us>|data <us>|window <ms>|reset]",
+                .summary = "SIO timing dials: ACK gap, data gap (us), second-listener window (ms), write-glitch filter; not saved",
+                .usage = "sio.tune [ack <us>|data <us>|window <ms>|glitch <0|1>|reset]",
                 .safe = false,
             });
         }
@@ -171,13 +171,15 @@ private:
     static std::string tuning_text(const io::AtariSioTuning& t)
     {
         return "tune: ack gap " + std::to_string(t.ack_gap_us) + " us, data gap " + std::to_string(t.data_gap_us) +
-               " us (high speed only), second-listener window " + std::to_string(t.alt_window_us / 1000) + " ms" +
-               ((t.ack_gap_us != 250 || t.data_gap_us != 1000 || t.alt_window_us != 10000) ? "   (not the defaults)" : "");
+               " us (high speed only), second-listener window " + std::to_string(t.alt_window_us / 1000) + " ms, ignore CMD edges during a write " +
+               (t.ignore_write_glitches ? "on" : "off") +
+               ((t.ack_gap_us != 250 || t.data_gap_us != 1000 || t.alt_window_us != 10000 ||
+                 t.ignore_write_glitches) ? "   (not the defaults)" : "");
     }
 
     DiagResult tune(const DiagArgsView& args) const
     {
-        const char* usage = "usage: sio.tune [ack <us>|data <us>|window <ms>|reset]";
+        const char* usage = "usage: sio.tune [ack <us>|data <us>|window <ms>|glitch <0|1>|reset]";
         io::AtariSioTuning t = _snapshot().tuning;
         if (args.argv.size() == 2 && args.argv[1] == "reset") {
             t = io::AtariSioTuning{};
@@ -190,6 +192,7 @@ private:
             if (args.argv[1] == "ack") t.ack_gap_us = n;
             else if (args.argv[1] == "data") t.data_gap_us = n;
             else if (args.argv[1] == "window") t.alt_window_us = n * 1000;
+            else if (args.argv[1] == "glitch") t.ignore_write_glitches = n != 0;
             else return DiagResult::invalid_args(usage);
         } else if (args.argv.size() != 1) {
             return DiagResult::invalid_args(usage);
@@ -323,7 +326,9 @@ private:
         line(text, "frames: " + n(s.capture.frames) + "   disk(D1:-D8:): " + n(s.router.disk_commands) +
                        "   nio(0x7f): " + n(s.router.nio_commands) + "   other devices: " + n(s.router.other_commands));
         line(text, "aborts: edge=" + n(s.capture.aborts_edge) + " timeout=" + n(s.capture.aborts_timeout) +
-                       " overflow=" + n(s.capture.aborts_overflow) + " rx_error=" + n(s.capture.aborts_rx_error));
+                       " overflow=" + n(s.capture.aborts_overflow) + " rx_error=" + n(s.capture.aborts_rx_error) +
+                       "   (edge aborts while a write waited for its data: " + n(s.capture.aborts_edge_in_write) +
+                       "; CMD edges ignored there: " + n(s.capture.write_glitches_ignored) + ")");
         const auto& r = s.reply;
         line(text, "boot (ms): ingress ready " + at_ms(r.ready_us) + "   first CMD edge " + at_ms(s.first_edge_us) +
                        "   first frame " + at_ms(s.capture.first_frame_us));
@@ -348,6 +353,23 @@ private:
             if (s.uart_baud_set != 0) data += " (the wire: " + tenths(10'000'000ull, s.uart_baud_set) + ")";
             data += "; last " + n(r.data_bytes_last) + " bytes in " + ms1(r.data_us_last);
             line(text, data);
+        }
+        {
+            // Per command: how many, and the average time we took (service) and then the Atari took
+            // before its next command (idle). Their sum over all commands is the elapsed time.
+            static const char* const names[io::AtariSioTxnStats::buckets] = {"Q", "W", "P", "R", "other"};
+            std::string txn;
+            for (std::size_t i = 0; i < io::AtariSioTxnStats::buckets; ++i) {
+                const auto& e = s.txn.entry[i];
+                if (e.count == 0) continue;
+                const auto avg = [&](std::uint64_t total) {
+                    const auto t = total * 10 / e.count / 1000;   // tenths of a ms
+                    return std::to_string(t / 10) + "." + std::to_string(t % 10);
+                };
+                txn += std::string(txn.empty() ? "" : "; ") + names[i] + " x" + n(e.count) + " service " +
+                       avg(e.service_us) + " ms, idle after " + avg(e.idle_us) + " ms";
+            }
+            if (!txn.empty()) line(text, "per command (FujiNet time, then the Atari's until its next command): " + txn);
         }
         if (s.router.has_last_frame) {
             const auto& f = s.router.last_frame;
