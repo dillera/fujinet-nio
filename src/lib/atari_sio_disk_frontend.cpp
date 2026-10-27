@@ -5,7 +5,7 @@
 namespace fujinet::io {
 namespace {
 constexpr std::uint8_t ACK = 0x41, NAK = 0x4e, COMPLETE = 0x43, ERROR = 0x45;
-constexpr std::uint8_t READ = 0x52, PUT = 0x50, STATUS = 0x53, WRITE = 0x57;
+constexpr std::uint8_t READ = 0x52, PUT = 0x50, STATUS = 0x53, WRITE = 0x57, HSIO_INDEX = 0x3f;
 }
 
 std::uint8_t AtariSioDiskFrontend::checksum(const std::uint8_t* bytes, std::size_t size)
@@ -109,6 +109,16 @@ AtariSioDiskFrontend::Result AtariSioDiskFrontend::begin(const std::array<std::u
         // STATUS has no sector argument. MyDOS 4.53/4 retains AUX $0028
         // when polling the drive; ignore both AUX bytes for this command.
         return status(slot);
+    case HSIO_INDEX: {
+        // The Happy/Speedy "ultra speed" query a high-speed SIO driver sends once per drive, at standard
+        // speed: reply the POKEY divisor to use. AUX is ignored (drivers send $20). Off: NAK, as for
+        // any command we do not have.
+        if (_hsio_index < 0) return Result{{NAK}, 0, false};
+        const auto index = static_cast<std::uint8_t>(_hsio_index);
+        Result result{{ACK, COMPLETE, index, checksum(&index, 1)}, 0, true};
+        result.high_speed = true;
+        return result;
+    }
     case READ:
         return read(slot, sector);
     case PUT:

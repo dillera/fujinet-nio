@@ -53,6 +53,12 @@ public:
     {
         const auto abort = [this, &router, &uart](std::uint32_t AtariSioCaptureStats::* reason) {
             ++(_stats.*reason);
+            // A command frame the UART could not read (framing errors or too many bytes) is what the
+            // Atari sending at another speed looks like. Edge and timeout aborts are noise, not speed.
+            if (_collecting && (reason == &AtariSioCaptureStats::aborts_rx_error ||
+                                reason == &AtariSioCaptureStats::aborts_overflow)) {
+                note_bad_frame();
+            }
             router.reset_command_collection();
             _collecting = false;
             _released = false;
@@ -124,6 +130,11 @@ public:
             _collecting = false;
             _released = false;
             ++_stats.frames;
+            if (frame_checksum_ok()) {
+                _bad_frames_in_a_row = 0;
+            } else {
+                note_bad_frame();
+            }
             const auto start = static_cast<std::uint32_t>(now());
             if (_stats.frames == 1) _stats.first_frame_us = start;
             const std::uint32_t lag = start - boundary.last_edge_us();
@@ -142,8 +153,23 @@ public:
     std::uint32_t processing_start_us() const noexcept { return _processing_start_us; }
     bool processing_command() const noexcept { return _processing_command; }
     void reset_stats() noexcept { _stats = {}; }
+    // Command frames in a row that could not be read. The ingress uses it to leave high-speed SIO.
+    std::uint32_t bad_frames_in_a_row() const noexcept { return _bad_frames_in_a_row; }
+    void clear_bad_frames() noexcept { _bad_frames_in_a_row = 0; }
 private:
+    void note_bad_frame() noexcept { ++_stats.frames_bad; ++_bad_frames_in_a_row; }
+    bool frame_checksum_ok() const noexcept
+    {
+        std::uint16_t sum = 0;
+        for (std::size_t i = 0; i + 1 < _frame.size(); ++i) {
+            sum = static_cast<std::uint16_t>(sum + _frame[i]);
+            sum = static_cast<std::uint16_t>((sum & 0xffu) + (sum >> 8));
+        }
+        return static_cast<std::uint8_t>(sum) == _frame.back();
+    }
+
     AtariSioCaptureStats _stats;
+    std::uint32_t _bad_frames_in_a_row{0};
     std::uint32_t _processing_start_us{0};
     bool _processing_command{false};
     std::array<std::uint8_t, 5> _frame{};

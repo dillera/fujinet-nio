@@ -3,6 +3,7 @@
 #if defined(FN_BUILD_ATARI_FUJIBUS_SIO) || defined(FN_PLATFORM_POSIX)
 
 #include "fujinet/diag/diagnostic_atari_sio.h"
+#include "fujinet/io/atari_sio_speed.h"
 
 #include <cstdint>
 #include <string>
@@ -71,16 +72,11 @@ void line(std::string& out, std::string_view text)
 // to compensate for late sampling.
 constexpr std::uint32_t pal_clock_hz = 1773447;
 constexpr std::uint32_t ntsc_clock_hz = 1789790;
-constexpr std::uint32_t max_hsio_index = 10;
+constexpr std::uint32_t max_baud_table_index = 10;  // the legacy table; the speed setting stops at 9
 
 std::uint32_t pokey_baud(std::uint32_t clock_hz, std::uint32_t index)
 {
     return clock_hz / (2 * (index + 7));
-}
-
-std::uint32_t legacy_target_baud(std::uint32_t index)
-{
-    return static_cast<std::uint32_t>(static_cast<std::uint64_t>(pal_clock_hz) * 10 / (10 * (2 * (index + 7)) + 3));
 }
 
 // Signed error of `actual` against `reference`, in tenths of a percent: "+0.1%".
@@ -96,8 +92,10 @@ std::string error_pct(std::uint32_t actual, std::uint32_t reference)
 class AtariSioDiagnosticProvider final : public IDiagnosticProvider {
 public:
     AtariSioDiagnosticProvider(std::function<io::AtariSioStats()> snapshot, std::function<void()> reset,
-                               std::function<std::uint32_t(std::uint32_t)> probe_baud)
-        : _snapshot(std::move(snapshot)), _reset(std::move(reset)), _probe_baud(std::move(probe_baud))
+                               std::function<std::uint32_t(std::uint32_t)> probe_baud,
+                               std::function<bool(int)> set_hsio_index)
+        : _snapshot(std::move(snapshot)), _reset(std::move(reset)), _probe_baud(std::move(probe_baud)),
+          _set_hsio_index(std::move(set_hsio_index))
     {}
 
     std::string_view provider_id() const noexcept override { return "sio"; }
@@ -115,6 +113,14 @@ public:
                 .name = "sio.baud",
                 .summary = "high-speed SIO baud check: UART rates against POKEY index rates (Atari idle)",
                 .usage = "sio.baud",
+                .safe = false,
+            });
+        }
+        if (_set_hsio_index) {
+            out.push_back(DiagCommandSpec{
+                .name = "sio.hsio",
+                .summary = "high-speed SIO: set the index answered to 3F (0-9) or off; not saved",
+                .usage = "sio.hsio [<0-9>|off]",
                 .safe = false,
             });
         }
@@ -138,6 +144,9 @@ public:
         if (cmd == "sio.baud" && _probe_baud) {
             return baud();
         }
+        if (cmd == "sio.hsio" && _set_hsio_index) {
+            return hsio(args);
+        }
         if (cmd == "sio.reset") {
             _reset();
             return DiagResult::ok("sio counters reset\r\n");
@@ -146,16 +155,56 @@ public:
     }
 
 private:
+    DiagResult hsio(const DiagArgsView& args) const
+    {
+        if (args.argv.size() > 1) {
+            const std::string_view value = args.argv[1];
+            int index = -1;
+            if (value != "off") {
+                if (value.empty() || value.size() > 2 || value.find_first_not_of("0123456789") != std::string_view::npos) {
+                    return DiagResult::invalid_args("usage: sio.hsio [<0-9>|off]");
+                }
+                index = std::stoi(std::string(value));
+            }
+            if (!_set_hsio_index(index)) {
+                return DiagResult::invalid_args("index must be 0-9 (10 is read by drivers as a Happy 1050)");
+            }
+            std::string text = index < 0 ? "high-speed SIO off"
+                                         : "high-speed SIO index " + std::to_string(index) + " (" +
+                                               std::to_string(io::AtariSioSpeed::baud_for_index(
+                                                   static_cast<unsigned>(index))) + " baud)";
+            line(text, "; takes effect when the Atari next asks (3F), and is not saved");
+            return DiagResult::ok(std::move(text));
+        }
+        return DiagResult::ok(hsio_line(_snapshot()));
+    }
+
+    static std::string hsio_line(const io::AtariSioStats& s)
+    {
+        std::string text;
+        if (s.hsio_index < 0) {
+            line(text, "hsio: off (3F is NAKed; the Atari stays at 19200). sio.hsio <0-9> turns it on");
+            return text;
+        }
+        line(text, "hsio: index " + std::to_string(s.hsio_index) + " (" +
+                       std::to_string(io::AtariSioSpeed::baud_for_index(static_cast<unsigned>(s.hsio_index))) +
+                       " baud), " + (s.hsio_high ? "HIGH SPEED now" : "standard speed now") +
+                       "   switches " + std::to_string(s.hsio_switches) + ", fallbacks " +
+                       std::to_string(s.hsio_fallbacks) + ", unreadable command frames " +
+                       std::to_string(s.capture.frames_bad));
+        return text;
+    }
+
     DiagResult baud() const
     {
         const auto s = _snapshot();
         std::string text;
         line(text, "SIO UART now: set " + std::to_string(s.uart_baud_set) + ", hardware " + std::to_string(s.uart_baud_hw));
         line(text, "idx  POKEY PAL  POKEY NTSC  target   UART     vs PAL  vs NTSC  vs target");
-        for (std::uint32_t i = 0; i <= max_hsio_index; ++i) {
+        for (std::uint32_t i = 0; i <= max_baud_table_index; ++i) {
             const auto pal = pokey_baud(pal_clock_hz, i);
             const auto ntsc = pokey_baud(ntsc_clock_hz, i);
-            const auto target = legacy_target_baud(i);
+            const auto target = io::AtariSioSpeed::baud_for_index(i);
             const auto actual = _probe_baud(target);
             if (actual == 0) {
                 line(text, std::to_string(i) + "    probe failed");
@@ -181,8 +230,8 @@ private:
         const auto n = [](std::uint32_t v) { return std::to_string(v); };
         std::string text;
         line(text, "cmd_edges: " + n(s.cmd_edges) + "   cmd_line: " + (s.cmd_line_low ? "low (asserted)" : "high (idle)"));
-        line(text, "baud: set " + n(s.uart_baud_set) + ", UART hardware reports " + n(s.uart_baud_hw) +
-                       "   high-speed SIO: not supported (3F is NAKed)");
+        line(text, "baud: set " + n(s.uart_baud_set) + ", UART hardware reports " + n(s.uart_baud_hw));
+        text += hsio_line(s);
         line(text, "rx_bytes: " + n(s.capture.rx_bytes) + "   uart_rx_errors: " + n(s.uart_rx_errors));
         line(text, "frames: " + n(s.capture.frames) + "   disk(D1:-D8:): " + n(s.router.disk_commands) +
                        "   nio(0x7f): " + n(s.router.nio_commands) + "   other devices: " + n(s.router.other_commands));
@@ -272,6 +321,7 @@ private:
     std::function<io::AtariSioStats()> _snapshot;
     std::function<void()> _reset;
     std::function<std::uint32_t(std::uint32_t)> _probe_baud;
+    std::function<bool(int)> _set_hsio_index;
 };
 
 } // namespace
@@ -279,12 +329,14 @@ private:
 std::unique_ptr<IDiagnosticProvider> create_atari_sio_diagnostic_provider(
     std::function<io::AtariSioStats()> snapshot,
     std::function<void()> reset,
-    std::function<std::uint32_t(std::uint32_t)> probe_baud)
+    std::function<std::uint32_t(std::uint32_t)> probe_baud,
+    std::function<bool(int)> set_hsio_index)
 {
     if (!snapshot || !reset) {
         return nullptr;
     }
-    return std::make_unique<AtariSioDiagnosticProvider>(std::move(snapshot), std::move(reset), std::move(probe_baud));
+    return std::make_unique<AtariSioDiagnosticProvider>(std::move(snapshot), std::move(reset), std::move(probe_baud),
+                                                        std::move(set_hsio_index));
 }
 
 } // namespace fujinet::diag

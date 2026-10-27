@@ -58,6 +58,7 @@ void AtariSioIngressRouter::begin_command()
     ++_stats.disk_commands;
     const auto result = _disk.begin(command);
     _send(result.bytes);
+    if (result.high_speed && _high_speed) _high_speed();
     if (result.accepted && result.expected_write_bytes != 0) {
         start_write(PendingWrite::Disk, result.expected_write_bytes);
     }

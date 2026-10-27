@@ -4,6 +4,7 @@
 #include "fujinet/io/atari_sio_disk_frontend.h"
 #include "fujinet/io/atari_sio_ingress_router.h"
 #include "fujinet/io/atari_sio_nio_frontend.h"
+#include "fujinet/io/atari_sio_speed.h"
 #include "fujinet/io/atari_sio_transaction_boundary.h"
 #include "fujinet/io/core/work_source.h"
 
@@ -32,6 +33,9 @@ public:
     // Briefly sets the SIO UART to `target` baud, returns what the hardware reports, and restores the
     // current baud. For the sio.baud check only: run it with the Atari idle.
     std::uint32_t probe_baud(std::uint32_t target);
+    // High-speed SIO (docs/atari/hsio.md): -1 turns it off, 0..9 sets the index answered to 3F. It takes
+    // effect when the Atari next asks, and is not saved. False for an index out of range.
+    bool set_hsio_index(int index);
     // ISR-safe edge recorder; UART/event work remains the sole wake source.
     void note_cmd_edge() noexcept;
     bool supports_work_wait() const override;
@@ -39,6 +43,8 @@ public:
 
 private:
     void send(const std::vector<std::uint8_t>& bytes);
+    void enter_high_speed();
+    void leave_high_speed();
 
     std::unique_ptr<UartChannel> _uart;
     io::AtariSioDiskFrontend _disk;
@@ -47,6 +53,9 @@ private:
     io::AtariSioTransactionBoundary _boundary;
     io::AtariSioCapture _capture;
     io::AtariSioReplyStats _reply;
+    io::AtariSioSpeed _speed;
+    std::uint32_t _hsio_switches{0};
+    std::uint32_t _hsio_fallbacks{0};
     std::uint32_t _last_poll_us{0};
     std::uint32_t _edges_at_last_poll{0};
     std::uint32_t _poll_gap_us_max{0};

@@ -5,6 +5,7 @@
 #include "fujinet/disk/disk_service.h"
 #include "fujinet/fs/storage_manager.h"
 #include "fujinet/io/atari_sio_ingress_router.h"
+#include "fujinet/io/atari_sio_speed.h"
 #include "fujinet/io/devices/virtual_device.h"
 
 #include "../third_party/cjson/cJSON.h"
@@ -253,4 +254,63 @@ TEST_CASE("Atari SIO ingress router counts commands by owner and remembers the l
     CHECK(harness.router.stats().disk_commands == 0);
     CHECK(harness.router.stats().other_commands == 0);
     CHECK_FALSE(harness.router.stats().has_last_frame);
+}
+
+TEST_CASE("Atari SIO answers the high-speed index query only when high-speed SIO is on")
+{
+    Harness harness;
+    int switches = 0;
+    std::size_t replies_when_switched = 0;
+    harness.router.set_high_speed_handler([&] { ++switches; replies_when_switched = harness.replies.size(); });
+
+    // Off (the default): NAK, no switch.
+    feed(harness.router, command(0x31, '?', 0x20));
+    CHECK(harness.replies.back() == std::vector<std::uint8_t>{'N'});
+    CHECK(switches == 0);
+
+    // On: ACK, COMPLETE, the index and its checksum, then the switch, after the reply was sent.
+    harness.disk_frontend.set_hsio_index(6);
+    feed(harness.router, command(0x31, '?', 0x20));   // drivers send AUX1 $20; AUX is ignored
+    CHECK(harness.replies.back() == std::vector<std::uint8_t>{'A', 'C', 6, 6});
+    CHECK(switches == 1);
+    CHECK(replies_when_switched == harness.replies.size());
+    feed(harness.router, command(0x38, '?', 0));
+    CHECK(harness.replies.back() == std::vector<std::uint8_t>{'A', 'C', 6, 6});
+    CHECK(switches == 2);
+
+    // Ordinary commands never switch.
+    feed(harness.router, command(0x31, 'R', 1));
+    CHECK(switches == 2);
+
+    harness.disk_frontend.set_hsio_index(-1);
+    feed(harness.router, command(0x31, '?', 0));
+    CHECK(harness.replies.back() == std::vector<std::uint8_t>{'N'});
+    CHECK(switches == 2);
+}
+
+TEST_CASE("Atari SIO speed state: legacy baud table, range, and falling back")
+{
+    using fujinet::io::AtariSioSpeed;
+    CHECK(AtariSioSpeed::baud_for_index(0) == 124017);
+    CHECK(AtariSioSpeed::baud_for_index(6) == 67431);
+    CHECK(AtariSioSpeed::baud_for_index(9) == 54905);
+
+    AtariSioSpeed speed;
+    CHECK_FALSE(speed.enabled());
+    speed.enter_high();                       // off: nothing happens
+    CHECK_FALSE(speed.high());
+    CHECK(speed.baud() == 19200);
+
+    CHECK_FALSE(speed.set_index(10));         // 10 would be read as a Happy 1050
+    CHECK_FALSE(speed.set_index(-2));
+    CHECK(speed.set_index(6));
+    CHECK(speed.baud() == 19200);             // enabled, but the Atari has not asked yet
+    speed.enter_high();
+    CHECK(speed.baud() == 67431);
+    speed.leave_high();
+    CHECK(speed.baud() == 19200);
+    speed.enter_high();
+    CHECK(speed.set_index(-1));               // turning it off drops back to standard
+    CHECK_FALSE(speed.high());
+    CHECK(speed.baud() == 19200);
 }

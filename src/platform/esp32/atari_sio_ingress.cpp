@@ -60,6 +60,7 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
     , _nio(routing)
     , _router(_disk, _nio, [this](const std::vector<std::uint8_t>& bytes) { send(bytes); })
 {
+    _router.set_high_speed_handler([this] { enter_high_speed(); });
     _owner_task = xTaskGetCurrentTaskHandle();
     _nio.set_clock([]() -> std::uint64_t { return static_cast<std::uint64_t>(esp_timer_get_time()); });
     const auto& pins = pinmap();
@@ -129,7 +130,44 @@ io::AtariSioStats AtariSioIngress::stats() const
     out.poll_gap_us_max = _poll_gap_us_max;
     out.poll_gap_at_us = _poll_gap_at_us;
     out.stale_replies_dropped = _nio.stale_replies_dropped();
+    out.hsio_index = _speed.index();
+    out.hsio_high = _speed.high();
+    out.hsio_switches = _hsio_switches;
+    out.hsio_fallbacks = _hsio_fallbacks;
     return out;
+}
+
+bool AtariSioIngress::set_hsio_index(int index)
+{
+    if (!_speed.set_index(index)) return false;
+    _disk.set_hsio_index(index);
+    // Off while the UART is fast, or a new index while it is: the UART follows what is now set.
+    if (_uart && _uart->uart_config().baudRate != _speed.baud()) {
+        _uart->discardInput();
+        _uart->setBaudrate(_speed.baud());
+    }
+    return true;
+}
+
+// Called right after the 3F reply has been sent and flushed, so it left at the standard speed.
+void AtariSioIngress::enter_high_speed()
+{
+    if (!_uart || !_speed.enabled()) return;
+    _speed.enter_high();
+    _uart->discardInput();
+    _uart->setBaudrate(_speed.baud());
+    ++_hsio_switches;
+}
+
+void AtariSioIngress::leave_high_speed()
+{
+    const bool was_high = _speed.high();
+    _speed.leave_high();
+    _capture.clear_bad_frames();
+    if (!_uart) return;
+    _uart->discardInput();
+    _uart->setBaudrate(_speed.baud());
+    if (was_high) ++_hsio_fallbacks;
 }
 
 std::uint32_t AtariSioIngress::probe_baud(std::uint32_t target)
@@ -175,6 +213,11 @@ void AtariSioIngress::poll()
     _capture.poll(_boundary, _router, *_uart,
                   [this] { return gpio_get_level(static_cast<gpio_num_t>(_cmd_pin)) == 0; },
                   [] { return esp_timer_get_time(); });
+    // The Atari went back to the standard speed (a reset, or its driver gave up on high speed): its
+    // command frames no longer read, so follow it.
+    if (_speed.high() && _capture.bad_frames_in_a_row() >= io::AtariSioSpeed::fallback_after_bad_frames) {
+        leave_high_speed();
+    }
     _last_poll_us = static_cast<std::uint32_t>(esp_timer_get_time());
     _edges_at_last_poll = _boundary.total_edges();
 }

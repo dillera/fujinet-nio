@@ -21,6 +21,8 @@ public:
         std::vector<std::uint8_t> bytes;
         std::size_t expected_write_bytes{0};
         bool accepted{false};
+        // The reply is a high-speed answer: once it has been sent, the ingress switches its UART speed.
+        bool high_speed{false};
     };
 
     explicit AtariSioDiskFrontend(disk::DiskService& service) : _service(service) {}
@@ -32,6 +34,9 @@ public:
     Result complete_write(const std::uint8_t* data, std::size_t data_bytes);
 
     static std::uint8_t checksum(const std::uint8_t* bytes, std::size_t size);
+
+    // The index answered to `3F` (the high-speed SIO query, docs/atari/hsio.md); -1 NAKs it.
+    void set_hsio_index(int index) { _hsio_index = index; }
 
 private:
     enum class PendingWrite { None, Put, Verify };
@@ -47,6 +52,7 @@ private:
     static bool supported_geometry(const disk::DiskSlotInfo& info);
     std::size_t sector_bytes(std::size_t slot, std::uint16_t sector) const;
 
+    int _hsio_index{-1};
     disk::DiskService& _service;
     std::array<DriveState, disk::DiskService::MAX_SLOTS> _state{};
     PendingWrite _pending{PendingWrite::None};

@@ -385,7 +385,8 @@ extern "C" void fujinet_core_task(void* arg)
                 atariSioDiag = fujinet::diag::create_atari_sio_diagnostic_provider(
                     [ingress] { return ingress->stats(); },
                     [ingress] { ingress->reset_stats(); },
-                    [ingress](std::uint32_t target) { return ingress->probe_baud(target); });
+                    [ingress](std::uint32_t target) { return ingress->probe_baud(target); },
+                    [ingress](int index) { return ingress->set_hsio_index(index); });
                 if (atariSioDiag) diagRegistry.add_provider(*atariSioDiag);
             }
 #endif

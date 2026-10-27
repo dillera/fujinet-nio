@@ -29,6 +29,9 @@ public:
     // native write data phase; a ready NIO response deliberately survives.
     void reset_command_collection();
 
+    // Called after a disk reply that asks for the high-speed switch (3F) has been sent.
+    void set_high_speed_handler(std::function<void()> handler) { _high_speed = std::move(handler); }
+
     const AtariSioRouterStats& stats() const noexcept { return _stats; }
     void reset_stats() noexcept { _stats = {}; }
 
@@ -42,6 +45,7 @@ private:
     AtariSioDiskFrontend& _disk;
     AtariSioNioFrontend& _nio;
     Send _send;
+    std::function<void()> _high_speed;
     std::array<std::uint8_t, AtariSioDiskFrontend::command_bytes> _command{};
     std::vector<std::uint8_t> _write;
     std::size_t _command_used{0};

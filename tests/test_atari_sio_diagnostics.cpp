@@ -224,3 +224,38 @@ TEST_CASE("sio.baud compares the UART rate with the POKEY rate for each high-spe
     CHECK(contains(text, "+1.0%"));               // against the target
     CHECK(contains(text, "run with the Atari idle"));
 }
+
+TEST_CASE("sio.hsio sets or clears the index, and sio.status shows the high-speed state")
+{
+    AtariSioStats stats;
+    int set_to = -99;
+    auto provider = fujinet::diag::create_atari_sio_diagnostic_provider(
+        [&] { return stats; }, [] {}, {},
+        [&](int index) { if (index > 9) return false; set_to = index; return true; });
+    std::vector<fujinet::diag::DiagCommandSpec> cmds;
+    provider->list_commands(cmds);
+    REQUIRE(cmds.size() == 3);
+
+    CHECK(contains(run(*provider, {"sio.status"}).text, "hsio: off (3F is NAKed"));
+
+    auto r = run(*provider, {"sio.hsio", "6"});
+    CHECK(r.status == DiagStatus::Ok);
+    CHECK(set_to == 6);
+    CHECK(contains(r.text, "index 6 (67431 baud)"));
+    CHECK(contains(r.text, "not saved"));
+
+    CHECK(run(*provider, {"sio.hsio", "off"}).status == DiagStatus::Ok);
+    CHECK(set_to == -1);
+    CHECK(run(*provider, {"sio.hsio", "10"}).status == DiagStatus::InvalidArgs);
+    CHECK(run(*provider, {"sio.hsio", "fast"}).status == DiagStatus::InvalidArgs);
+    CHECK(set_to == -1);
+
+    stats.hsio_index = 6;
+    stats.hsio_high = true;
+    stats.hsio_switches = 2;
+    stats.hsio_fallbacks = 1;
+    stats.capture.frames_bad = 4;
+    const auto text = run(*provider, {"sio.status"}).text;
+    CHECK(contains(text, "hsio: index 6 (67431 baud), HIGH SPEED now   switches 2, fallbacks 1, unreadable command frames 4"));
+    CHECK(contains(run(*provider, {"sio.hsio"}).text, "HIGH SPEED now"));
+}

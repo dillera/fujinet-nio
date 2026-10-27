@@ -13,6 +13,7 @@ namespace fujinet::io {
 struct AtariSioCaptureStats {
     std::uint32_t rx_bytes{0};         // bytes read from the SIO UART
     std::uint32_t frames{0};           // complete 5-byte command frames handed to the router
+    std::uint32_t frames_bad{0};       // command frames that could not be read: bad checksum, UART error or overflow
     std::uint32_t aborts_edge{0};      // CMD edges that did not fit a frame (extra, early or missing)
     std::uint32_t aborts_timeout{0};   // frame not complete in 50 ms, or write data not in 200 ms
     std::uint32_t aborts_overflow{0};  // more than 5 command bytes while CMD was low
@@ -81,6 +82,10 @@ struct AtariSioStats {
     std::uint32_t poll_gap_at_us{0};   // when that longest gap began (same clock as first_edge_us)
     std::uint32_t uart_baud_set{0};    // the baud the SIO UART was last told to use (0 = unknown)
     std::uint32_t uart_baud_hw{0};     // what the UART hardware reports back after its divider rounding
+    int hsio_index{-1};                // high-speed SIO index answered to 3F (-1 = off)
+    bool hsio_high{false};             // the UART is at the high speed right now
+    std::uint32_t hsio_switches{0};    // times the UART was switched to high speed
+    std::uint32_t hsio_fallbacks{0};   // times it was switched back after unreadable command frames
     std::uint32_t stale_replies_dropped{0};  // native replies the Atari never read, discarded after 2 s
 };
 

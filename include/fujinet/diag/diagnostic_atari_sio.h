@@ -17,9 +17,11 @@ namespace fujinet::diag {
 // counters (the ingress adds its hardware parts) and `reset` zeroes them. `probe_baud` (optional)
 // sets the SIO UART to a baud, returns what the hardware reports and restores it, for sio.baud, which
 // compares what the UART can do with the POKEY high-speed rates (see docs/atari/hsio.md).
+// `set_hsio_index` (optional) backs sio.hsio: -1 turns high-speed SIO off, 0..9 sets the index.
 std::unique_ptr<IDiagnosticProvider> create_atari_sio_diagnostic_provider(
     std::function<::fujinet::io::AtariSioStats()> snapshot,
     std::function<void()> reset,
-    std::function<std::uint32_t(std::uint32_t)> probe_baud = {});
+    std::function<std::uint32_t(std::uint32_t)> probe_baud = {},
+    std::function<bool(int)> set_hsio_index = {});
 
 } // namespace fujinet::diag

@@ -356,3 +356,49 @@ TEST_CASE("Atari SIO reply timing survives the 32-bit microsecond clock wrapping
     CHECK(reply.reply_us_last == 1200);
     CHECK(reply.handle_us_last == 1296);
 }
+
+TEST_CASE("Atari SIO capture counts command frames that cannot be read, for the high-speed fallback")
+{
+    fujinet::io::AtariSioCapture capture;
+    fujinet::io::AtariSioTransactionBoundary boundary;
+    CaptureUart uart;
+    CaptureRouter router;
+    bool low = false;
+    std::int64_t time = 1;
+    auto poll = [&] { capture.poll(boundary, router, uart, [&] { return low; }, [&] { return time; }); };
+    const auto frame = [&](std::vector<std::uint8_t> bytes) {
+        low = true; boundary.note_cmd_edge(); uart.driver = std::move(bytes); poll();
+        low = false; boundary.note_cmd_edge(); poll();
+    };
+
+    frame({0x31, 'S', 0, 0, 0x84});            // a good frame
+    CHECK(capture.bad_frames_in_a_row() == 0);
+    CHECK(capture.stats().frames_bad == 0);
+
+    frame({0x31, 'S', 0, 0, 0x00});            // bad checksum
+    CHECK(capture.bad_frames_in_a_row() == 1);
+    frame({0x31, 'S', 0, 0, 0x01});
+    CHECK(capture.bad_frames_in_a_row() == 2);
+    CHECK(capture.stats().frames_bad == 2);
+
+    frame({0x31, 'S', 0, 0, 0x84});            // a good one ends the run
+    CHECK(capture.bad_frames_in_a_row() == 0);
+
+    // A UART error while the command is collected, and too many bytes: what the wrong speed looks like.
+    low = true; boundary.note_cmd_edge(); uart.driver = {0x31, 'S'}; poll();
+    ++uart.errors; poll();
+    CHECK(capture.bad_frames_in_a_row() == 1);
+    low = false; boundary.note_cmd_edge(); poll(); poll();
+    low = true; boundary.note_cmd_edge(); uart.driver = {1, 2, 3, 4, 5, 6, 7}; poll();
+    CHECK(capture.bad_frames_in_a_row() == 2);
+    low = false; boundary.note_cmd_edge(); poll(); poll();
+
+    // Noise is not a speed change: edge and timeout aborts do not count.
+    capture.clear_bad_frames();
+    low = false; boundary.note_cmd_edge(); boundary.note_cmd_edge(); poll();
+    CHECK(capture.bad_frames_in_a_row() == 0);
+    poll();
+    low = true; boundary.note_cmd_edge(); uart.driver = {0x31, 1}; poll();
+    time += 50001; poll();
+    CHECK(capture.bad_frames_in_a_row() == 0);
+}

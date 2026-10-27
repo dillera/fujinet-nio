@@ -1,7 +1,9 @@
 # High-speed SIO (HSIO) on the Atari
 
-Status: not implemented. `3F` is NAKed, so the Atari stays at 19200 baud. This records how the
-legacy firmware does it, what was checked, and the plan. Measured numbers are in
+Status: implemented for `3F` on `D1:`-`D8:`, off by default, switched on at run time with the console
+command `sio.hsio <0-9>` (not saved; there is no persistent setting or native-endpoint command yet).
+Off, `3F` is NAKed and the Atari stays at 19200 baud. This records how the legacy firmware does it,
+what the MyPicoDOS driver expects, and what is and is not built. Measured numbers are in
 [sio-bringup-findings](sio-bringup-findings.md).
 
 ## How the legacy firmware does it
@@ -37,12 +39,41 @@ Source: `fujinet-firmware`, `lib/bus/sio/sio.cpp`, `sio.h`, `lib/device/sio/{dis
   in `fujinet-build-tools/AtariSIO/tools/`, as embedded 6502 images; how it picks a speed was not
   worked out).
 
-## Plan
+## What the MyPicoDOS driver does (repos/MyPicoDOS/hisio)
 
-1. **Measure (done):** `sio.status` shows the SIO UART baud, and `sio.baud` (Atari idle) compares what
-   the ESP32 UART actually produces for each index against the POKEY rate for PAL and NTSC clocks.
-   TX pacing (`tx_chunk_gap_us`, meant for Amiga RS-232 overruns) is forced off for the SIO UART.
-2. `3F` on `D1:`-`D8:`, with the baud switch and the 1 ms gap before data frames, default off.
-3. The `$80` command variants, and the checksum-failure toggle.
-4. A setting for the index (yaml, console, the native endpoint with a Python client and
-   `fujinet-nio-lib` call), not a legacy `$70` device.
+- **`3F` is the Happy/Speedy "ultra speed" query.** It is sent once per drive unit at the standard
+  speed (a 1-byte read, AUX1 `$20`). The reply byte is the POKEY divisor: `AUDF3` = byte, `AUDF4` = 0,
+  `AUDCTL` = `$28`, so the rate is clock / (2 x (n + 7)). `$28` (40) is the standard speed. The driver
+  caches the speed per unit; unit 0 clears the table.
+- **Everything runs at that speed:** the command frame, the ACK, COMPLETE and the data.
+- **Fallback:** 14 command-frame retries at high speed, then a retry at the standard speed. The
+  FujiNet therefore has to hear a standard-speed command frame again after switching.
+- **A NAK on `3F`** sends it on to probe Turbo 1050 (status with AUX2 bit 7), XF551 (`$D3`) and Happy
+  810 (`$48`). All fail against nio, so it falls back to the standard speed.
+- **Do not implement the `$80` command variants.** `$D3` is how an XF551 is detected, after which data
+  frames run at 38400 with the ACK still at the standard speed. Answering it would make a driver
+  assume the wrong speed model.
+- **Index 10 is not offered.** A speed byte of `$0A` is read as a Happy 1050 and probed further.
+- The receive loop is hand-tuned for 126 kbit/s: the FujiNet's TX must be gapless (pacing is off).
+
+## What is built
+
+- `AtariSioSpeed` (`atari_sio_speed.h`): the index (-1 off, 0-9), the legacy baud for it, and whether the
+  UART is at the high speed.
+- `AtariSioDiskFrontend` answers `3F` with ACK, COMPLETE, the index and its checksum when an index is
+  set (any AUX), and tells the router the reply is a high-speed answer. The router calls the ingress
+  after the reply was sent, and the ingress then switches the SIO UART to the high baud.
+- **Fallback:** `AtariSioCapture` counts command frames in a row that could not be read (bad
+  checksum, UART error or overflow while collecting; edge and timeout aborts are noise and do not
+  count). Two in a row while at high speed switch the UART back to 19200. This is what follows the
+  Atari through a reset or its driver giving up.
+- `sio.status` shows the `hsio:` state (index, current speed, switches, fallbacks, unreadable command
+  frames); `sio.hsio` sets it; `sio.baud` checks the UART against the POKEY rates.
+- There is no 1 ms gap between COMPLETE and the data frame. The legacy firmware added it for
+  SpartaDOS X's own driver; this driver reads the data immediately. Add one only if a driver needs it.
+
+## Still to do
+
+1. Measure on hardware with the U1MB: `sio.hsio 6`, boot, then `sio.status` (look at switches,
+   fallbacks, `uart_rx_errors`, `react`/`reply`), then try 3 and 0.
+2. A persistent setting: yaml, the native endpoint with a Python client and `fujinet-nio-lib` call.
