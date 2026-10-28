@@ -3,6 +3,7 @@
 #include "doctest.h"
 #include "image_fixtures.h"
 #include "net_device_test_helpers.h"
+#include "fujinet/io/core/io_device_manager.h"
 
 #include <algorithm>
 #include <cstring>
@@ -1269,4 +1270,133 @@ TEST_CASE("NetworkDevice v1: the configured image pixel cap reaches the Image tr
     CHECK(open_and_read(192) == StatusCode::Ok);
     CHECK(open_and_read(191) == StatusCode::Unsupported);
     CHECK(open_and_read(16u * 1024u * 1024u) == StatusCode::Ok);
+}
+
+// ---------------------------------------------------------------------------
+// Readiness notification (IClientNotifier): the client that owns a session hears when a read that
+// would have been NotReady can now be answered, once per transition.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// A stream whose readiness the test controls.
+class ReadinessProtocol final : public fujinet::io::INetworkProtocol {
+public:
+    static bool ready;
+    StatusCode open(const fujinet::io::NetworkOpenRequest&) override { return StatusCode::Ok; }
+    StatusCode write_body(std::uint32_t, const std::uint8_t*, std::size_t, std::uint16_t& w) override
+    {
+        w = 0;
+        return StatusCode::Unsupported;
+    }
+    StatusCode read_body(std::uint32_t, std::uint8_t* out, std::size_t, std::uint16_t& read, bool& eof,
+                         bool& more) override
+    {
+        read = 0;
+        eof = false;
+        more = false;
+        if (!ready) return StatusCode::NotReady;
+        out[0] = 'x';
+        read = 1;
+        return StatusCode::Ok;
+    }
+    StatusCode info(fujinet::io::NetworkInfo&) override { return StatusCode::Ok; }
+    void poll() override {}
+    void close() override {}
+    bool read_ready() const override { return ready; }
+};
+bool ReadinessProtocol::ready = false;
+
+struct NotifierRecorder final : fujinet::io::IClientNotifier {
+    std::vector<const void*> heard;
+    void clientReadable(const void* owner) override { heard.push_back(owner); }
+};
+
+} // namespace
+
+TEST_CASE("NetworkDevice tells the owning client once when a session becomes readable")
+{
+    fujinet::io::ProtocolRegistry reg;
+    reg.register_scheme("tcp", [] { return std::make_unique<ReadinessProtocol>(); });
+    NetworkDevice dev(std::move(reg));
+    NotifierRecorder notes;
+    dev.set_client_notifier(&notes);
+    const auto deviceId = to_device_id(WireDeviceId::NetworkService);
+    int clientA = 0, clientB = 0;
+    auto open = [&](const void* owner) {
+        IORequest req{};
+        req.deviceId = deviceId;
+        req.clientOwner = owner;
+        req.command = 1;
+        req.payload = to_vec(open_payload("tcp://example.com:1", 1, 0, 0, {}));
+        auto resp = dev.handle(req);
+        REQUIRE(resp.status == StatusCode::Ok);
+        return static_cast<std::uint16_t>(resp.payload[4] | (resp.payload[5] << 8));
+    };
+    ReadinessProtocol::ready = false;
+    const auto a = open(&clientA);
+    open(&clientB);
+    open(nullptr);   // no owner: nobody to tell
+
+    dev.poll();
+    CHECK(notes.heard.empty());                       // nothing readable yet
+    CHECK(read_req(dev, deviceId, a, 0, 16).status == StatusCode::NotReady);
+
+    ReadinessProtocol::ready = true;
+    dev.poll();
+    REQUIRE(notes.heard.size() == 2);                  // A and B, not the owner-less session
+    CHECK(notes.heard[0] != notes.heard[1]);
+    dev.poll();
+    dev.poll();
+    CHECK(notes.heard.size() == 2);                    // once per transition, not every tick
+
+    // A read that leaves data behind is announced again at the next poll (so a client that reads part
+    // of it and then waits is not stranded).
+    CHECK(read_req(dev, deviceId, a, 0, 16).status == StatusCode::Ok);
+    dev.poll();
+    CHECK(notes.heard.size() == 3);
+    CHECK(notes.heard.back() == &clientA);
+
+    // Not readable again, then readable: a new notice.
+    ReadinessProtocol::ready = false;
+    dev.poll();
+    ReadinessProtocol::ready = true;
+    dev.poll();
+    CHECK(notes.heard.size() == 5);
+}
+
+TEST_CASE("IODeviceManager forwards a device's notice to the listener watching that client")
+{
+    fujinet::io::IODeviceManager manager;
+    fujinet::io::ProtocolRegistry reg;
+    reg.register_scheme("tcp", [] { return std::make_unique<ReadinessProtocol>(); });
+    const auto deviceId = to_device_id(WireDeviceId::NetworkService);
+    REQUIRE(manager.registerDevice(deviceId, std::make_unique<NetworkDevice>(std::move(reg))));
+    int watched = 0, other = 0;
+    int heard = 0;
+    manager.watchClient(&watched, [&] { ++heard; });
+
+    auto open = [&](const void* owner) {
+        IORequest req{};
+        req.deviceId = deviceId;
+        req.clientOwner = owner;
+        req.command = 1;
+        req.payload = to_vec(open_payload("tcp://example.com:1", 1, 0, 0, {}));
+        REQUIRE(manager.handleRequest(req).status == StatusCode::Ok);
+    };
+    ReadinessProtocol::ready = false;
+    open(&watched);
+    open(&other);
+    manager.pollDevices();
+    CHECK(heard == 0);
+    ReadinessProtocol::ready = true;
+    manager.pollDevices();
+    CHECK(heard == 1);                                 // only the watched client's listener ran
+
+    manager.watchClient(&watched, {});                 // an empty listener removes it
+    ReadinessProtocol::ready = false;
+    manager.pollDevices();
+    ReadinessProtocol::ready = true;
+    manager.pollDevices();
+    CHECK(heard == 1);
 }

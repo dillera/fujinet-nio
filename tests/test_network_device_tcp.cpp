@@ -651,6 +651,34 @@ TEST_CASE("TCP common: duplicate retry of last read replays bytes")
     CHECK(proto.read_body(0, wrong_size, sizeof(wrong_size), read, eof, more) == StatusCode::InvalidRequest);
 }
 
+TEST_CASE("TCP common: read_ready is true while bytes are buffered, not before or after")
+{
+    MemoryTcpSocketOps ops;
+    fujinet::net::TcpNetworkProtocolCommon proto(ops);
+    CHECK_FALSE(proto.read_ready());                       // not open
+
+    fujinet::net::TcpNetworkProtocolCommon::Options opt{};
+    REQUIRE(proto.adopt_connected_socket(1, opt, "memory", 1) == StatusCode::Ok);
+    proto.poll();
+    CHECK_FALSE(proto.read_ready());                       // connected, nothing received
+
+    ops.rx = {'a', 'b'};
+    ops.rx_pos = 0;
+    proto.poll();                                          // the device tick pumps the socket
+    CHECK(proto.read_ready());
+
+    std::uint8_t one[1] = {};
+    std::uint16_t read = 0;
+    bool eof = false;
+    bool more = false;
+    REQUIRE(proto.read_body(0, one, sizeof(one), read, eof, more) == StatusCode::Ok);
+    CHECK(proto.read_ready());                             // a byte is still buffered
+    std::uint8_t rest[1] = {};
+    REQUIRE(proto.read_body(1, rest, sizeof(rest), read, eof, more) == StatusCode::Ok);
+    proto.poll();
+    CHECK_FALSE(proto.read_ready());                       // drained
+}
+
 TEST_CASE("TCP: Read preserves bytes across 64K stream and ring boundary")
 {
     LocalEchoServer srv;

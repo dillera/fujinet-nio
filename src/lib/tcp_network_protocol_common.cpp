@@ -623,6 +623,12 @@ void TcpNetworkProtocolCommon::poll()
     }
 }
 
+bool TcpNetworkProtocolCommon::read_ready() const noexcept
+{
+    if (_state == State::Connecting || _state == State::Idle) return false;
+    return rx_available() > 0 || _state == State::PeerClosed || _state == State::Error;
+}
+
 void TcpNetworkProtocolCommon::close()
 {
     if (_fd >= 0) {

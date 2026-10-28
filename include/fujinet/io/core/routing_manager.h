@@ -49,6 +49,7 @@ public:
     // IRequestHandler implementation.
     IOResponse handleRequest(const IORequest& request) override;
     void resetClient(DeviceID id, const void* owner) override;
+    void watchClient(const void* owner, std::function<void()> readable) override;
 
     // Access to the underlying device manager, in case you need to
     // register/unregister devices, or call pollDevices() from elsewhere.

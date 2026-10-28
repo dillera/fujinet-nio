@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fujinet/io/core/client_notifier.h"
 #include "fujinet/io/core/io_message.h"
 
 namespace fujinet::io {
@@ -21,6 +22,19 @@ public:
     // Called periodically by IODeviceManager / IOService.
     // Devices that don't need polling can ignore this (default no-op).
     virtual void poll() {}
+
+    // The manager that owns this device sets it when the device is registered.
+    void set_client_notifier(IClientNotifier* notifier) noexcept { _notifier = notifier; }
+
+protected:
+    // Tell the client `owner` that a read it was refused may now succeed (see IClientNotifier).
+    void notify_client_readable(const void* owner) const
+    {
+        if (_notifier && owner) _notifier->clientReadable(owner);
+    }
+
+private:
+    IClientNotifier* _notifier{nullptr};
 };
 
 using VirtualService = VirtualDevice;

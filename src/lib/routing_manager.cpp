@@ -21,4 +21,9 @@ void RoutingManager::resetClient(DeviceID id, const void* owner)
     _deviceManager.resetClient(id, owner);
 }
 
+void RoutingManager::watchClient(const void* owner, std::function<void()> readable)
+{
+    _deviceManager.watchClient(owner, std::move(readable));
+}
+
 } // namespace fujinet::io

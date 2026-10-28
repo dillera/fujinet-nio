@@ -8,6 +8,7 @@ bool IODeviceManager::registerDevice(DeviceID id, std::unique_ptr<VirtualDevice>
         return false;
     }
 
+    device->set_client_notifier(this);
     auto [it, inserted] = _devices.emplace(id, std::move(device));
     return inserted;
 }
@@ -58,6 +59,19 @@ void IODeviceManager::resetClient(DeviceID id, const void* owner)
     if (owner) {
         if (auto* device = getDevice(id)) device->resetClient(owner);
     }
+}
+
+void IODeviceManager::watchClient(const void* owner, std::function<void()> readable)
+{
+    if (!owner) return;
+    if (readable) _watchers[owner] = std::move(readable);
+    else _watchers.erase(owner);
+}
+
+void IODeviceManager::clientReadable(const void* owner)
+{
+    const auto it = _watchers.find(owner);
+    if (it != _watchers.end() && it->second) it->second();
 }
 
 void IODeviceManager::pollDevices()

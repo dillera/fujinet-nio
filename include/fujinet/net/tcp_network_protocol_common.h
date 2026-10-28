@@ -69,6 +69,9 @@ public:
     void poll();
     void close();
 
+    // A read now would not be NotReady: bytes are buffered, or the peer closed or the connection failed.
+    bool read_ready() const noexcept;
+
     // Accessors for state (for testing/debugging)
     State state() const noexcept { return _state; }
     int last_errno() const noexcept { return _last_errno; }

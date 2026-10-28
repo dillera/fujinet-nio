@@ -66,6 +66,15 @@ public:
     virtual void poll() = 0;
     virtual void close() = 0;
 
+    /**
+     * @brief True when a read now would return data, end of stream or an error instead of NotReady.
+     *
+     * NetworkDevice watches this after each poll() and tells the client (IClientNotifier) when it
+     * turns true, so a client can wait for it rather than repeat the read. A protocol that cannot
+     * tell returns false (the default) and its client polls as before.
+     */
+    virtual bool read_ready() const { return false; }
+
     // ========================================================================
     // Protocol Capabilities
     // ========================================================================

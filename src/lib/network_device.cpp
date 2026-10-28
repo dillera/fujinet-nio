@@ -75,6 +75,16 @@ void NetworkDevice::poll()
         // Allow backend to progress (future async backends)
         s.proto->poll();
 
+        // Tell the client when a read that would have been refused (NotReady) is now answerable. One
+        // notice per transition; a read clears the mark, so data left behind is announced again.
+        const bool readable = s.proto->read_ready();
+        if (readable && !s.readyNotified) {
+            s.readyNotified = true;
+            notify_client_readable(s.clientOwner);
+        } else if (!readable) {
+            s.readyNotified = false;
+        }
+
         // If backend can signal progress/completion later, we can update s.completed
         // and/or touch(s) here when progress is made.
         // const std::uint64_t age  = _tickNow - s.createdTick;
@@ -892,6 +902,7 @@ IOResponse NetworkDevice::handle(const IORequest& request)
                 return resp;
             }
             touch(*s);
+            s->readyNotified = false;   // data left after this read is announced again on the next poll
 
             // If request body hasn't been fully uploaded, response is not available yet.
             if (s->awaitingBody) {

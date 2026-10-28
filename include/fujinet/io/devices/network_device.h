@@ -77,6 +77,9 @@ private:
         // (useful when you later do async backends)
         bool completed{false};
 
+        // read_ready() was true at the last poll and the client was told (cleared by a read).
+        bool readyNotified{false};
+
         // HTTP request-body tracking (streamed, no large buffering in core)
         std::uint32_t expectedBodyLen = 0;   // from Open.bodyLenHint (when relevant)
         std::uint32_t receivedBodyLen = 0;   // total bytes accepted via Write()
@@ -144,6 +147,7 @@ private:
         s.createdTick = 0;
         s.lastActivityTick = 0;
         s.completed = false;
+        s.readyNotified = false;
         s.translation = TranslationConfig{};
         s.translator.reset();
         s.responseBodyCache.clear();

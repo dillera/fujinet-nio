@@ -29,6 +29,7 @@ public:
     fujinet::io::StatusCode info(fujinet::io::NetworkInfo& out) override;
     void poll() override;
     void close() override;
+    bool read_ready() const override { return _common.read_ready(); }
 
     // Protocol capabilities - TCP is a streaming protocol
     bool is_streaming() const override { return true; }

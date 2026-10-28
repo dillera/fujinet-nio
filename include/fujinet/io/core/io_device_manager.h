@@ -1,8 +1,10 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <unordered_map>
 
+#include "fujinet/io/core/client_notifier.h"
 #include "fujinet/io/core/io_message.h"
 #include "fujinet/io/core/request_handler.h"
 #include "fujinet/io/devices/virtual_device.h"
@@ -10,7 +12,7 @@
 namespace fujinet::io {
 
 // Owns and routes to VirtualDevice instances.
-class IODeviceManager : public IRequestHandler {
+class IODeviceManager : public IRequestHandler, public IClientNotifier {
 public:
     IODeviceManager() = default;
 
@@ -33,6 +35,9 @@ public:
     // IRequestHandler implementation.
     IOResponse handleRequest(const IORequest& request) override;
     void resetClient(DeviceID id, const void* owner) override;
+    void watchClient(const void* owner, std::function<void()> readable) override;
+    // IClientNotifier: forwards to the listener registered for `owner`, if any.
+    void clientReadable(const void* owner) override;
 
     // Called periodically by higher-level code (e.g. IOService)
     // to let devices do background work.
@@ -42,6 +47,7 @@ public:
 
 private:
     std::unordered_map<DeviceID, std::unique_ptr<VirtualDevice>> _devices;
+    std::unordered_map<const void*, std::function<void()>> _watchers;
 };
 
 } // namespace fujinet::io
