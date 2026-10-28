@@ -73,6 +73,7 @@ public:
     {
         const auto abort = [this, &router, &uart](std::uint32_t AtariSioCaptureStats::* reason) {
             ++(_stats.*reason);
+            if (_collecting) ++_stats.frames_lost;
             if (reason == &AtariSioCaptureStats::aborts_edge && !_collecting && router.pending_write_bytes()) {
                 ++_stats.aborts_edge_in_write;
             }

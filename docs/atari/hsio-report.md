@@ -395,12 +395,35 @@ same boot):
 - A 256-byte read is the same to within the run-to-run spread. The smaller transfers are about 2 ms
   slower through the U1MB (the fixed cost of the handler). The raw `$7F` query is now at high speed like
   `D1:`.
-- **No retransmissions in 1,400 transactions.** The firmware saw exactly the frames the calls need: 100
-  `D1:` status, 100 + 100 `Q`, 100 `P`, 100 native info (`W P R`), 200 bounded reads (`W R`), 100
-  unbounded reads (`W P R`), which is 1,300 for `$7F` plus 100 for `D1:`. `timeout=0`, no unreadable
-  frames, no switches or fallbacks, and no failed call in the T page. The library driver's 5-14 ACK
-  timeouts a run (open item) do not appear on this path. That points at our own receive code or its
-  timeout window, not at the bus or the firmware, but it needs the same-boot run with `H` on to be sure.
+- **The firmware's frame count cannot show Atari-side retries** (a correction to the first reading of
+  log 022). The 1,400 frames it saw are exactly the minimum for the calls (1,300 for `$7F`: 100 `D1:`
+  status, 100 + 100 `Q`, 100 `P`, 100 native info (`W P R`), 200 bounded reads (`W R`), 100 unbounded
+  reads (`W P R`); plus 100 for `D1:`), but a command frame that never reached the firmware is retried by
+  the Atari without leaving a trace in that count. Only the library driver counts its own errors, so the
+  U1MB handler's retries are unknown until the firmware counts frames it lost (`sio.status`: "command
+  frames lost", added after run 023).
+
+### Same boot, library driver on (log 023: index 0, `H` pressed after the first two pages, `sio.reset`)
+
+| | U1MB handler (022) | library driver (023) |
+|---|---|---|
+| OS `D1:` status | 4.8 ms | 5.6 |
+| OS `$7F` query | 5.4 | 4.8 |
+| lib `$7F` query / poll | 5.0 / 4.8 | 4.6 / 5.0 |
+| native info | 28.8 | 27.0 |
+| native read 128 / 256 / 512 | 36.0 / 47.2 / 48.8 | 34.8 / **46.2** / 48.0 |
+| failed calls | 0 | 0 |
+| driver errors | not counted | `hs errors to12` (timeouts only, 0.9 percent of 1,400) |
+
+- The library driver is about 1 ms faster on a 256-byte read and about 2 ms on the small calls: the handlers
+  are interchangeable for speed.
+- The 12 timeouts did not fail any call: the driver retried them. The firmware saw no duplicate frame
+  (1,402 frames: the 1,300 calls, 100 `D1:`, the `3F` and the `Q` the driver sends when enabled), so each
+  of the 12 was a command frame the firmware never decoded, not an ACK the Atari missed. One timeout is
+  about 40 ms, so they cost about 0.6 ms a call on average.
+- Whether the U1MB handler loses the same frames is not known yet; the next run reads the firmware's
+  "command frames lost" for both paths.
+
 - Changing `sio.hsio` between runs needs a power cycle: the U1MB keeps the `$7F` entry it polled.
 
 ## Open items

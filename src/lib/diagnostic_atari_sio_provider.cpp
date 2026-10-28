@@ -366,6 +366,8 @@ private:
                        " overflow=" + n(s.capture.aborts_overflow) + " rx_error=" + n(s.capture.aborts_rx_error) +
                        "   (edge aborts while a write waited for its data: " + n(s.capture.aborts_edge_in_write) +
                        "; CMD edges ignored there: " + n(s.capture.write_glitches_ignored) + ")");
+        line(text, "command frames lost (abandoned while being received, so the Atari retried): " +
+                       n(s.capture.frames_lost));
     }
 
     [[gnu::noinline]] void status_timing(const io::AtariSioStats& s, std::string& text) const

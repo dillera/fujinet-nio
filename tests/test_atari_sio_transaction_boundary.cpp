@@ -262,28 +262,33 @@ TEST_CASE("Atari SIO capture counts bytes, frames and each kind of abort")
     // Two edges between polls cannot be told from noise: an edge abort.
     low = false; boundary.note_cmd_edge(); boundary.note_cmd_edge(); poll();
     CHECK(capture.stats().aborts_edge == 1);
+    CHECK(capture.stats().frames_lost == 0);   // no frame was being received
     poll();   // release the discard
 
     // A UART error during a frame.
     low = true; boundary.note_cmd_edge(); uart.driver = {0x31, 1}; poll();
     ++uart.errors; poll();
     CHECK(capture.stats().aborts_rx_error == 1);
+    CHECK(capture.stats().frames_lost == 1);
     low = false; boundary.note_cmd_edge(); poll(); poll();
 
     // A frame that never completes.
     low = true; boundary.note_cmd_edge(); uart.driver = {0x31, 1}; poll();
     time += 50001; poll();
     CHECK(capture.stats().aborts_timeout == 1);
+    CHECK(capture.stats().frames_lost == 2);
     low = false; boundary.note_cmd_edge(); poll(); poll();
 
     // More command bytes than a frame holds.
     low = true; boundary.note_cmd_edge(); uart.driver = {0x31, 1, 2, 3, 4, 5, 6}; poll();
     CHECK(capture.stats().aborts_overflow == 1);
+    CHECK(capture.stats().frames_lost == 3);
 
     capture.reset_stats();
     const AtariSioCaptureStats& zero = capture.stats();
     CHECK(zero.rx_bytes == 0);
     CHECK(zero.frames == 0);
+    CHECK(zero.frames_lost == 0);
     CHECK(zero.aborts_edge + zero.aborts_timeout + zero.aborts_overflow + zero.aborts_rx_error == 0);
 }
 

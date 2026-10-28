@@ -26,6 +26,7 @@ struct AtariSioCaptureStats {
     AtariSioBadFrame first_bad;        // the first and the most recent of them
     AtariSioBadFrame last_bad;
     std::uint32_t aborts_edge{0};      // CMD edges that did not fit a frame (extra, early or missing)
+    std::uint32_t frames_lost{0};      // command frames abandoned while being received (CMD went low, no 5 good bytes): the Atari retries them
     std::uint32_t aborts_edge_in_write{0};  // ... of which while an accepted write waited for its data frame
     std::uint32_t write_glitches_ignored{0};  // CMD edges ignored there because the line read high (sio.tune glitch)
     std::uint32_t aborts_timeout{0};   // frame not complete in 50 ms, or write data not in 200 ms
