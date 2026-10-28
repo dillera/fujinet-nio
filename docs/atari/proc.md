@@ -110,18 +110,25 @@ fn_atari_query_capabilities();                    /* optional: learn whether the
 use_proc = (fn_atari_capability_flags() & FN_ATARI_CAP_PROC) != 0;
 if (use_proc) fn_atari_proc_enable();
 
-/* send the request, then carry on with the screen ... */
+/* open one or more sessions (FN_OPEN_KEEP for a pipe that may sit idle), send requests, carry on ... */
 for (;;) {
     update_screen();
-    if (!use_proc || fn_atari_proc_pending()) {   /* told, or polling */
-        err = fn_read(handle, offset, buf, len, &got, &flags);
-        if (err == FN_OK) { consume(buf, got); ... }
-        /* FN_ERR_NOT_READY: nothing yet, fine */
+    if (use_proc && !fn_atari_proc_pending()) continue;       /* nothing to do unless told */
+    /* Which sessions can be read now? (FN_ERR_UNSUPPORTED from older firmware: try each handle.) */
+    if (fn_ready(ready, MAX_READY, &n) == FN_OK) {
+        for (i = 0; i < n; ++i) {
+            if (ready[i].flags & FN_READY_INFO) { /* fn_info(ready[i].handle, ...) */ }
+            if (ready[i].flags & FN_READY_READ) {
+                err = fn_read(ready[i].handle, offset[i], buf, len, &got, &flags);
+                /* flags & FN_READ_AVAILABLE: fn_read_available() is how much more is already held,
+                 * so a request/reply protocol knows whether the rest of a reply is waiting. */
+            }
+        }
     }
 }
 ```
 
-A simple program skips PROC and calls `fn_read` in a loop, handling `FN_ERR_NOT_READY`.
+A simple program skips PROC and calls `fn_read` in a loop, handling `FN_ERR_NOT_READY`. Hosts without PROC (BBC, Amiga, MS-DOS) can call `fn_ready` on their own timer for the same effect with several connections.
 
 ## Hardware result: the data-ready pulse with a TCP session
 
