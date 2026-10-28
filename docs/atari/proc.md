@@ -143,7 +143,7 @@ page and `sio.tune proc 1`:
 | `http://<pc>:8080/drip?duration=5&numbytes=20` | the status first, then a notice as each burst of bytes arrives |
 | `http://<pc>:8080/stream/5` | five JSON lines, each announced |
 | `http://<pc>:8080/status/404` | the status is announced, no body |
-| `tls://<pc>:7778` | an echo over TLS: press **S** to send a line; it comes back as a notice. The service must name this PC's address in its certificate: `start_test_services.sh tls` now issues one from the test CA for the host's current addresses (restart it with `stop` then `tls`), and the open fails otherwise |
+| `tls://<pc>:7778` | an echo over TLS: press **S** to send a line; it comes back as a notice. The firmware must trust the test CA (build with `-DFN_HTTPS_TEST_CA_ADDITIVE=1`, e.g. under `[env] build_flags` in the gitignored `platformio.local.ini`; it is off by default because the CA's key is in the repo, so never ship it) and the service must name this PC's address in its certificate: `start_test_services.sh tls` now issues one from the test CA for the host's current addresses (restart it with `stop` then `tls`), and the open fails otherwise |
 | `tcp://<pc>:7777` | a TCP echo: **S** sends a line and it comes back |
 | `tcp://<pc>:7779` | frames sent continuously (the stream service) |
 
