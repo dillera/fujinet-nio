@@ -478,7 +478,9 @@ extern "C" void app_main(void)
     esp_log_level_set("console",     ESP_LOG_INFO);
     esp_log_level_set("core",        ESP_LOG_INFO);
     esp_log_level_set("disk",        ESP_LOG_INFO);
-    esp_log_level_set("diskstats",   ESP_LOG_INFO);
+    // One ~250 byte line per sector request (see disk.stats for the same counters on demand), so it is
+    // off by default; raise it to ESP_LOG_INFO here to watch the counters move.
+    esp_log_level_set("diskstats",   ESP_LOG_WARN);
     esp_log_level_set("fs",          ESP_LOG_INFO);
     esp_log_level_set("fujibus",     ESP_LOG_INFO);
     esp_log_level_set("io",          ESP_LOG_INFO);
