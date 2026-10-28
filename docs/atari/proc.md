@@ -48,6 +48,15 @@ FujiNet console run `sio.proc pulse 5`:
 | **P** (default) | the PIA's CA1 flag, polled from the main loop, no interrupt | the signal does not reach the PIA: the pin, the open-drain drive, the cable or the board (check GPIO22 and SIO pin 9 with a meter; `sio.proc low` should hold the line at 0 V) |
 | **I** | interrupts delivered to the library's `VPRCED` handler | the flag works but the interrupt does not: `PACTL` bit 0, the vector, or a program that rewrote them |
 
+## Hardware result (PROCTEST, first run)
+
+`sio.proc pulse 5` (10 ms low, 10 ms high) in **interrupt mode** gave `interrupts: 5`: the pin drive, the wire to
+SIO pin 9, the PIA edge, the OS IRQ, `VPRCED` and the library handler all work, one interrupt per pulse. In
+**poll mode** it showed 2 of the 5: the CA1 flag is one latch, and that version redrew the screen (longer than
+the 20 ms between pulses) after each flag it cleared, so pulses 2 to 5 merged. The program now counts in a
+tight loop and redraws only after the edges stop. The "flag set for about a second" and "pending for about
+five seconds" seen were the old redraw interval, not the hardware.
+
 ## Not done yet: using it for the protocol
 
 The point of PROC for NIO is that a client can wait for a response (or for data a service has pending) on an
