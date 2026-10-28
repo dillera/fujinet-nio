@@ -38,7 +38,8 @@ offered.
    `0x71 0x53`). Answering `3F` on `0x7f` changed nothing. With the U1MB driver off nothing probes at
    all, so the speed negotiation is entirely the Atari driver's job: the OS ROM never speaks `3F`.
    The U1MB manual says `All` covers every device except cassette and the OS "New Poll" device; that is
-   not what we see, and the U1MB author has been asked.
+   not what we see, and the U1MB author has been asked. **Resolved later: this was Ultimate BIOS 4.20, the
+   release on the author's website. 4.33 polls every device (see "The U1MB's own handler" below).**
 5. **9 s stalls at 19200** (about twenty in a 112-sector boot, with the U1MB driver off, Wi-Fi ruled out
    by a bad-SSID run). 8.99 s is exactly a PAL SIO timeout (7 x 64 frames): the reply did not complete
    on the Atari's side and it re-sent after the timeout. Sending ACK, COMPLETE and the data back to back
@@ -360,6 +361,48 @@ own processing after a response is 5.6 ms of the Atari's 12 ms idle time, the re
 next call's request build. What remains is small items (a shorter header, a bound for the 512-byte case) that
 the report's earlier table prices at under 2 ms each.
 
+## The U1MB's own handler (Ultimate BIOS 4.33)
+
+The author supplied 4.33 after 4.20 (the released version) showed no `3F` for any non-disk device.
+
+**What the new BIOS does** (`u1mbinfo`, no FujiNet calls; logs 020 and 021; the table is the U1MB's own,
+read at `$D174` for disks and `$D184`/`$D188` for four other devices, entry = divisor plus 1):
+
+| BIOS | First command to a device | On the wire | Table entry |
+|---|---|---|---|
+| 4.20 | `$7F` `Q`, `$70` `S`, `$71` `R`, `$72` `W`, `$73` `P` | the command only, never a `3F` | `29` (standard) for each, on first use |
+| 4.33 | `$7F` `Q` | `3F` at standard speed (`7f 3f 20 00 de`), which we answer, then the `Q` at high speed | `02` (index 1; we answered 1) |
+| 4.33 | `$70` `S`, nothing answers | `3F` five times, `53` with aux `20 80`, then a plain `53` | `29` |
+
+- The entry is made once per power-up: a second `$7F` command sent no `3F` and ran at high speed.
+- A command we refuse (`$7F` `S`, answered NAK) is retried 28 times by the handler, with a fallback to
+  19200 on the way (one unreadable frame, `fallbacks 1`). That is the cost of a NAK to this driver.
+- The reply to our `Q` is `01 00 02 01` (revision, capacity 512, flags 1), not a Happy 1050 speed byte.
+
+**Timing with the U1MB's handler and no library driver** (log 022: index 0, `H` not pressed, data gap 0,
+glitch filter on, 100 calls each; the library driver's figures are from the earlier runs at index 0, not the
+same boot):
+
+| | U1MB handler | library driver |
+|---|---|---|
+| OS `D1:` status | 4.8 ms | (6.2 at index 1) |
+| OS `$7F` query | **5.4 ms** (was 15.2 ms with 4.20, at 19200) | n/a |
+| native info | 28.8 | 26.4-26.6 |
+| native read 128 | 36.0 | 34.0-34.2 |
+| native read 256 | **47.2** | 46.0-47.2 |
+| native read 512 (no bound) | 48.8 | 47.8-48.8 |
+
+- A 256-byte read is the same to within the run-to-run spread. The smaller transfers are about 2 ms
+  slower through the U1MB (the fixed cost of the handler). The raw `$7F` query is now at high speed like
+  `D1:`.
+- **No retransmissions in 1,400 transactions.** The firmware saw exactly the frames the calls need: 100
+  `D1:` status, 100 + 100 `Q`, 100 `P`, 100 native info (`W P R`), 200 bounded reads (`W R`), 100
+  unbounded reads (`W P R`), which is 1,300 for `$7F` plus 100 for `D1:`. `timeout=0`, no unreadable
+  frames, no switches or fallbacks, and no failed call in the T page. The library driver's 5-14 ACK
+  timeouts a run (open item) do not appear on this path. That points at our own receive code or its
+  timeout window, not at the bus or the firmware, but it needs the same-boot run with `H` on to be sure.
+- Changing `sio.hsio` between runs needs a power cycle: the U1MB keeps the `$7F` entry it polled.
+
 ## Open items
 
 - **The ACK timeouts**: about 6 of the roughly 20 a run were CMD glitches during a write (fixed, see
@@ -367,8 +410,8 @@ the report's earlier table prices at under 2 ms each.
   while we transmit (trial 8).
 - **The Atari's time after a response** (about 37 ms of a 79 ms read): not speed dependent; the checksum
   was about 14 ms of it and is fixed; the rest is to be measured.
-- **The U1MB speeds up only `D1:`**: awaiting an answer from its author. The library driver covers the
-  native endpoint meanwhile.
+- **The U1MB speeds up only `D1:`**: only with Ultimate BIOS 4.20. 4.33 polls every device and speeds up
+  `$7F` (below); the library driver is needed only for the older BIOS and for machines without a U1MB.
 - **Reply timing fix.** A stray CMD edge stamped just after the reply began made `reply max` wrap to
   4,294,967 ms in the last run (`over 16 ms: 1`). It now counts as 0.
 - **Console output** from `sio.status` stalls the SIO task for about 100 ms (the `poll gap` watch); the
