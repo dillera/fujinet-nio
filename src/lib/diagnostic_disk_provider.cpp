@@ -32,6 +32,7 @@ static const char* image_type_str(fujinet::disk::ImageType t) noexcept
         case ImageType::Ssd:  return "ssd";
         case ImageType::Dsd:  return "dsd";
         case ImageType::DiskCopy42: return "dc42";
+        case ImageType::XexBoot: return "xexboot";
         case ImageType::Raw:  return "raw";
     }
     return "unknown";

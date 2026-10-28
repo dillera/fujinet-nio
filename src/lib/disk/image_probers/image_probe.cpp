@@ -2,6 +2,7 @@
 
 #include "fujinet/disk/dc42_image.h"
 #include "fujinet/disk/image_probers/fat_bpb_probe.h"
+#include "fujinet/disk/xex_boot_image.h"
 #include "fujinet/io/devices/byte_codec.h"
 
 #include <algorithm>
@@ -41,6 +42,13 @@ static std::string extension_of(std::string_view path)
 static bool is_raw_extension(std::string_view ext) noexcept
 {
     return ext == "img" || ext == "ima" || ext == "raw";
+}
+
+static bool is_disk_image_extension(std::string_view ext) noexcept
+{
+    return ext == "atr" || ext == "xfd" || ext == "ssd" || ext == "dsd" || ext == "adf" ||
+           ext == "adl" || ext == "img" || ext == "ima" || ext == "raw" || ext == "dsk" ||
+           ext == "hda" || ext == "hfv" || ext == "dc42";
 }
 
 static bool is_adf_extension(std::string_view ext) noexcept
@@ -210,6 +218,37 @@ public:
     }
 };
 
+// Atari executables (.xex/.com/.exe, or any file starting with the FF FF
+// binary-load header) mount as a synthesised read-only boot disk. By content
+// the header alone is weak evidence (a blank 0xFF-filled floppy image starts
+// with it), so a header-only match is skipped for extensions that name a disk
+// image. A listed executable extension matches without the header, so the
+// mount reports BadImage for a file that cannot be loaded.
+class XexBootProbe final : public IImageProbe {
+public:
+    ImageProbeResult probe(
+        fs::IFile& file,
+        std::uint64_t sizeBytes,
+        std::string_view path,
+        const MountOptions&
+    ) const override
+    {
+        const std::string ext = extension_of(path);
+        const bool exeExt = ext == "xex" || ext == "com" || ext == "exe";
+        if (!exeExt && is_disk_image_extension(ext)) return {};
+
+        std::uint8_t head[2]{};
+        const bool header = sizeBytes >= 2 && file.seek(0) && file.read(head, 2) == 2 &&
+                            xex_has_binary_header(head, 2);
+        if (!exeExt && !header) return {};
+
+        DiskGeometry geometry{};
+        if (!xex_boot_geometry(sizeBytes, geometry)) return {};
+        return {true, ImageType::XexBoot, geometry,
+                header ? ImageProbeConfidence::Content : ImageProbeConfidence::Extension};
+    }
+};
+
 class ExtensionProbe final : public IImageProbe {
 public:
     ImageProbeResult probe(
@@ -303,6 +342,7 @@ ProbeRegistry make_default_probe_registry()
     registry.registerProbe(std::make_unique<DiskCopy42Probe>());
     registry.registerProbe(std::make_unique<AdfsOldMapProbe>());
     registry.registerProbe(std::make_unique<FatBpbSectorSizeProbe>());
+    registry.registerProbe(std::make_unique<XexBootProbe>());
     registry.registerProbe(std::make_unique<SsdDfsProbe>());
     registry.registerProbe(std::make_unique<ExtensionProbe>());
     return registry;

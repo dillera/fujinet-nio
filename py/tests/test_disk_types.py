@@ -15,6 +15,12 @@ class DiskImageTypeTests(unittest.TestCase):
         self.assertEqual(dp.TYPE_DC42, 5)
         self.assertEqual(disk._type_parse("DC42"), dp.TYPE_DC42)
 
+    def test_xexboot_matches_cpp_image_type(self):
+        # disk::ImageType::XexBoot in include/fujinet/disk/disk_types.h
+        self.assertEqual(dp.TYPE_XEXBOOT, 6)
+        self.assertEqual(disk._type_parse("XexBoot"), dp.TYPE_XEXBOOT)
+        self.assertEqual(disk._type_str(6), "xexboot")
+
     def test_unknown_type_is_rejected(self):
         with self.assertRaises(ValueError):
             disk._type_parse("woz")

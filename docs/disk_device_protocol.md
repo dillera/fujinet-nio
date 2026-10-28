@@ -162,6 +162,33 @@ v1 includes (image-format understanding required for sector I/O):
     verify it (such as DiskCopy) still accept the image
   - no blank-image creator: `Create` with this type returns `Unsupported`
 
+- **Atari executable boot disk** (`ImageType::XexBoot` = 6, wire type 6; mount
+  only, no `Create`): an Atari binary-load file (`.xex`, `.com`, `.exe`, or any
+  file starting `FF FF`) presented as a synthesised, read-only, bootable
+  MyDOS disk that boots the program through MyPicoDOS's PicoBoot loader
+  - 256-byte sectors, the first three 128 bytes (as in ATR; a read of sectors
+    1-3 returns 128 bytes). Sector count: 720 when the file needs at most 707
+    data sectors, otherwise the smallest 8m+7 that holds 3 boot sectors, the
+    VTOC sector(s), 8 directory sectors and `ceil(size/253)` data sectors
+    (so 300059 bytes is 1199 sectors). Files needing more than 65535 sectors,
+    and empty files, are `BadImage`, as is a file without the `FF FF` header.
+  - the layout equals `dir2atr -m -d -B picobootcode-dd.bin` for a stage
+    directory holding only `autorun.xex`: boot sectors 1-3 are PicoBoot
+    (`picobootcode-dd.bin`, MyPicoDOS 4.06, GPL v2, embedded in
+    `src/lib/disk/xex_boot_image.cpp`; see `THIRD_PARTY.md`); VTOC at sector
+    360 (type 2, or 2+n above 1023 sectors; further VTOC sectors 359, 358, ...
+    each cover 2048 more sectors once sector 1967 is passed); directory at
+    361-368 with one entry `AUTORUN XEX` (flag `$42`, `$46` above 1023
+    sectors) starting at sector 4; data sectors 4..(360-n), then 369 onwards,
+    each 253 data bytes plus a 3-byte trailer (next sector high, next low, byte
+    count; file number 0, 16-bit links)
+  - sector bytes are computed per read from the source file; only the file
+    handle is kept. The image is always read-only: a mount asking for
+    read-write succeeds and reports read-only in the mount/info flags, and a
+    write returns `ReadOnly`
+  - `tests/fixtures/xex-boot/` holds dir2atr-generated goldens;
+    `generate.py` there regenerates them
+
 Planned image formats:
 
 - HDF/RDB semantics are intentionally not inferred from `.hdf` yet.
@@ -175,6 +202,12 @@ The default probe order is:
 - ADFS probe: content match for an old-map ADFS disc ("Hugo" directory
   markers and a free space map size equal to the file), whatever the extension.
 - FAT BPB probe: content match for FAT superfloppy images, returning `ImageType::Raw` plus geometry.
+- Atari executable probe: `.xex`/`.com`/`.exe` extension (an extension that is
+  not a disk-image extension plus the `FF FF` header also matches). A
+  header-only match is skipped for `.atr`, `.xfd`, `.img`, `.raw`, `.dsk` and
+  other disk-image extensions, since a blank `$FF`-filled disk starts with it.
+  `.com`/`.exe` are an exception to the unambiguous-extension rule below: they
+  are never disk images on any machine, so claiming them cannot hide a disk.
 - SSD DFS probe: `.ssd` path plus DFS catalogue sector-count validation.
 - Extension/hint fallback: case-insensitive extension and `sector_size_hint` handling for ambiguous raw images.
 
@@ -422,7 +455,7 @@ Mount an image into a slot using a **full URI**. The fujinet-nio parses the URI 
 u8  version
 u8  slot
 u8  flags            // bit0 = readonly_requested; bit1 = stage as a lazy pending mount
-u8  typeOverride     // 0=Auto, 1=ATR, 2=SSD, 3=DSD, 4=Raw, 5=DiskCopy42
+u8  typeOverride     // 0=Auto, 1=ATR, 2=SSD, 3=DSD, 4=Raw, 5=DiskCopy42, 6=XexBoot
 u16 sectorSizeHint   // for Raw; otherwise 0
 u16 uriLen           // LE
 u8[] uri             // length uriLen - e.g., "tnfs://192.168.1.101:16384/disk.atr" or "sd0:/games.atr"
@@ -810,7 +843,7 @@ Create a new image file on a named filesystem using a **full URI**. This command
 ```
 u8  version
 u8  flags            // bit0 = overwrite
-u8  type             // 1=ATR, 2=SSD, 3=DSD, 4=Raw (0=Auto invalid; 5=DiskCopy42 has no creator)
+u8  type             // 1=ATR, 2=SSD, 3=DSD, 4=Raw (0=Auto invalid; 5=DiskCopy42 and 6=XexBoot have no creator)
 u16 sectorSize       // LE
 u32 sectorCount      // LE
 u16 uriLen           // LE

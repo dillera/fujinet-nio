@@ -13,6 +13,7 @@ enum class ImageType : std::uint8_t {
     Dsd  = 3,
     Raw  = 4, // flat sectors, no header (test-friendly)
     DiskCopy42 = 5, // Apple DiskCopy 4.2 (Mac 400K/800K floppies)
+    XexBoot = 6, // Atari executable synthesised as a read-only bootable disk (mount only)
 };
 
 enum class DiskError : std::uint8_t {

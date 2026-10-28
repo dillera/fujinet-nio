@@ -65,6 +65,7 @@ add_executable(fujinet-nio-tests
 target_compile_definitions(fujinet-nio-tests
     PRIVATE
         FN_ATARI_SIO_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/atari-sio"
+        FN_XEX_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/xex-boot"
 )
 
 # Compile the platform clock again only for the unit-test executable. These

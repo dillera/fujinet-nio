@@ -4,6 +4,7 @@
 #include "fujinet/disk/dc42_image.h"
 #include "fujinet/disk/raw_image.h"
 #include "fujinet/disk/ssd_image.h"
+#include "fujinet/disk/xex_boot_image.h"
 
 namespace fujinet::disk {
 
@@ -79,6 +80,7 @@ ImageRegistry make_default_image_registry()
     reg.register_type(ImageType::Ssd, [] { return make_ssd_disk_image(); });
     reg.register_type(ImageType::DiskCopy42, [] { return make_dc42_disk_image(); });
     reg.register_type(ImageType::Dsd, [] { return make_dsd_disk_image(); });
+    reg.register_type(ImageType::XexBoot, [] { return make_xex_boot_disk_image(); });
 
     // Creators (blank image creation).
     reg.register_creator(
