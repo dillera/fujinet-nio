@@ -143,10 +143,19 @@ page and `sio.tune proc 1`:
 | `http://<pc>:8080/drip?duration=5&numbytes=20` | the status first, then a notice as each burst of bytes arrives |
 | `http://<pc>:8080/stream/5` | five JSON lines, each announced |
 | `http://<pc>:8080/status/404` | the status is announced, no body |
-| `tls://<pc>:7778` | an echo over TLS: bytes typed into the session come back as notices |
+| `tls://<pc>:7778` | an echo over TLS: press **S** to send a line; it comes back as a notice. The service must name this PC's address in its certificate: `start_test_services.sh tls` now issues one from the test CA for the host's current addresses (restart it with `stop` then `tls`), and the open fails otherwise |
+| `tcp://<pc>:7777` | a TCP echo: **S** sends a line and it comes back |
 | `tcp://<pc>:7779` | frames sent continuously (the stream service) |
 
 Switch the page to polling (M) for the same URL to see how many `fn_info` and `fn_read` calls the pulse saves.
+
+## Hardware result: HTTP
+
+Against httpbin: `/delay/5` gave two notices (the status, then the body) and the whole response (HTTP 200,
+236 bytes, end of stream); `/drip` gave the status and then the 20 bytes; `/status/404` gave one notice with
+HTTP 404, length 0 and end of stream. Switching to polling mid-request raised the `fn_info` calls until the
+status came, then the `fn_read` calls, as expected. TLS is untested: the first try failed to open because the
+test server's certificate did not name the PC's address (see the table above).
 
 ## Not done yet
 
