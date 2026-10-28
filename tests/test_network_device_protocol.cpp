@@ -1643,3 +1643,235 @@ TEST_CASE("net.sessions diagnostics report idle time and the keep flag")
     }
     CHECK(found);
 }
+
+// ---------------------------------------------------------------------------
+// The Ready command (which sessions can be read now) and the bytes-still-held field of Read.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Each instance has a number; the test sets its readiness and held bytes in these tables.
+struct PipeState {
+    bool read_ready{false};
+    bool info_ready{false};
+    std::size_t held{0};
+    bool reports{true};
+};
+PipeState g_pipes[8];
+int g_next_pipe = 0;
+
+class PipeProtocol final : public fujinet::io::INetworkProtocol {
+public:
+    PipeProtocol() : _id(g_next_pipe++) {}
+    StatusCode open(const fujinet::io::NetworkOpenRequest&) override { return StatusCode::Ok; }
+    StatusCode write_body(std::uint32_t, const std::uint8_t*, std::size_t, std::uint16_t& w) override
+    {
+        w = 0;
+        return StatusCode::Unsupported;
+    }
+    StatusCode read_body(std::uint32_t, std::uint8_t* out, std::size_t outLen, std::uint16_t& read, bool& eof,
+                         bool& more) override
+    {
+        auto& p = g_pipes[_id];
+        read = 0;
+        eof = false;
+        more = false;
+        if (!p.read_ready || p.held == 0) return StatusCode::NotReady;
+        const std::size_t n = std::min<std::size_t>({p.held, outLen, 4});
+        for (std::size_t i = 0; i < n; ++i) out[i] = 'a' + static_cast<std::uint8_t>(i);
+        p.held -= n;
+        read = static_cast<std::uint16_t>(n);
+        more = p.held > 0;
+        return StatusCode::Ok;
+    }
+    StatusCode info(fujinet::io::NetworkInfo&) override { return StatusCode::Ok; }
+    void poll() override {}
+    void close() override {}
+    bool read_ready() const override { return g_pipes[_id].read_ready; }
+    bool info_ready() const override { return g_pipes[_id].info_ready; }
+    bool read_available(std::size_t& out) const override
+    {
+        out = g_pipes[_id].held;
+        return g_pipes[_id].reports;
+    }
+
+private:
+    int _id;
+};
+
+struct ReadyFixture {
+    NetworkDevice dev;
+    std::uint16_t deviceId = to_device_id(WireDeviceId::NetworkService);
+    ReadyFixture()
+        : dev([] {
+              fujinet::io::ProtocolRegistry reg;
+              reg.register_scheme("tcp", [] { return std::make_unique<PipeProtocol>(); });
+              return reg;
+          }())
+    {
+        g_next_pipe = 0;
+        for (auto& p : g_pipes) p = PipeState{};
+    }
+
+    std::uint16_t open(const void* owner, std::uint8_t method = 1, std::uint32_t bodyLen = 0)
+    {
+        IORequest req{};
+        req.deviceId = deviceId;
+        req.clientOwner = owner;
+        req.command = 1;
+        req.payload = to_vec(open_payload("tcp://example.com:1", method, 0, bodyLen, {}));
+        auto resp = dev.handle(req);
+        REQUIRE(resp.status == StatusCode::Ok);
+        return static_cast<std::uint16_t>(resp.payload[4] | (resp.payload[5] << 8));
+    }
+
+    struct Entry {
+        std::uint16_t handle;
+        std::uint8_t flags;
+        std::uint16_t held;
+    };
+
+    std::vector<Entry> ready(const void* owner, StatusCode* status = nullptr)
+    {
+        IORequest req{};
+        req.deviceId = deviceId;
+        req.clientOwner = owner;
+        req.command = 8;
+        req.payload = {1};   // version
+        auto resp = dev.handle(req);
+        if (status) *status = resp.status;
+        std::vector<Entry> out;
+        if (resp.status != StatusCode::Ok) return out;
+        REQUIRE(resp.payload.size() >= 5);
+        REQUIRE(resp.payload[0] == 1);
+        const std::size_t count = resp.payload[4];
+        REQUIRE(resp.payload.size() == 5 + count * 5);
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto* e = resp.payload.data() + 5 + i * 5;
+            out.push_back({static_cast<std::uint16_t>(e[0] | (e[1] << 8)), e[2],
+                           static_cast<std::uint16_t>(e[3] | (e[4] << 8))});
+        }
+        return out;
+    }
+};
+
+} // namespace
+
+TEST_CASE("Ready lists only this client's sessions that can be read or queried, with the bytes held")
+{
+    ReadyFixture f;
+    int clientA = 0, clientB = 0;
+    const auto a1 = f.open(&clientA);   // pipe 0
+    const auto a2 = f.open(&clientA);   // pipe 1
+    const auto b1 = f.open(&clientB);   // pipe 2
+    (void)b1;
+
+    CHECK(f.ready(&clientA).empty());   // nothing yet
+
+    g_pipes[1].read_ready = true;
+    g_pipes[1].held = 300;
+    g_pipes[2].read_ready = true;       // another client's: never shown to A
+    g_pipes[2].held = 7;
+    auto list = f.ready(&clientA);
+    REQUIRE(list.size() == 1);
+    CHECK(list[0].handle == a2);
+    CHECK(list[0].flags == 0x01);
+    CHECK(list[0].held == 300);
+
+    g_pipes[0].info_ready = true;       // the status of the first one is known too
+    list = f.ready(&clientA);
+    REQUIRE(list.size() == 2);
+    CHECK(list[0].handle == a1);
+    CHECK(list[0].flags == 0x02);
+    CHECK(list[1].handle == a2);
+
+    g_pipes[1].held = 100000;           // larger than a u16: saturates
+    list = f.ready(&clientA);
+    CHECK(list[1].held == 0xFFFF);
+
+    // B sees its own.
+    const auto bl = f.ready(&clientB);
+    REQUIRE(bl.size() == 1);
+    CHECK(bl[0].held == 7);
+}
+
+TEST_CASE("Ready says nothing for a session still waiting for its request body, and rejects a malformed request")
+{
+    ReadyFixture f;
+    int client = 0;
+    const auto post = f.open(&client, 2, 10);   // POST, body expected
+    (void)post;
+    g_pipes[0].read_ready = true;
+    g_pipes[0].info_ready = true;
+    CHECK(f.ready(&client).empty());
+
+    IORequest bad{};
+    bad.deviceId = f.deviceId;
+    bad.clientOwner = &client;
+    bad.command = 8;
+    bad.payload = {1, 0};   // trailing byte
+    CHECK(f.dev.handle(bad).status == StatusCode::InvalidRequest);
+    bad.payload = {2};      // wrong version
+    CHECK(f.dev.handle(bad).status == StatusCode::InvalidRequest);
+}
+
+TEST_CASE("A client polling Ready is alive: its sessions are not reaped as idle")
+{
+    std::uint64_t now = 1000;
+    fujinet::io::NetworkDeviceSettings settings;
+    settings.clockMs = [&] { return now; };
+    fujinet::io::ProtocolRegistry reg;
+    reg.register_scheme("tcp", [] { return std::make_unique<PipeProtocol>(); });
+    NetworkDevice dev(std::move(reg), settings);
+    g_next_pipe = 0;
+    for (auto& p : g_pipes) p = PipeState{};
+    const auto deviceId = to_device_id(WireDeviceId::NetworkService);
+    int client = 0;
+    IORequest open{};
+    open.deviceId = deviceId;
+    open.clientOwner = &client;
+    open.command = 1;
+    open.payload = to_vec(open_payload("tcp://example.com:1", 1, 0, 0, {}));
+    const auto resp = dev.handle(open);
+    REQUIRE(resp.status == StatusCode::Ok);
+    const auto handle = static_cast<std::uint16_t>(resp.payload[4] | (resp.payload[5] << 8));
+
+    IORequest ready{};
+    ready.deviceId = deviceId;
+    ready.clientOwner = &client;
+    ready.command = 8;
+    ready.payload = {1};
+    for (int i = 0; i < 5; ++i) {            // five 15-minute stretches, each with a Ready in it
+        now += 15u * 60u * 1000u;
+        CHECK(dev.handle(ready).status == StatusCode::Ok);
+        dev.poll();
+    }
+    CHECK(info_req(dev, deviceId, handle).status != StatusCode::InvalidRequest);
+}
+
+TEST_CASE("Read reports how many bytes the protocol still holds, and says when it cannot")
+{
+    ReadyFixture f;
+    int client = 0;
+    const auto h = f.open(&client);
+    g_pipes[0].read_ready = true;
+    g_pipes[0].held = 10;
+
+    // The reserved u16 of the response carries the bytes still held after this read; flag bit3 says so.
+    IOResponse r = read_req(f.dev, f.deviceId, h, 0, 4);
+    REQUIRE(r.status == StatusCode::Ok);
+    CHECK((r.payload[1] & 0x08) != 0);
+    CHECK((r.payload[1] & 0x04) != 0);                                  // more_available, as before
+    CHECK((r.payload[2] | (r.payload[3] << 8)) == 6);
+
+    r = read_req(f.dev, f.deviceId, h, 4, 100);
+    CHECK((r.payload[2] | (r.payload[3] << 8)) == 2);                   // 4 of the 6 taken (the fake gives 4)
+
+    // A protocol that cannot say leaves the field 0 and the flag clear, as before.
+    g_pipes[0].reports = false;
+    g_pipes[0].held = 4;
+    r = read_req(f.dev, f.deviceId, h, 8, 100);
+    REQUIRE(r.status == StatusCode::Ok);
+    CHECK((r.payload[1] & 0x08) == 0);
+    CHECK((r.payload[2] | (r.payload[3] << 8)) == 0);
+}

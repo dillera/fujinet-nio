@@ -43,6 +43,7 @@ public:
     // failed (see INetworkProtocol::read_ready / info_ready).
     bool read_ready() const override;
     bool info_ready() const override;
+    bool read_available(std::size_t& out) const override;
 
 private:
     // opaque (ESP-IDF only, defined in .cpp)

@@ -30,6 +30,9 @@ static constexpr std::uint8_t NET_OPEN_FLAG_KEEP = 0x20;   // exempt from idle r
 static constexpr std::uint8_t NET_READ_FLAG_EOF = 0x01;
 static constexpr std::uint8_t NET_READ_FLAG_TRUNCATED = 0x02;
 static constexpr std::uint8_t NET_READ_FLAG_MORE_AVAILABLE = 0x04;
+static constexpr std::uint8_t NET_READ_FLAG_AVAILABLE_VALID = 0x08;   // the reserved field holds the bytes still held
+static constexpr std::uint8_t NET_READY_READ = 0x01;   // a Read would not be NotReady
+static constexpr std::uint8_t NET_READY_INFO = 0x02;   // an Info would answer
 
 static std::vector<std::uint8_t> to_vec(const std::string& s)
 {
@@ -120,11 +123,17 @@ void NetworkDevice::resetClient(const void* owner)
     }
 }
 
-static void write_common_prefix(std::string& out, std::uint8_t version, std::uint8_t flags)
+static void write_common_prefix(std::string& out, std::uint8_t version, std::uint8_t flags,
+                                std::uint16_t reserved = 0)
 {
     netproto::write_u8(out, version);
     netproto::write_u8(out, flags);
-    netproto::write_u16le(out, 0); // reserved
+    netproto::write_u16le(out, reserved);   // 0 unless the command defines it (Read: bytes still held)
+}
+
+static std::uint16_t clamp_u16(std::size_t v)
+{
+    return v > 0xFFFFu ? static_cast<std::uint16_t>(0xFFFFu) : static_cast<std::uint16_t>(v);
 }
 
 static bool check_version(Reader& r, std::uint8_t expected)
@@ -952,7 +961,12 @@ IOResponse NetworkDevice::handle(const IORequest& request)
                 if (!eof && (offset + n) < s->translatedResultSize) {
                     flags |= NET_READ_FLAG_MORE_AVAILABLE;
                 }
-                write_common_prefix(out, NETPROTO_VERSION, flags);
+                // The translated result is whole in memory, so what is left of it is known exactly.
+                const std::uint64_t consumed = static_cast<std::uint64_t>(offset) + n;
+                const std::size_t left = s->translatedResultSize > consumed
+                                             ? static_cast<std::size_t>(s->translatedResultSize - consumed) : 0;
+                flags |= NET_READ_FLAG_AVAILABLE_VALID;
+                write_common_prefix(out, NETPROTO_VERSION, flags, clamp_u16(left));
                 netproto::write_u16le(out, handle);
                 netproto::write_u32le(out, offset);
                 netproto::write_u16le(out, n);
@@ -995,7 +1009,11 @@ IOResponse NetworkDevice::handle(const IORequest& request)
                     flags |= NET_READ_FLAG_MORE_AVAILABLE;
                 }
 
-                write_common_prefix(out, NETPROTO_VERSION, flags);
+                // How much the protocol still holds after this read, when it can say (a lower bound).
+                std::size_t held = 0;
+                const bool heldKnown = s->proto->read_available(held);
+                if (heldKnown) flags |= NET_READ_FLAG_AVAILABLE_VALID;
+                write_common_prefix(out, NETPROTO_VERSION, flags, heldKnown ? clamp_u16(held) : 0);
                 netproto::write_u16le(out, handle);
                 netproto::write_u32le(out, offset);
                 netproto::write_u16le(out, n);
@@ -1163,6 +1181,44 @@ IOResponse NetworkDevice::handle(const IORequest& request)
             write_common_prefix(out, NETPROTO_VERSION, jflags);
             netproto::write_u16le(out, handle);
             netproto::write_u32le(out, static_cast<std::uint32_t>(s->translatedResultSize));
+            resp.payload = to_vec(out);
+            return resp;
+        }
+
+        case NetworkCommand::Ready: {
+            // Which of this client's sessions can be read or queried right now. One small call replaces a
+            // speculative Read or Info on each handle, and says which handle a PROC pulse (or the client's
+            // own timer) was about. Only ready sessions are listed.
+            auto resp = make_success_response(request);
+            Reader r(request.payload.data(), request.payload.size());
+            if (!check_version(r, NETPROTO_VERSION) || r.remaining() != 0) {
+                resp.status = StatusCode::InvalidRequest;
+                return resp;
+            }
+
+            std::string entries;
+            std::uint8_t count = 0;
+            for (std::size_t i = 0; i < _sessions.size(); ++i) {
+                auto& s = _sessions[i];
+                if (!s.active || !s.proto || s.clientOwner != request.clientOwner) continue;
+                touch(s);   // a client waiting on its sessions is alive: not idle
+                if (s.awaitingBody) continue;
+                std::uint8_t ready = 0;
+                if (s.proto->read_ready()) ready |= NET_READY_READ;
+                if (s.proto->info_ready()) ready |= NET_READY_INFO;
+                if (ready == 0) continue;
+                std::size_t held = 0;
+                (void)s.proto->read_available(held);
+                netproto::write_u16le(entries, make_handle(static_cast<std::uint8_t>(i), s.generation));
+                netproto::write_u8(entries, ready);
+                netproto::write_u16le(entries, clamp_u16(held));
+                ++count;
+            }
+
+            std::string out;
+            write_common_prefix(out, NETPROTO_VERSION, 0);
+            netproto::write_u8(out, count);
+            out += entries;
             resp.payload = to_vec(out);
             return resp;
         }

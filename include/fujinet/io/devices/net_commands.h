@@ -12,6 +12,7 @@ enum class NetworkCommand : std::uint8_t {
     Info     = 0x05,
     InfoRead = 0x06,
     TranslateConfigure = 0x07,
+    Ready    = 0x08,   // which of this client's sessions can be read or queried now
 };
 
 inline NetworkCommand to_network_command(std::uint16_t raw)

@@ -47,6 +47,7 @@ public:
     // INetworkProtocol::read_ready / info_ready).
     bool read_ready() const override;
     bool info_ready() const override;
+    bool read_available(std::size_t& out) const override;
 
 private:
     static std::size_t write_body_cb(char* ptr, std::size_t size, std::size_t nmemb, void* userdata);

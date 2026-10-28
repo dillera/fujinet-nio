@@ -36,6 +36,17 @@ CMD_CLOSE = 0x04
 CMD_INFO = 0x05
 CMD_INFO_READ = 0x06
 CMD_TRANSLATE_CONFIGURE = 0x07
+CMD_READY = 0x08   # which of this client's sessions can be read or queried now
+
+# Read response flags (u8)
+READ_FLAG_EOF = 0x01
+READ_FLAG_TRUNCATED = 0x02
+READ_FLAG_MORE_AVAILABLE = 0x04
+READ_FLAG_AVAILABLE_VALID = 0x08   # the reserved u16 holds the bytes the device still holds
+
+# Ready entry flags (u8)
+READY_READ = 0x01   # a Read would not be NotReady
+READY_INFO = 0x02   # an Info would answer
 
 TRANSLATION_NONE = 0
 TRANSLATION_JSON = 1
@@ -346,12 +357,15 @@ class ReadResp:
     handle: int
     offset: int
     data: bytes
+    # Bytes the device still holds for the handle after this read (a lower bound); None when the firmware
+    # does not report it (the field is the old reserved u16, 0 then).
+    available: Optional[int] = None
 
 
 def parse_read_resp(payload: bytes) -> ReadResp:
     off = _check_version(payload, 0)
     flags, off = read_u8(payload, off)
-    _reserved, off = read_u16le(payload, off)
+    available, off = read_u16le(payload, off)
     handle, off = read_u16le(payload, off)
     offset, off = read_u32le(payload, off)
     data_len, off = read_u16le(payload, off)
@@ -368,6 +382,7 @@ def parse_read_resp(payload: bytes) -> ReadResp:
         handle=handle,
         offset=offset,
         data=data,
+        available=available if flags & READ_FLAG_AVAILABLE_VALID else None,
     )
 
 
@@ -406,32 +421,45 @@ def parse_write_resp(payload: bytes) -> WriteResp:
     return WriteResp(handle=handle, offset=offset, written=written)
 
 
+def build_ready_req() -> bytes:
+    """
+    v1:
+      u8 version
+    Asks which of the requesting client's sessions can be read or queried now.
+    """
+    return bytes([NETPROTO_VERSION])
+
+
 @dataclass
-class ReadResp:
-    eof: bool
-    truncated: bool
+class ReadyEntry:
     handle: int
-    offset: int
-    data: bytes
+    flags: int          # READY_READ | READY_INFO
+    available: int      # bytes held (saturating at 0xFFFF), 0 when the protocol cannot say
+
+    @property
+    def readable(self) -> bool:
+        return bool(self.flags & READY_READ)
+
+    @property
+    def info_ready(self) -> bool:
+        return bool(self.flags & READY_INFO)
 
 
-def parse_read_resp(payload: bytes) -> ReadResp:
+def parse_ready_resp(payload: bytes) -> List[ReadyEntry]:
+    """
+    u8 version, u8 flags, u16 reserved, u8 count, then count x { u16 handle, u8 flags, u16 available }.
+    Only ready sessions are listed.
+    """
     off = _check_version(payload, 0)
-    flags, off = read_u8(payload, off)
+    _flags, off = read_u8(payload, off)
     _reserved, off = read_u16le(payload, off)
-    handle, off = read_u16le(payload, off)
-    offset, off = read_u32le(payload, off)
-    data_len, off = read_u16le(payload, off)
-    if off + data_len > len(payload):
-        raise ValueError("read data out of bounds")
-    data = payload[off : off + data_len]
-    off += data_len
+    count, off = read_u8(payload, off)
+    out: List[ReadyEntry] = []
+    for _ in range(count):
+        handle, off = read_u16le(payload, off)
+        flags, off = read_u8(payload, off)
+        available, off = read_u16le(payload, off)
+        out.append(ReadyEntry(handle=handle, flags=flags, available=available))
     if off != len(payload):
-        raise ValueError("trailing bytes in read response")
-    return ReadResp(
-        eof=bool(flags & 0x01),
-        truncated=bool(flags & 0x02),
-        handle=handle,
-        offset=offset,
-        data=data,
-    )
+        raise ValueError("trailing bytes in ready response")
+    return out

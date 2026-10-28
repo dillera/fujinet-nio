@@ -372,6 +372,35 @@ def cmd_net_translate(args) -> int:
         return 0
 
 
+def cmd_net_ready(args) -> int:
+    """Which of this client's sessions can be read or queried now (Ready, 0x08)."""
+    with open_serial(args.port, args.baud, timeout_s=0.01) as ser:
+        bus = FujiBusSession().attach(ser, debug=args.debug)
+        pkt = _send_retry_not_ready(
+            bus=bus,
+            device=np.NETWORK_DEVICE_ID,
+            command=np.CMD_READY,
+            payload=np.build_ready_req(),
+            timeout=args.timeout,
+            retries=20,
+            sleep_s=0.02,
+        )
+        if pkt is None:
+            print("No response")
+            return 2
+        if not status_ok(pkt):
+            code = _pkt_status_code(pkt)
+            print(f"Device status={code} ({_status_str(code)})")
+            return 1
+        entries = np.parse_ready_resp(pkt.payload)
+        if not entries:
+            print("no session is ready")
+        for e in entries:
+            what = ",".join(n for n, on in (("read", e.readable), ("info", e.info_ready)) if on)
+            print(f"handle={e.handle} ready={what} available={e.available}")
+        return 0
+
+
 def cmd_net_info(args) -> int:
     # NOTE: response headers (if any) must have been requested in Open().
     req = np.build_info_req(args.handle)
@@ -1074,6 +1103,9 @@ def register_subcommands(subparsers) -> None:
     )
     pno.add_argument("url")
     pno.set_defaults(fn=cmd_net_open)
+
+    pnrdy = nsub.add_parser("ready", help="List this client's sessions that can be read or queried now")
+    pnrdy.set_defaults(fn=cmd_net_ready)
 
     pni = nsub.add_parser("info", help="Fetch response metadata and headers")
     pni.add_argument("handle", type=int)

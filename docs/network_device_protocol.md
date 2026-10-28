@@ -560,13 +560,20 @@ u16 maxBytes   // LE; requested bytes to read
 ### Response
 ```
 u8 version
-u8 flags       // bit0=eof, bit1=truncated, bit2=more_available
-u16 reserved   // = 0
+u8 flags       // bit0=eof, bit1=truncated, bit2=more_available, bit3=available_valid
+u16 available  // LE; bytes the device still holds for this handle AFTER this read, when
+               // flags bit3 is set (saturating at 65535); 0 and bit3 clear when the protocol cannot say
 u16 handle     // LE
 u32 offsetEcho // LE
 u16 dataLen    // LE; actual bytes returned
 u8[] data      // length dataLen
 ```
+
+`available` was a reserved field that firmware always sent as 0, so a client that ignores it is unaffected and a
+client that reads it checks bit3 first (an older firmware leaves it clear). It is a lower bound: more may arrive,
+and TLS counts only bytes already decrypted. `more_available` (bit2) is the same fact as `available > 0` for
+protocols that report it. A client reading a length-prefixed or request/reply stream can use it to know whether
+the next read will find data already waiting, without a read that answers `NotReady`.
 
 ### Status codes
 - `Ok` (possibly `dataLen=0`)
@@ -728,6 +735,45 @@ These headers allow TCP connection state to be queried without breaking v1
 compatibility.
 
 See docs/network_device_tcp.md for authoritative TCP definitions.
+
+---
+
+## Command: Ready (0x08)
+
+Which of the requesting client's sessions can be read or queried right now. One small request replaces a
+speculative `Read` or `Info` on each handle: a client with several connections waits (on its own timer, or on a
+hardware hint such as the Atari's PROC line) and then asks once, instead of trying each. Only the requesting
+client's sessions are listed (sessions are owned by the transport that opened them), and only ready ones.
+
+### Request
+```
+u8 version
+```
+
+### Response
+```
+u8 version
+u8 flags        // 0
+u16 reserved    // = 0
+u8 count        // number of entries
+entry[count]:
+  u16 handle    // LE
+  u8  ready     // bit0 = read_ready (a Read would not be NotReady: bytes held, end of stream, or an error)
+                // bit1 = info_ready (an Info would answer; HTTP: the status and headers have arrived)
+  u16 available // LE; bytes held for the handle (saturating); 0 when the protocol cannot say
+```
+
+- A session that is still waiting for its request body (POST/PUT) is not listed.
+- A `Ready` counts as activity for every session of the client, so a client that only waits on `Ready` is
+  not idle for the idle timeout (see open flag `keep`).
+- It is a hint, like the Atari PROC pulse: an entry can be early, or about data another request already took, and
+  the client still answers a `NotReady` from `Read` or `Info`. A handle that was reaped or evicted is simply not
+  listed; using it returns `InvalidRequest`.
+- Firmware that predates the command answers `Unsupported`; the client falls back to trying each handle.
+
+### Status codes
+- `Ok` (possibly `count=0`)
+- `InvalidRequest` (wrong version or trailing bytes)
 
 ---
 

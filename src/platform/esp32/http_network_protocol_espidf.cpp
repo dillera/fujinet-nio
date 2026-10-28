@@ -998,6 +998,13 @@ bool HttpNetworkProtocolEspIdf::read_ready() const
     return done;
 }
 
+bool HttpNetworkProtocolEspIdf::read_available(std::size_t& out) const
+{
+    if (!_s) return false;
+    out = _s->stream ? xStreamBufferBytesAvailable(_s->stream) : 0;
+    return true;
+}
+
 bool HttpNetworkProtocolEspIdf::info_ready() const
 {
     if (!_s) return false;

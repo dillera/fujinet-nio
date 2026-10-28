@@ -84,6 +84,15 @@ public:
      */
     virtual bool info_ready() const { return false; }
 
+    /**
+     * @brief How many body bytes the protocol already holds for the client (a lower bound: more may arrive).
+     *
+     * Returns false when the protocol cannot say, in which case `out` is untouched and the Read response
+     * does not claim to report it. NetworkDevice puts the value in the Read response (after that read) and in
+     * the Ready response.
+     */
+    virtual bool read_available(std::size_t& out) const { (void)out; return false; }
+
     // ========================================================================
     // Protocol Capabilities
     // ========================================================================

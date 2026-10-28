@@ -71,6 +71,7 @@ public:
 
     // A read now would not be NotReady: bytes are buffered, or the peer closed or the connection failed.
     bool read_ready() const noexcept;
+    std::size_t read_available() const noexcept { return rx_available(); }
 
     // Accessors for state (for testing/debugging)
     State state() const noexcept { return _state; }

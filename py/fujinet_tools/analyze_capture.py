@@ -87,6 +87,7 @@ COMMAND_NAMES: dict[int, dict[int, str]] = {
         np.CMD_INFO: "Info",
         np.CMD_INFO_READ: "InfoRead",
         np.CMD_TRANSLATE_CONFIGURE: "TranslateConfigure",
+        np.CMD_READY: "Ready",
     },
     mp.MODEM_DEVICE_ID: {
         mp.CMD_WRITE: "Write",

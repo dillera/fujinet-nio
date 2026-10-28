@@ -735,6 +735,12 @@ bool HttpNetworkProtocolCurl::read_ready() const
     return _performed || _body.size() > _bodyStartIndex;
 }
 
+bool HttpNetworkProtocolCurl::read_available(std::size_t& out) const
+{
+    out = _body.size() > _bodyStartIndex ? _body.size() - _bodyStartIndex : 0;
+    return true;
+}
+
 bool HttpNetworkProtocolCurl::info_ready() const
 {
     return _performed;   // info() reports only once the whole transfer is done
