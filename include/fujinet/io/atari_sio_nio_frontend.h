@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace fujinet::io {
@@ -50,6 +51,13 @@ public:
     // frontend, so a driver that probes each device speeds up the native endpoint too.
     void set_hsio_index(int index) { _hsio_index = index; }
 
+    // Called once the data frame of a W has been checked and its request decoded, just before the request
+    // runs. An ingress that can transmit sets it to send the ACK for the data frame at that moment; the Atari
+    // waits only about 40 ms for that ACK, while the request (a TLS connect, a slow file) can take seconds
+    // and may then take as long as the Atari's own COMPLETE timeout. The reply then holds only COMPLETE
+    // (or ERROR), to follow the ACK after the usual gap. Without it the reply is ACK, COMPLETE together.
+    void set_early_ack(std::function<void()> send_ack) { _early_ack = std::move(send_ack); }
+
     // Whether Q advertises that PROC is pulsed when a network session becomes readable (flag bit 1).
     void set_proc_notify(bool on) { _proc_notify = on; }
 
@@ -62,6 +70,7 @@ private:
     static constexpr std::uint8_t ack = 'A';
     static constexpr std::uint8_t nak = 'N';
     static constexpr std::uint8_t complete = 'C';
+    static constexpr std::uint8_t error = 'E';
 
     void drop_stale_reply();
     Result reject() const;
@@ -78,6 +87,7 @@ private:
     std::uint32_t _stale_dropped{0};
     int _hsio_index{-1};
     bool _proc_notify{false};
+    std::function<void()> _early_ack;
     std::vector<std::uint8_t> _response;
 };
 

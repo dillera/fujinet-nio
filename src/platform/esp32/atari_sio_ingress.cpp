@@ -66,6 +66,7 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
     , _router(_disk, _nio, [this](const std::vector<std::uint8_t>& bytes) { send(bytes); })
 {
     _router.set_high_speed_handler([this] { enter_high_speed(); });
+    _nio.set_early_ack([this] { send_early_ack(); });
     _owner_task = xTaskGetCurrentTaskHandle();
     _nio.set_clock([]() -> std::uint64_t { return static_cast<std::uint64_t>(esp_timer_get_time()); });
     // The network service says when a session of this client can be read (docs/atari/proc.md).
@@ -130,6 +131,19 @@ bool AtariSioIngress::wait_for_work(std::chrono::milliseconds timeout)
     return ulTaskNotifyTake(pdTRUE, ticks) != 0;
 }
 
+// The ACK for the data frame of a native W, sent before the request runs: the Atari waits about 40 ms for
+// it, and a request such as a TLS connect takes far longer. The COMPLETE follows from send().
+void AtariSioIngress::send_early_ack()
+{
+    if (!_uart) return;
+    _reply.record(static_cast<std::uint32_t>(esp_timer_get_time()), _capture.processing_start_us(),
+                  _capture.processing_command(), _boundary.last_edge_us());
+    _uart->write(&sio_ack, 1);
+    _uart->flushOutput();
+    _early_ack_us = static_cast<std::uint32_t>(esp_timer_get_time());
+    if (_early_ack_us == 0) _early_ack_us = 1;
+}
+
 void AtariSioIngress::send(const std::vector<std::uint8_t>& bytes)
 {
     if (bytes.empty() || !_uart) return;
@@ -137,6 +151,18 @@ void AtariSioIngress::send(const std::vector<std::uint8_t>& bytes)
     _reply.record(static_cast<std::uint32_t>(esp_timer_get_time()), _capture.processing_start_us(),
                   _capture.processing_command(), _boundary.last_edge_us());
     if (_capture.processing_command()) _txn.begin(_capture.last_frame()[1], _boundary.last_edge_us());
+    if (_early_ack_us != 0 && bytes.size() == 1 && (bytes[0] == sio_complete || bytes[0] == sio_error)) {
+        // The ACK went out before the request ran: keep the gap the Atari needs between ACK and COMPLETE.
+        const std::uint32_t since = static_cast<std::uint32_t>(esp_timer_get_time()) - _early_ack_us;
+        if (since < _tuning.ack_gap_us) esp_rom_delay_us(_tuning.ack_gap_us - since);
+        _early_ack_us = 0;
+        _uart->write(bytes.data(), 1);
+        _uart->flushOutput();
+        drop_tx_noise_edges();
+        _txn.end(static_cast<std::uint32_t>(esp_timer_get_time()));
+        return;
+    }
+    _early_ack_us = 0;
     if (bytes.size() >= 2 && bytes[0] == sio_ack && (bytes[1] == sio_complete || bytes[1] == sio_error)) {
         _uart->write(bytes.data(), 1);
         _uart->flushOutput();

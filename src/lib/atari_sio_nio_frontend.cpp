@@ -145,6 +145,11 @@ AtariSioNioFrontend::Result AtariSioNioFrontend::complete_write(const std::uint8
     ++_next_request_id;
     request.clientOwner = this;
 
+    // The frame is good and the request decoded: from here the Atari has been given what it waits a few
+    // tens of milliseconds for, so acknowledge it before the request runs (it may take a long time).
+    const bool acked_early = static_cast<bool>(_early_ack);
+    if (acked_early) _early_ack();
+
     std::vector<std::uint8_t> response =
         protocol::encode_fujibus_response(_handler.handleRequest(request));
     if (response.empty() || response.size() > capacity) {
@@ -152,13 +157,15 @@ AtariSioNioFrontend::Result AtariSioNioFrontend::complete_write(const std::uint8
     }
     if (response.empty() || response.size() > capacity) {
         reset();
-        return reject();
+        // After an ACK the only refusal left is the error byte; before one it is NAK.
+        return acked_early ? Result{{error}, 0, true} : reject();
     }
 
     _write_bytes = 0;
     _response = std::move(response);
     _state = State::Ready;
     _ready_at_us = _clock ? _clock() : 0;
+    if (acked_early) return Result{{complete}, 0, true};
     return Result{{ack, complete}, 0, true};
 }
 

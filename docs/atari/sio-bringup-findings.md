@@ -90,3 +90,25 @@ a POKEY needs none, and the gaps added about 30 ms to each 256-byte sector reply
 - High-speed SIO (HSIO) has not been measured; the numbers above are at 19200 baud.
 - FTESTNIO crashes with the BASIC cartridge enabled; boot it with BASIC off (it ends on the
   SELF TEST screen).
+
+## A slow request must not hold back the ACK of its data frame (native endpoint)
+
+An SIO write is command frame, ACK, data frame, **ACK**, COMPLETE. The Atari's drivers wait only a few tens of
+milliseconds (about 40 ms in the high-speed driver) for the second ACK, and as long as the command's own
+timeout (DTIMLO) for COMPLETE. The native frontend ran the whole request inside `complete_write` and only then
+returned `{ACK, COMPLETE}`, so the ACK of the data frame waited for the request. That is invisible while
+requests finish in a few milliseconds (a TCP open, an HTTP open, a lookup) and fatal for one that does not: a
+`tls://` open blocks the device for 0.5 to 1.5 s while it connects, the Atari's call timed out and retried
+(each retry a frame the busy device could not read, so a burst of `UART break detected` when it came back), and
+the library reported `$10` for an open that had actually succeeded.
+
+The ESP32 ingress now sends the ACK as soon as the data frame has been checked and its request decoded
+(`AtariSioNioFrontend::set_early_ack`), runs the request, then sends COMPLETE after the usual ACK gap.
+Frames that are refused (a bad checksum, a request that does not decode) are NAKed as before, never ACKed
+first. Without the hook, as on NetSIO, the reply is still `{ACK, COMPLETE}` together. Disk writes are
+unchanged (they are short). The `handler` time in `sio.status` now includes the request, so a slow one shows
+there.
+
+What this does not do: the request still runs on the SIO task, so a long one stops the ingress from answering
+anything else until it finishes (the Atari is waiting for it, so a program that talks only to this endpoint
+loses nothing). Making the TLS connect itself asynchronous is the real fix for that.

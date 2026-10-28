@@ -388,3 +388,52 @@ TEST_CASE("Atari native NIO frontend advertises PROC notification in Q flag bit 
     harness.frontend.set_proc_notify(false);
     CHECK(harness.frontend.begin(query.frame).bytes == data_reply({1, 0, 2, 1}));
 }
+
+TEST_CASE("Atari native NIO frontend acknowledges a W's data frame before the request runs, when it can")
+{
+    // The Atari waits about 40 ms for that ACK; a slow request must not delay it.
+    struct Order final : fujinet::io::IRequestHandler {
+        std::vector<std::string> events;
+        fujinet::io::IOResponse handleRequest(const fujinet::io::IORequest& request) override {
+            events.push_back("request");
+            auto response = fujinet::io::make_success_response(request);
+            response.payload = {0xaa};
+            return response;
+        }
+    } order;
+    AtariSioNioFrontend frontend(order);
+    frontend.set_early_ack([&] { order.events.push_back("ack"); });
+    const auto write = fixture("w-core-dispatch");
+    REQUIRE(frontend.begin(write.frame).accepted);
+    const auto frame = data_frame(write.payload);
+    const auto result = frontend.complete_write(frame.data(), frame.size());
+    CHECK(result.accepted);
+    CHECK(result.bytes == std::vector<std::uint8_t>{'C'});   // the ACK already went out; only COMPLETE is left
+    CHECK(order.events == std::vector<std::string>{"ack", "request"});
+    // The response is ready as before: P reports it.
+    const auto poll = frontend.begin(command('P', 0));
+    CHECK(poll.accepted);
+    CHECK(poll.bytes.size() == 2 + 3 + 1);
+    CHECK(poll.bytes[2] == 2);   // state: ready
+}
+
+TEST_CASE("Atari native NIO frontend never acknowledges early a data frame it will refuse")
+{
+    Harness harness;
+    int acks = 0;
+    harness.frontend.set_early_ack([&] { ++acks; });
+    const auto write = fixture("w-core-dispatch");
+    REQUIRE(harness.frontend.begin(write.frame).accepted);
+    auto frame = data_frame(write.payload);
+    frame.back() ^= 0xff;   // a wrong checksum
+    const auto result = harness.frontend.complete_write(frame.data(), frame.size());
+    CHECK(result.bytes == std::vector<std::uint8_t>{'N'});
+    CHECK(acks == 0);
+    CHECK(harness.device->requests.empty());
+}
+
+TEST_CASE("Atari native NIO frontend without the early-ACK hook still answers ACK and COMPLETE together")
+{
+    Harness harness;
+    send_valid_write(harness, fixture("w-core-dispatch"));   // checks {'A', 'C'}
+}

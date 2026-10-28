@@ -68,6 +68,8 @@ private:
     bool take_alt_frame(std::array<std::uint8_t, 5>& frame);
     void leave_high_speed();
     void service_proc_notice();
+    // The ACK for a native W's data frame, sent before the request runs (AtariSioNioFrontend::set_early_ack).
+    void send_early_ack();
 
     std::unique_ptr<UartChannel> _uart;
     std::unique_ptr<UartChannel> _alt;
@@ -102,6 +104,7 @@ private:
     std::uint32_t _proc_notices{0};
     std::uint32_t _proc_pulses{0};
     std::uint32_t _proc_last_pulse_us{0};
+    std::uint32_t _early_ack_us{0};   // when that ACK left, so the COMPLETE that follows keeps the ACK gap (0 = none)
     void* _owner_task{nullptr};
 };
 
