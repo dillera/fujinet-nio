@@ -43,6 +43,11 @@ public:
     void poll() override;
     void close() override;
 
+    // Body bytes are buffered or the transfer ended; the transfer ended, so info() answers (see
+    // INetworkProtocol::read_ready / info_ready).
+    bool read_ready() const override;
+    bool info_ready() const override;
+
 private:
     static std::size_t write_body_cb(char* ptr, std::size_t size, std::size_t nmemb, void* userdata);
     static std::size_t write_header_cb(char* ptr, std::size_t size, std::size_t nmemb, void* userdata);

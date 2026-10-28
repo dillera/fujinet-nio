@@ -77,8 +77,10 @@ private:
         // (useful when you later do async backends)
         bool completed{false};
 
-        // read_ready() was true at the last poll and the client was told (cleared by a read).
+        // read_ready() / info_ready() were true at the last poll and the client was told (read_ready's is
+        // cleared by a read that leaves data behind).
         bool readyNotified{false};
+        bool infoNotified{false};
 
         // HTTP request-body tracking (streamed, no large buffering in core)
         std::uint32_t expectedBodyLen = 0;   // from Open.bodyLenHint (when relevant)
@@ -148,6 +150,7 @@ private:
         s.lastActivityTick = 0;
         s.completed = false;
         s.readyNotified = false;
+        s.infoNotified = false;
         s.translation = TranslationConfig{};
         s.translator.reset();
         s.responseBodyCache.clear();

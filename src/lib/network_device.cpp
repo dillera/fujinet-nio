@@ -77,13 +77,14 @@ void NetworkDevice::poll()
 
         // Tell the client when a read that would have been refused (NotReady) is now answerable. One
         // notice per transition; a read clears the mark, so data left behind is announced again.
-        const bool readable = s.proto->read_ready();
-        if (readable && !s.readyNotified) {
-            s.readyNotified = true;
-            notify_client_readable(s.clientOwner);
-        } else if (!readable) {
-            s.readyNotified = false;
+        // A session still waiting for its request body answers NotReady to both, so it says nothing.
+        const bool readable = !s.awaitingBody && s.proto->read_ready();
+        const bool informable = !s.awaitingBody && s.proto->info_ready();
+        if ((readable && !s.readyNotified) || (informable && !s.infoNotified)) {
+            notify_client_readable(s.clientOwner);   // one notice even if both turned true together
         }
+        s.readyNotified = readable;
+        s.infoNotified = informable;
 
         // If backend can signal progress/completion later, we can update s.completed
         // and/or touch(s) here when progress is made.

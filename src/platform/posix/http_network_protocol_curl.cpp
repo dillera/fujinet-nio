@@ -729,6 +729,17 @@ void HttpNetworkProtocolCurl::poll()
     tick_async();
 }
 
+bool HttpNetworkProtocolCurl::read_ready() const
+{
+    if (_curl == nullptr && !_performed) return false;   // not started
+    return _performed || _body.size() > _bodyStartIndex;
+}
+
+bool HttpNetworkProtocolCurl::info_ready() const
+{
+    return _performed;   // info() reports only once the whole transfer is done
+}
+
 
 void HttpNetworkProtocolCurl::close()
 {

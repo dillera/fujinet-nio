@@ -496,8 +496,33 @@ fujinet::io::StatusCode TlsNetworkProtocolPosix::info(fujinet::io::NetworkInfo& 
 
 void TlsNetworkProtocolPosix::poll()
 {
-    // Nothing to poll for now - reads are handled synchronously
-    // Future: could implement async connection establishment here
+    // Pull the next bytes in while nobody is reading, so read_ready() knows about data (or a close, or an
+    // error) the client has not asked for yet. The socket is non-blocking, so this returns at once.
+    if (_state != State::Connected || !_ssl || _rxAvailable != 0 || _peerClosed) return;
+
+    const int ret = SSL_read(_ssl, _rxBuffer.data(), static_cast<int>(_rxBuffer.size()));
+    if (ret > 0) {
+        _rxAvailable = static_cast<std::size_t>(ret);
+        return;
+    }
+    const int sslError = SSL_get_error(_ssl, ret);
+    if (sslError == SSL_ERROR_WANT_READ || sslError == SSL_ERROR_WANT_WRITE) {
+        // Nothing yet; but a hung-up socket never delivers more, so say so (as read_body does).
+        struct pollfd pfd;
+        pfd.fd = _socket;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        const int pollRet = ::poll(&pfd, 1, 0);
+        if (pollRet < 0 || (pollRet > 0 && (pfd.revents & (POLLHUP | POLLERR)))) {
+            _peerClosed = true;
+            _state = State::PeerClosed;
+        }
+    } else if (sslError == SSL_ERROR_ZERO_RETURN) {
+        _peerClosed = true;
+        _state = State::PeerClosed;
+    } else {
+        handle_error("read", sslError);
+    }
 }
 
 void TlsNetworkProtocolPosix::close()

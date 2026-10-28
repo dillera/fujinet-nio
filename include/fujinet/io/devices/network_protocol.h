@@ -75,6 +75,15 @@ public:
      */
     virtual bool read_ready() const { return false; }
 
+    /**
+     * @brief True when info() would now return the response metadata (or its failure) instead of NotReady.
+     *
+     * For HTTP: the status line and headers have arrived. Watched like read_ready(), separately, so a client
+     * waiting for the status is told when it is known and again when body bytes arrive. Streams (TCP, TLS)
+     * answer info() at once and keep the default.
+     */
+    virtual bool info_ready() const { return false; }
+
     // ========================================================================
     // Protocol Capabilities
     // ========================================================================

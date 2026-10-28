@@ -39,6 +39,11 @@ public:
     void poll() override;
     void close() override;
 
+    // Body bytes are buffered or the transfer ended; the status and headers are known or the transfer
+    // failed (see INetworkProtocol::read_ready / info_ready).
+    bool read_ready() const override;
+    bool info_ready() const override;
+
 private:
     // opaque (ESP-IDF only, defined in .cpp)
     HttpNetworkProtocolEspIdfState* _s{nullptr};

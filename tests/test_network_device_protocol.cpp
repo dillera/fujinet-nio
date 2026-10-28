@@ -1411,3 +1411,91 @@ TEST_CASE("IODeviceManager forwards a device's notice to the listener watching t
     manager.pollDevices();
     CHECK(heard == 1);
 }
+
+// An HTTP-like session: the status becomes known first (info_ready), then body bytes arrive (read_ready).
+// The client is told for each, once, and for both at once only once.
+namespace {
+class StagedProtocol final : public fujinet::io::INetworkProtocol {
+public:
+    static bool info_known;
+    static bool body_ready;
+    StatusCode open(const fujinet::io::NetworkOpenRequest&) override { return StatusCode::Ok; }
+    StatusCode write_body(std::uint32_t, const std::uint8_t*, std::size_t, std::uint16_t& w) override
+    {
+        w = 0;
+        return StatusCode::Unsupported;
+    }
+    StatusCode read_body(std::uint32_t, std::uint8_t*, std::size_t, std::uint16_t& read, bool& eof, bool& more) override
+    {
+        read = 0;
+        eof = false;
+        more = false;
+        return StatusCode::NotReady;
+    }
+    StatusCode info(fujinet::io::NetworkInfo&) override { return StatusCode::Ok; }
+    void poll() override {}
+    void close() override {}
+    bool read_ready() const override { return body_ready; }
+    bool info_ready() const override { return info_known; }
+};
+bool StagedProtocol::info_known = false;
+bool StagedProtocol::body_ready = false;
+}
+
+TEST_CASE("NetworkDevice tells the client when the status is known and again when body bytes arrive")
+{
+    fujinet::io::ProtocolRegistry reg;
+    reg.register_scheme("http", [] { return std::make_unique<StagedProtocol>(); });
+    NetworkDevice dev(std::move(reg));
+    NotifierRecorder notes;
+    dev.set_client_notifier(&notes);
+    const auto deviceId = to_device_id(WireDeviceId::NetworkService);
+    int client = 0;
+    IORequest req{};
+    req.deviceId = deviceId;
+    req.clientOwner = &client;
+    req.command = 1;
+    req.payload = to_vec(open_payload("http://example.com/slow", 1, 0, 0, {}));
+    REQUIRE(dev.handle(req).status == StatusCode::Ok);
+
+    StagedProtocol::info_known = false;
+    StagedProtocol::body_ready = false;
+    dev.poll();
+    CHECK(notes.heard.empty());
+
+    StagedProtocol::info_known = true;                 // the status line arrived
+    dev.poll();
+    CHECK(notes.heard.size() == 1);
+    dev.poll();
+    CHECK(notes.heard.size() == 1);                    // not repeated
+
+    StagedProtocol::body_ready = true;                 // then the first body bytes
+    dev.poll();
+    CHECK(notes.heard.size() == 2);
+    dev.poll();
+    CHECK(notes.heard.size() == 2);
+}
+
+TEST_CASE("NetworkDevice says nothing for a session still waiting for its request body")
+{
+    fujinet::io::ProtocolRegistry reg;
+    reg.register_scheme("http", [] { return std::make_unique<StagedProtocol>(); });
+    NetworkDevice dev(std::move(reg));
+    NotifierRecorder notes;
+    dev.set_client_notifier(&notes);
+    const auto deviceId = to_device_id(WireDeviceId::NetworkService);
+    int client = 0;
+    IORequest req{};
+    req.deviceId = deviceId;
+    req.clientOwner = &client;
+    req.command = 1;
+    // POST with a body length hint: Info and Read answer NotReady until the body is written.
+    req.payload = to_vec(open_payload("http://example.com/post", 2, 0, 10, {}));
+    REQUIRE(dev.handle(req).status == StatusCode::Ok);
+    StagedProtocol::info_known = true;
+    StagedProtocol::body_ready = true;
+    dev.poll();
+    CHECK(notes.heard.empty());
+    StagedProtocol::info_known = false;
+    StagedProtocol::body_ready = false;
+}

@@ -988,6 +988,25 @@ void HttpNetworkProtocolEspIdf::poll()
     // no-op, task owns cleanup
 }
 
+bool HttpNetworkProtocolEspIdf::read_ready() const
+{
+    if (!_s) return false;
+    if (_s->stream && xStreamBufferBytesAvailable(_s->stream) > 0) return true;
+    take_mutex(_s->meta_mutex);
+    const bool done = _s->done;   // ended: the next read reports end of stream or the error
+    give_mutex(_s->meta_mutex);
+    return done;
+}
+
+bool HttpNetworkProtocolEspIdf::info_ready() const
+{
+    if (!_s) return false;
+    take_mutex(_s->meta_mutex);
+    const bool ready = _s->has_http_status || _s->done;   // info() answers the metadata, or the failure
+    give_mutex(_s->meta_mutex);
+    return ready;
+}
+
 
 void HttpNetworkProtocolEspIdf::close()
 {

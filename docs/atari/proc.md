@@ -78,12 +78,25 @@ optional at every level:
 - Polling is always correct. A pulse can be early, repeated, or for data another request already took, and a
   missed pulse costs nothing because the data stays buffered.
 
-What triggers it today: a **TCP** session of the client (`tcp://`, the native `NetworkDevice`) that has bytes
-buffered, or whose peer closed or failed. The network service checks each session on its poll tick
-(`INetworkProtocol::read_ready()`, only TCP implements it) and tells the client that owns the session
-(`IClientNotifier`, `IRequestHandler::watchClient`) once when it turns readable. A `Read` that leaves data
-behind clears the mark, so it is announced again at the next tick and a program that reads part and then
-waits is not stranded; a read that takes everything, or reaches end of stream, adds no repeat. HTTP and TLS sessions do not report readiness yet; their clients keep polling.
+What triggers it: a session of the client that has something to give. The network service checks each session on
+its poll tick and tells the client that owns it (`IClientNotifier`, `IRequestHandler::watchClient`) once when
+either of two things turns true (`INetworkProtocol`):
+
+- `read_ready()`: a read would not be `NotReady`. TCP and TLS: bytes buffered, or the peer closed or failed.
+  HTTP: body bytes buffered, or the transfer ended or failed.
+- `info_ready()`: `info` would answer. HTTP only: the status and headers have arrived, or the request failed.
+  A client waiting on a slow HTTP response is told when the status is known and again when body bytes arrive
+  (one notice if both turn true together). TCP and TLS answer `info` at once and never report it.
+
+A session still waiting for its request body (POST/PUT) says nothing. A `Read` that leaves data behind clears
+the mark, so it is announced again at the next tick and a program that reads part and then waits is not
+stranded; a read that takes everything, or reaches end of stream, adds no repeat.
+
+How each backend knows: TCP pumps its socket into a ring on every tick; TLS now does the same
+(`poll()` reads ahead into its buffer, and the ESP32 socket is non-blocking after the connect, as the POSIX one
+already was; before that an idle TLS session could hold up the device inside `esp_tls_conn_read`); the ESP32
+HTTP client feeds a stream buffer from its own task and the POSIX curl backend ticks `curl_multi` on each poll
+(its `info` answers only when the whole transfer is done, so for it the two turn true together).
 
 The ingress turns a notice into a pulse only when the Atari is idle (CMD high, no frame or write data being
 received), holds PROC low for 500 us, and makes pulses at least 5 ms apart (notices closer together share
@@ -118,6 +131,23 @@ pass). A first attempt showed nothing because the PC's firewall dropped the Fuji
 in LISTEN, the session errored and the single notice was the error becoming readable); the program now shows
 the status and flags of each `fn_read` so that reads as a failure.
 
+## Testing against known payloads
+
+`scripts/start_test_services.sh http` starts httpbin on port 8080 (`https`, `tls` and `stream` start the others;
+check the ports against the PC's firewall, which drops the FujiNet's connection otherwise). With PROCTEST's T
+page and `sio.tune proc 1`:
+
+| URL | What it shows |
+|---|---|
+| `http://<pc>:8080/delay/5` | nothing for five seconds, then one notice: the status and the body arrive together |
+| `http://<pc>:8080/drip?duration=5&numbytes=20` | the status first, then a notice as each burst of bytes arrives |
+| `http://<pc>:8080/stream/5` | five JSON lines, each announced |
+| `http://<pc>:8080/status/404` | the status is announced, no body |
+| `tls://<pc>:7778` | an echo over TLS: bytes typed into the session come back as notices |
+| `tcp://<pc>:7779` | frames sent continuously (the stream service) |
+
+Switch the page to polling (M) for the same URL to see how many `fn_info` and `fn_read` calls the pulse saves.
+
 ## Not done yet
 
 - **A request that is slow to answer.** The firmware runs a request inside the `W`, so the Atari's SIO call
@@ -125,5 +155,7 @@ the status and flags of each `fn_read` so that reads as a failure.
   say nothing new. Letting `W` return at once and finish the request afterwards (the spec's `pending` state)
   is a separate change: the request would still run on the SIO task, so the Atari could not use SIO until it
   is ready.
-- **HTTP and TLS readiness**, and other services with a delayed answer (the same hook, `read_ready()`).
-- **The first hardware proof** of the data-ready pulse itself with a real TCP session.
+- **Other services with a delayed answer** (the same hook, `read_ready()` / `info_ready()`).
+- **Hardware proof of HTTP and TLS readiness** with the services above. The host tests cover the device's
+  notices (fake backends, including the status-then-body order and the POST gate) and the POSIX curl backend
+  against a local server that pauses; the ESP32 HTTP and TLS backends are only built, not run, here.

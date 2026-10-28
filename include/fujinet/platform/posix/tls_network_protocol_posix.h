@@ -35,6 +35,8 @@ public:
     fujinet::io::StatusCode info(fujinet::io::NetworkInfo& out) override;
     void poll() override;
     void close() override;
+    // Bytes are buffered, or the peer closed, or the connection failed (see INetworkProtocol::read_ready).
+    bool read_ready() const override { return _rxAvailable > 0 || _peerClosed || _state == State::Error; }
 
     // Protocol capabilities - TLS is a streaming protocol
     bool is_streaming() const override { return true; }

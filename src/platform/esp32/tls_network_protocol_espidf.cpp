@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstring>
 
+#include <fcntl.h>
+
 #include "fujinet/core/logging.h"
 #include "fujinet/net/https_trust_config.h"
 #include "fujinet/net/test_ca_cert.h"
@@ -136,7 +138,16 @@ fujinet::io::StatusCode TlsNetworkProtocolEspIdf::open(const fujinet::io::Networ
     }
 
     FN_LOGI(TAG, "TLS: Connected to %s:%u", _host.c_str(), _port);
-    
+
+    // Reads must not wait: the socket is blocking after the synchronous connect, so an idle session
+    // would hold up the whole device in esp_tls_conn_read. Non-blocking, esp_tls returns WANT_READ and
+    // the code below reports NotReady, as the POSIX backend does.
+    int fd = -1;
+    if (esp_tls_get_conn_sockfd(_tls, &fd) == ESP_OK && fd >= 0) {
+        const int flags = fcntl(fd, F_GETFL, 0);
+        if (flags >= 0) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
+
     reset_state();
     _state = State::Connected;
 
@@ -300,8 +311,24 @@ fujinet::io::StatusCode TlsNetworkProtocolEspIdf::info(fujinet::io::NetworkInfo&
 
 void TlsNetworkProtocolEspIdf::poll()
 {
-    // Nothing to poll for now - reads are handled synchronously
-    // Future: could implement async connection establishment here
+    // Pull the next bytes in while nobody is reading, so read_ready() knows about data (or a close, or an
+    // error) the client has not asked for yet. The socket is non-blocking, so this returns at once.
+    if (_state != State::Connected || !_tls || _rxAvailable != 0 || _peerClosed) return;
+
+    const int ret = esp_tls_conn_read(_tls, _rxBuffer.data(), _rxBuffer.size());
+    if (ret > 0) {
+        _rxAvailable = static_cast<std::size_t>(ret);
+    } else if (ret == 0) {
+        _peerClosed = true;
+        _state = State::PeerClosed;
+    } else if (ret != ESP_TLS_ERR_SSL_WANT_READ && ret != ESP_TLS_ERR_SSL_WANT_WRITE) {
+        int espErr = 0;
+        int tlsFlags = 0;
+        esp_tls_error_handle_t errHandle = nullptr;
+        esp_tls_get_error_handle(_tls, &errHandle);
+        if (errHandle) esp_tls_get_and_clear_last_error(errHandle, &espErr, &tlsFlags);
+        handle_error(espErr);
+    }
 }
 
 void TlsNetworkProtocolEspIdf::close()
