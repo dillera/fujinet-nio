@@ -18,7 +18,10 @@ constexpr std::uint8_t wire_revision = 1;
 // framing) reads it straight after the W, without the P that exists only to ask for the length. The
 // packet's own header gives its true length. A shorter R is refused and keeps the response, as before.
 constexpr std::uint8_t feature_any_read_length = 0x01;
-constexpr std::uint8_t feature_flags = feature_any_read_length;
+// Bit 1: the FujiNet pulses PROC when a network session becomes readable (a read that was NotReady would
+// now succeed). Only set while the setting is on; a client that enables the PROC interrupt can then wait
+// for the pulse instead of repeating the read, and polling stays correct without it.
+constexpr std::uint8_t feature_proc_notify = 0x02;
 
 } // namespace
 
@@ -86,7 +89,7 @@ AtariSioNioFrontend::Result AtariSioNioFrontend::begin(
         return data_reply({wire_revision,
                            static_cast<std::uint8_t>(capacity & 0xffU),
                            static_cast<std::uint8_t>(capacity >> 8U),
-                           feature_flags});
+                           static_cast<std::uint8_t>(feature_any_read_length | (_proc_notify ? feature_proc_notify : 0))});
 
     case command_write:
         drop_stale_reply();

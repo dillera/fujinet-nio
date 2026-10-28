@@ -94,6 +94,7 @@ static void from_yaml(const YAML::Node& node, AtariSioConfig& out)
     out.dataGapUs   = static_cast<std::uint32_t>(get_or<int>(node, "data_gap_us", static_cast<int>(d.dataGapUs)));
     out.altWindowMs = static_cast<std::uint32_t>(get_or<int>(node, "window_ms", static_cast<int>(d.altWindowMs)));
     out.ignoreWriteGlitches = get_or<bool>(node, "ignore_write_glitches", d.ignoreWriteGlitches);
+    out.procNotify          = get_or<bool>(node, "proc_notify", d.procNotify);
 }
 
 static void from_yaml(const YAML::Node& node, ClockConfig& out)
@@ -329,6 +330,7 @@ static void to_yaml(YAML::Emitter& out, const FujiConfig& cfg)
     out << YAML::Key << "data_gap_us"           << YAML::Value << cfg.atariSio.dataGapUs;
     out << YAML::Key << "window_ms"             << YAML::Value << cfg.atariSio.altWindowMs;
     out << YAML::Key << "ignore_write_glitches" << YAML::Value << cfg.atariSio.ignoreWriteGlitches;
+    out << YAML::Key << "proc_notify"           << YAML::Value << cfg.atariSio.procNotify;
     out << YAML::EndMap;
 
      // clock:

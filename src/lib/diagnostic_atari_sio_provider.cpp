@@ -132,8 +132,8 @@ public:
         if (_set_tuning) {
             out.push_back(DiagCommandSpec{
                 .name = "sio.tune",
-                .summary = "SIO timing dials: ACK gap, data gap (us), second-listener window (ms), write-glitch filter; not saved",
-                .usage = "sio.tune [ack <us>|data <us>|window <ms>|glitch <0|1>|reset]",
+                .summary = "SIO dials: ACK gap, data gap (us), second-listener window (ms), write-glitch filter, PROC notify; not saved",
+                .usage = "sio.tune [ack <us>|data <us>|window <ms>|glitch <0|1>|proc <0|1>|reset]",
                 .safe = false,
             });
         }
@@ -203,14 +203,14 @@ private:
     {
         return "tune: ack gap " + std::to_string(t.ack_gap_us) + " us, data gap " + std::to_string(t.data_gap_us) +
                " us (high speed only), second-listener window " + std::to_string(t.alt_window_us / 1000) + " ms, ignore CMD edges during a write " +
-               (t.ignore_write_glitches ? "on" : "off") +
+               (t.ignore_write_glitches ? "on" : "off") + ", PROC notify " + (t.proc_notify ? "on" : "off") +
                ((t.ack_gap_us != 250 || t.data_gap_us != 0 || t.alt_window_us != 10000 ||
-                 !t.ignore_write_glitches) ? "   (not the defaults)" : "");
+                 !t.ignore_write_glitches || t.proc_notify) ? "   (not the defaults)" : "");
     }
 
     DiagResult tune(const DiagArgsView& args) const
     {
-        const char* usage = "usage: sio.tune [ack <us>|data <us>|window <ms>|glitch <0|1>|reset]";
+        const char* usage = "usage: sio.tune [ack <us>|data <us>|window <ms>|glitch <0|1>|proc <0|1>|reset]";
         io::AtariSioTuning t = _snapshot().tuning;
         if (args.argv.size() == 2 && args.argv[1] == "reset") {
             t = io::AtariSioTuning{};
@@ -224,6 +224,7 @@ private:
             else if (args.argv[1] == "data") t.data_gap_us = n;
             else if (args.argv[1] == "window") t.alt_window_us = n * 1000;
             else if (args.argv[1] == "glitch") t.ignore_write_glitches = n != 0;
+            else if (args.argv[1] == "proc") t.proc_notify = n != 0;
             else return DiagResult::invalid_args(usage);
         } else if (args.argv.size() != 1) {
             return DiagResult::invalid_args(usage);
@@ -238,7 +239,9 @@ private:
     {
         if (!s.proc_available) return "proc: this board maps no PROC pin\r\n";
         return std::string("proc: ") + (s.proc_low ? "ASSERTED (low)" : "released (high)") + ", driven low " +
-               std::to_string(s.proc_asserts) + " times since boot (sio.proc low|high|pulse)\r\n";
+               std::to_string(s.proc_asserts) + " times since boot; notify " + (s.tuning.proc_notify ? "on" : "off") +
+               ": " + std::to_string(s.proc_notices) + " readable notices, " + std::to_string(s.proc_pulses) +
+               " pulses (sio.proc low|high|pulse, sio.tune proc 0|1)\r\n";
     }
 
     // sio.proc: the only way to cause a PROC edge until the protocol uses the line (docs/atari/proc.md).

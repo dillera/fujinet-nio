@@ -68,6 +68,11 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
     _router.set_high_speed_handler([this] { enter_high_speed(); });
     _owner_task = xTaskGetCurrentTaskHandle();
     _nio.set_clock([]() -> std::uint64_t { return static_cast<std::uint64_t>(esp_timer_get_time()); });
+    // The network service says when a session of this client can be read (docs/atari/proc.md).
+    routing.watchClient(&_nio, [this] {
+        ++_proc_notices;
+        _proc_wanted = true;
+    });
     const auto& pins = pinmap();
     configure_sio_lines(pins);
     _cmd_pin = pins.sio.cmd;
@@ -105,6 +110,7 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
     tuning.data_gap_us = config.atariSio.dataGapUs;
     tuning.alt_window_us = config.atariSio.altWindowMs * 1000;
     tuning.ignore_write_glitches = config.atariSio.ignoreWriteGlitches;
+    tuning.proc_notify = config.atariSio.procNotify;
     set_tuning(tuning);
     if (config.atariSio.hsioIndex >= 0) set_hsio_index(config.atariSio.hsioIndex);
 }
@@ -199,6 +205,8 @@ io::AtariSioStats AtariSioIngress::stats() const
     out.proc_available = _proc_pin >= 0 && _proc_pin < GPIO_NUM_MAX;
     out.proc_low = out.proc_available && gpio_get_level(static_cast<gpio_num_t>(_proc_pin)) == 0;
     out.proc_asserts = _proc_asserts;
+    out.proc_notices = _proc_notices;
+    out.proc_pulses = _proc_pulses;
     if (_alt) {
         out.alt_baud = _alt->uart_config().baudRate;
         out.alt_valid_frames = _alt_valid;
@@ -360,6 +368,33 @@ void AtariSioIngress::note_cmd_edge() noexcept
     if (woken == pdTRUE) portYIELD_FROM_ISR();
 }
 
+namespace {
+constexpr std::uint32_t proc_pulse_us = 500;       // how long PROC is held low: the PIA needs a few microseconds
+constexpr std::uint32_t proc_min_gap_us = 5000;    // notices closer together than this share one pulse
+}
+
+// The notice from the network service is a hint that a read would now succeed. Pulse PROC for it only
+// when the Atari is not in the middle of a transaction (CMD high, no frame or write data being received),
+// so the pulse cannot disturb one, and not more often than proc_min_gap_us.
+void AtariSioIngress::service_proc_notice()
+{
+    if (!_proc_wanted) return;
+    if (!_tuning.proc_notify) {
+        _proc_wanted = false;
+        return;
+    }
+    if (_proc_pin < 0 || _proc_pin >= GPIO_NUM_MAX || _capture.needs_immediate_poll()) return;
+    if (gpio_get_level(static_cast<gpio_num_t>(_cmd_pin)) == 0) return;
+    const auto now = static_cast<std::uint32_t>(esp_timer_get_time());
+    if (_proc_last_pulse_us != 0 && now - _proc_last_pulse_us < proc_min_gap_us) return;
+    _proc_wanted = false;
+    set_proc(true);
+    esp_rom_delay_us(proc_pulse_us);
+    set_proc(false);
+    _proc_last_pulse_us = static_cast<std::uint32_t>(esp_timer_get_time());
+    ++_proc_pulses;
+}
+
 void AtariSioIngress::poll()
 {
     if (!_uart || _cmd_pin < 0 || _cmd_pin >= GPIO_NUM_MAX) return;
@@ -383,6 +418,7 @@ void AtariSioIngress::poll()
         _capture.bad_frames_in_a_row() >= io::AtariSioSpeed::fallback_after_bad_frames) {
         toggle_speed();
     }
+    service_proc_notice();
     _last_poll_us = static_cast<std::uint32_t>(esp_timer_get_time());
     _edges_at_last_poll = _boundary.total_edges();
 }

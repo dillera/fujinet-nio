@@ -64,10 +64,58 @@ read of `PORTA` was written in C as an unused read, and cc65 removes an unused r
 pass of the loop. The library's handler clears it in assembly, which is why interrupt mode counted 25 of 25
 throughout. PROCTEST now reads `PORTA` through a volatile pointer (checked in the compiler listing).
 
-## Not done yet: using it for the protocol
+## Using it: the data-ready pulse
 
-The point of PROC for NIO is that a client can wait for a response (or for data a service has pending) on an
-interrupt instead of polling `P`. That needs decisions that are not made here: when the firmware asserts
-(a response became ready after `W`; data became available on a network handle), when it releases (when the
-`R` that consumes it completes), a Q flag bit so a client knows it can rely on it, and a library call such as
-a bounded wait on the pending flag. Until the line is proved, none of that is built.
+PROC is a hint that **a read that would have been refused (`NotReady`) would now succeed**, so a program can
+carry on with its screen and its own work and look when told, instead of repeating the read. It is
+optional at every level:
+
+- The firmware pulses PROC only when `sio.tune proc 1` (or `proc_notify: true` under `atari_sio:` in
+  `fujinet.yaml`, saved with `sio.save`) is set. The default is off, and Q flag **bit 1** advertises it only
+  while it is on (bit 0 is "R may ask for more than the response").
+- The Atari's PIA interrupt stays off until a program calls `fn_atari_proc_enable()`; the module is linked only
+  by a program that calls it.
+- Polling is always correct. A pulse can be early, repeated, or for data another request already took, and a
+  missed pulse costs nothing because the data stays buffered.
+
+What triggers it today: a **TCP** session of the client (`tcp://`, the native `NetworkDevice`) that has bytes
+buffered, or whose peer closed or failed. The network service checks each session on its poll tick
+(`INetworkProtocol::read_ready()`, only TCP implements it) and tells the client that owns the session
+(`IClientNotifier`, `IRequestHandler::watchClient`) once when it turns readable. A `Read` clears the mark, so
+data left behind is announced again at the next tick and a program that reads part and then waits is not
+stranded. HTTP and TLS sessions do not report readiness yet; their clients keep polling.
+
+The ingress turns a notice into a pulse only when the Atari is idle (CMD high, no frame or write data being
+received), holds PROC low for 500 us, and makes pulses at least 5 ms apart (notices closer together share
+one). `sio.status` shows `proc: ... notify on: N readable notices, M pulses`.
+
+How a program uses it (`fujinet-nio-lib`):
+
+```c
+fn_init();
+fn_atari_query_capabilities();                    /* optional: learn whether the firmware pulses */
+use_proc = (fn_atari_capability_flags() & FN_ATARI_FEATURE_PROC) != 0;
+if (use_proc) fn_atari_proc_enable();
+
+/* send the request, then carry on with the screen ... */
+for (;;) {
+    update_screen();
+    if (!use_proc || fn_atari_proc_pending()) {   /* told, or polling */
+        err = fn_read(handle, offset, buf, len, &got, &flags);
+        if (err == FN_OK) { consume(buf, got); ... }
+        /* FN_ERR_NOT_READY: nothing yet, fine */
+    }
+}
+```
+
+A simple program skips PROC and calls `fn_read` in a loop, handling `FN_ERR_NOT_READY`.
+
+## Not done yet
+
+- **A request that is slow to answer.** The firmware runs a request inside the `W`, so the Atari's SIO call
+  waits for it, and the response is ready the moment `W` completes. A PROC pulse for "response ready" would
+  say nothing new. Letting `W` return at once and finish the request afterwards (the spec's `pending` state)
+  is a separate change: the request would still run on the SIO task, so the Atari could not use SIO until it
+  is ready.
+- **HTTP and TLS readiness**, and other services with a delayed answer (the same hook, `read_ready()`).
+- **The first hardware proof** of the data-ready pulse itself with a real TCP session.

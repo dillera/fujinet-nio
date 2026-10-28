@@ -171,6 +171,7 @@ struct AtariSioTuning {
     std::uint32_t data_gap_us{0};       // COMPLETE -> data frame, at high speed only (the legacy DELAY_HSIO_DATA is 1000)
     std::uint32_t alt_window_us{10000}; // how long a frame heard by the second listener stays usable
     bool ignore_write_glitches{true};   // while a write waits for its data, CMD edges with the line high are noise
+    bool proc_notify{false};            // pulse PROC when a network session becomes readable; Q flag bit 1 says so
 };
 
 // The whole picture the console shows; the ingress fills in the hardware parts.
@@ -209,6 +210,8 @@ struct AtariSioStats {
     bool proc_available{false};        // the board maps a PROC pin
     bool proc_low{false};              // the pin reads low (asserted) right now
     std::uint32_t proc_asserts{0};     // times it was driven low (a pulse is one)
+    std::uint32_t proc_notices{0};     // 'a session is readable' notices received from the network service
+    std::uint32_t proc_pulses{0};      // PROC pulses sent for them (notices that came close together share one)
 };
 
 } // namespace fujinet::io

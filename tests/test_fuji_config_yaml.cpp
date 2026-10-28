@@ -71,6 +71,7 @@ bool configs_equal(const FujiConfig& a, const FujiConfig& b)
     if (a.atariSio.dataGapUs != b.atariSio.dataGapUs) return false;
     if (a.atariSio.altWindowMs != b.atariSio.altWindowMs) return false;
     if (a.atariSio.ignoreWriteGlitches != b.atariSio.ignoreWriteGlitches) return false;
+    if (a.atariSio.procNotify != b.atariSio.procNotify) return false;
 
     if (a.clock.enabled != b.clock.enabled) return false;
     if (a.clock.timezone != b.clock.timezone) return false;
@@ -951,17 +952,19 @@ TEST_CASE("YamlFujiConfigStoreFs: atari_sio defaults, load and round-trip")
     CHECK(cfg.atariSio.dataGapUs == 0);
     CHECK(cfg.atariSio.altWindowMs == 10);
     CHECK(cfg.atariSio.ignoreWriteGlitches == true);
+    CHECK(cfg.atariSio.procNotify == false);
 
     // Present: read, with a bad index ignored (10 is read by drivers as a Happy 1050).
     create_file(*primary, "/fujinet.yaml",
                 "atari_sio:\n  hsio_index: 1\n  ack_gap_us: 300\n  data_gap_us: 1000\n"
-                "  window_ms: 20\n  ignore_write_glitches: false\n");
+                "  window_ms: 20\n  ignore_write_glitches: false\n  proc_notify: true\n");
     cfg = store.load();
     CHECK(cfg.atariSio.hsioIndex == 1);
     CHECK(cfg.atariSio.ackGapUs == 300);
     CHECK(cfg.atariSio.dataGapUs == 1000);
     CHECK(cfg.atariSio.altWindowMs == 20);
     CHECK(cfg.atariSio.ignoreWriteGlitches == false);
+    CHECK(cfg.atariSio.procNotify == true);
     create_file(*primary, "/fujinet.yaml", "atari_sio:\n  hsio_index: 10\n");
     CHECK(store.load().atariSio.hsioIndex == -1);
 
@@ -969,6 +972,7 @@ TEST_CASE("YamlFujiConfigStoreFs: atari_sio defaults, load and round-trip")
     FujiConfig original{};
     original.atariSio.hsioIndex = 3;
     original.atariSio.dataGapUs = 500;
+    original.atariSio.procNotify = true;
     store.save(original);
     CHECK(configs_equal(original, store.load()));
 }

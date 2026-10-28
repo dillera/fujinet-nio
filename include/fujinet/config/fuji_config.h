@@ -57,6 +57,7 @@ struct AtariSioConfig {
     std::uint32_t dataGapUs{0};               // COMPLETE -> data gap at high speed (SpartaDOS X may want 1000)
     std::uint32_t altWindowMs{10};            // how long a frame heard by the second listener stays usable
     bool          ignoreWriteGlitches{true};  // ignore CMD edges seen with the line high while a write waits
+    bool          procNotify{false};          // pulse PROC when a network session becomes readable (docs/atari/proc.md)
 };
 
 struct ClockConfig {

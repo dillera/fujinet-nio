@@ -35,6 +35,7 @@ atari_sio:
   data_gap_us: 0
   window_ms: 10
   ignore_write_glitches: true
+  proc_notify: false
 
 clock:
   timezone: "UTC"

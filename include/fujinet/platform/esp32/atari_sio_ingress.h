@@ -47,6 +47,7 @@ public:
     {
         _tuning = tuning;
         _capture.set_ignore_write_glitches(tuning.ignore_write_glitches);
+        _nio.set_proc_notify(tuning.proc_notify);
     }
     // ISR-safe edge recorder; UART/event work remains the sole wake source.
     void note_cmd_edge() noexcept;
@@ -66,6 +67,7 @@ private:
     // For the capture: a command frame the second listener decoded for the command that just ended.
     bool take_alt_frame(std::array<std::uint8_t, 5>& frame);
     void leave_high_speed();
+    void service_proc_notice();
 
     std::unique_ptr<UartChannel> _uart;
     std::unique_ptr<UartChannel> _alt;
@@ -94,6 +96,12 @@ private:
     int _cmd_pin{-1};
     int _proc_pin{-1};
     std::uint32_t _proc_asserts{0};
+    // PROC for a readable network session (docs/atari/proc.md): the network service's notice only sets
+    // the flag; poll() pulses the line when the bus is idle, at most once per _proc_min_gap_us.
+    bool _proc_wanted{false};
+    std::uint32_t _proc_notices{0};
+    std::uint32_t _proc_pulses{0};
+    std::uint32_t _proc_last_pulse_us{0};
     void* _owner_task{nullptr};
 };
 

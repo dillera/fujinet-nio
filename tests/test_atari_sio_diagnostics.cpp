@@ -340,6 +340,13 @@ TEST_CASE("sio.tune shows and sets the gaps and the window, and sio.status shows
     CHECK(run(*provider, {"sio.tune", "reset"}).status == DiagStatus::Ok);
     CHECK(set_to.ignore_write_glitches);
     CHECK(set_to.data_gap_us == 0);
+    CHECK(!set_to.proc_notify);
+    r = run(*provider, {"sio.tune", "proc", "1"});
+    CHECK(set_to.proc_notify);
+    CHECK(contains(r.text, "PROC notify on"));
+    CHECK(contains(r.text, "not the defaults"));
+    CHECK(run(*provider, {"sio.tune", "reset"}).status == DiagStatus::Ok);
+    CHECK(!set_to.proc_notify);
 
     const auto text = run(*provider, {"sio.status"}).text;
     CHECK(contains(text, "data frames (over 64 bytes): 1 sent, 93.0 us/byte on average (the wire: 91.9)"));
@@ -387,6 +394,13 @@ TEST_CASE("sio.proc asserts, releases and pulses the PROC line, and sio.status s
         [&](unsigned count, unsigned low, unsigned high) { pulses = {count, low, high}; return true; });
 
     CHECK(contains(run(*provider, {"sio.status"}).text, "proc: released (high), driven low 0 times"));
+    stats.tuning.proc_notify = true;
+    stats.proc_notices = 7;
+    stats.proc_pulses = 3;
+    CHECK(contains(run(*provider, {"sio.status"}).text, "notify on: 7 readable notices, 3 pulses"));
+    stats.tuning.proc_notify = false;
+    stats.proc_notices = 0;
+    stats.proc_pulses = 0;
     CHECK(contains(run(*provider, {"sio.proc"}).text, "released (high)"));
 
     CHECK(contains(run(*provider, {"sio.proc", "low"}).text, "ASSERTED (low), driven low 1 times"));

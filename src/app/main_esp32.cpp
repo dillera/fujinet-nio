@@ -398,6 +398,7 @@ extern "C" void fujinet_core_task(void* arg)
                         saved.dataGapUs = tuning.data_gap_us;
                         saved.altWindowMs = tuning.alt_window_us / 1000;
                         saved.ignoreWriteGlitches = tuning.ignore_write_glitches;
+                        saved.procNotify = tuning.proc_notify;
                         store->save(fuji->config());
                         return {};
                     },

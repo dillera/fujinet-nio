@@ -375,3 +375,16 @@ TEST_CASE("Atari native NIO frontend pads a longer R with zeros and releases the
     CHECK(harness.frontend.begin(command('P', 0)).bytes == data_reply({0, 0, 0}));
     CHECK_FALSE(harness.frontend.begin(command('R', static_cast<std::uint16_t>(padded.size()))).accepted);
 }
+
+TEST_CASE("Atari native NIO frontend advertises PROC notification in Q flag bit 1 only while it is on")
+{
+    Harness harness;
+    const auto query = fixture("q-idle");
+    CHECK(harness.frontend.begin(query.frame).bytes == data_reply({1, 0, 2, 1}));   // off: bit 0 only
+
+    harness.frontend.set_proc_notify(true);
+    CHECK(harness.frontend.begin(query.frame).bytes == data_reply({1, 0, 2, 3}));   // bits 0 and 1
+
+    harness.frontend.set_proc_notify(false);
+    CHECK(harness.frontend.begin(query.frame).bytes == data_reply({1, 0, 2, 1}));
+}

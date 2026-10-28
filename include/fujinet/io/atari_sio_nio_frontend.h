@@ -50,6 +50,9 @@ public:
     // frontend, so a driver that probes each device speeds up the native endpoint too.
     void set_hsio_index(int index) { _hsio_index = index; }
 
+    // Whether Q advertises that PROC is pulsed when a network session becomes readable (flag bit 1).
+    void set_proc_notify(bool on) { _proc_notify = on; }
+
     static std::uint8_t checksum(const std::uint8_t* data, std::size_t len);
 
 private:
@@ -74,6 +77,7 @@ private:
     std::uint64_t _ready_at_us{0};
     std::uint32_t _stale_dropped{0};
     int _hsio_index{-1};
+    bool _proc_notify{false};
     std::vector<std::uint8_t> _response;
 };
 
