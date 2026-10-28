@@ -902,7 +902,6 @@ IOResponse NetworkDevice::handle(const IORequest& request)
                 return resp;
             }
             touch(*s);
-            s->readyNotified = false;   // data left after this read is announced again on the next poll
 
             // If request body hasn't been fully uploaded, response is not available yet.
             if (s->awaitingBody) {
@@ -970,6 +969,10 @@ IOResponse NetworkDevice::handle(const IORequest& request)
                 if (n > buf.size()) {
                     n = static_cast<std::uint16_t>(buf.size());
                 }
+
+                // Data left behind is announced again at the next poll, so a client that reads part of it
+                // and then waits is not stranded. At end of stream nothing more will come, so no repeat.
+                if (moreAvailable && !eof) s->readyNotified = false;
 
                 out.reserve(1 + 1 + 2 + 2 + 4 + 2 + n);
 

@@ -81,9 +81,9 @@ optional at every level:
 What triggers it today: a **TCP** session of the client (`tcp://`, the native `NetworkDevice`) that has bytes
 buffered, or whose peer closed or failed. The network service checks each session on its poll tick
 (`INetworkProtocol::read_ready()`, only TCP implements it) and tells the client that owns the session
-(`IClientNotifier`, `IRequestHandler::watchClient`) once when it turns readable. A `Read` clears the mark, so
-data left behind is announced again at the next tick and a program that reads part and then waits is not
-stranded. HTTP and TLS sessions do not report readiness yet; their clients keep polling.
+(`IClientNotifier`, `IRequestHandler::watchClient`) once when it turns readable. A `Read` that leaves data
+behind clears the mark, so it is announced again at the next tick and a program that reads part and then
+waits is not stranded; a read that takes everything, or reaches end of stream, adds no repeat. HTTP and TLS sessions do not report readiness yet; their clients keep polling.
 
 The ingress turns a notice into a pulse only when the Atari is idle (CMD high, no frame or write data being
 received), holds PROC low for 500 us, and makes pulses at least 5 ms apart (notices closer together share
@@ -94,7 +94,7 @@ How a program uses it (`fujinet-nio-lib`):
 ```c
 fn_init();
 fn_atari_query_capabilities();                    /* optional: learn whether the firmware pulses */
-use_proc = (fn_atari_capability_flags() & FN_ATARI_FEATURE_PROC) != 0;
+use_proc = (fn_atari_capability_flags() & FN_ATARI_CAP_PROC) != 0;
 if (use_proc) fn_atari_proc_enable();
 
 /* send the request, then carry on with the screen ... */

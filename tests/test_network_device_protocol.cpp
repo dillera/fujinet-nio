@@ -1283,6 +1283,7 @@ namespace {
 class ReadinessProtocol final : public fujinet::io::INetworkProtocol {
 public:
     static bool ready;
+    static bool more_after_read;   // a read leaves data behind
     StatusCode open(const fujinet::io::NetworkOpenRequest&) override { return StatusCode::Ok; }
     StatusCode write_body(std::uint32_t, const std::uint8_t*, std::size_t, std::uint16_t& w) override
     {
@@ -1298,6 +1299,7 @@ public:
         if (!ready) return StatusCode::NotReady;
         out[0] = 'x';
         read = 1;
+        more = more_after_read;
         return StatusCode::Ok;
     }
     StatusCode info(fujinet::io::NetworkInfo&) override { return StatusCode::Ok; }
@@ -1306,6 +1308,7 @@ public:
     bool read_ready() const override { return ready; }
 };
 bool ReadinessProtocol::ready = false;
+bool ReadinessProtocol::more_after_read = false;
 
 struct NotifierRecorder final : fujinet::io::IClientNotifier {
     std::vector<const void*> heard;
@@ -1350,12 +1353,20 @@ TEST_CASE("NetworkDevice tells the owning client once when a session becomes rea
     dev.poll();
     CHECK(notes.heard.size() == 2);                    // once per transition, not every tick
 
-    // A read that leaves data behind is announced again at the next poll (so a client that reads part
-    // of it and then waits is not stranded).
+    // A read that takes everything (or reaches end of stream) adds no repeat: nothing more is coming, or the
+    // session is still readable only because it is at the end.
+    CHECK(read_req(dev, deviceId, a, 0, 16).status == StatusCode::Ok);
+    dev.poll();
+    CHECK(notes.heard.size() == 2);
+
+    // A read that leaves data behind is announced again at the next poll (so a client that reads part of
+    // it and then waits is not stranded), to that client only.
+    ReadinessProtocol::more_after_read = true;
     CHECK(read_req(dev, deviceId, a, 0, 16).status == StatusCode::Ok);
     dev.poll();
     CHECK(notes.heard.size() == 3);
     CHECK(notes.heard.back() == &clientA);
+    ReadinessProtocol::more_after_read = false;
 
     // Not readable again, then readable: a new notice.
     ReadinessProtocol::ready = false;
