@@ -110,6 +110,14 @@ for (;;) {
 
 A simple program skips PROC and calls `fn_read` in a loop, handling `FN_ERR_NOT_READY`.
 
+## Hardware result: the data-ready pulse with a TCP session
+
+PROCTEST's T page, `nc -l 7000` on a PC, `sio.tune proc 1` (Q flags `$03`, PROC advertised): typing a line
+into `nc` showed it on the Atari in **PROC mode** (read only when told) and in **polling mode** (a read every
+pass). A first attempt showed nothing because the PC's firewall dropped the FujiNet's connection (`nc` stayed
+in LISTEN, the session errored and the single notice was the error becoming readable); the program now shows
+the status and flags of each `fn_read` so that reads as a failure.
+
 ## Not done yet
 
 - **A request that is slow to answer.** The firmware runs a request inside the `W`, so the Atari's SIO call
