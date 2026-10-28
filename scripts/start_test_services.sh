@@ -145,6 +145,37 @@ generate_cert() {
   # Use pre-generated test certificates from the repo if available
   # These are signed by the FujiNet Test CA which is embedded in firmware
   local repo_certs="$(dirname "$0")/../integration-tests/certs"
+
+  # The committed server certificate only names a fixed list of addresses, and the firmware checks the
+  # name it connected to. So issue a fresh one from the same test CA with this host's current addresses
+  # added (and any in TLS_EXTRA_IPS). Nothing in the repo changes and the firmware's CA stays valid.
+  if [ -f "$repo_certs/ca.crt" ] && [ -f "$repo_certs/ca.key" ] && command -v openssl >/dev/null 2>&1; then
+    local ext csr ips n=1 ip
+    ext="$(mktemp)"; csr="$(mktemp)"
+    ips="127.0.0.1 192.168.1.1 192.168.1.101 192.168.1.102 192.168.1.103 10.0.0.1 172.17.0.1 $(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1) $(hostname -I 2>/dev/null || true) ${TLS_EXTRA_IPS:-}"
+    {
+      echo "authorityKeyIdentifier=keyid,issuer"
+      echo "basicConstraints=CA:FALSE"
+      echo "keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment"
+      echo "subjectAltName = @alt_names"
+      echo "[alt_names]"
+      echo "DNS.1 = localhost"
+      echo "DNS.2 = *.local"
+      for ip in $ips; do echo "IP.$n = $ip"; n=$((n + 1)); done
+    } > "$ext"
+    if openssl req -new -newkey rsa:2048 -nodes -keyout "$cert_dir/server.key" -out "$csr" -subj "/CN=localhost" >/dev/null 2>&1 \
+       && openssl x509 -req -in "$csr" -CA "$repo_certs/ca.crt" -CAkey "$repo_certs/ca.key" \
+            -CAserial "$cert_dir/ca.srl" -CAcreateserial -out "$cert_dir/server.crt" -days 825 -sha256 \
+            -extfile "$ext" >/dev/null 2>&1; then
+      rm -f "$ext" "$csr"
+      chmod 644 "$cert_dir/server.crt" "$cert_dir/server.key"
+      echo "Issued a FujiNet Test CA server certificate for: $ips"
+      return 0
+    fi
+    rm -f "$ext" "$csr"
+    echo "Could not issue a certificate; falling back to the one in the repo"
+  fi
+
   if [ -f "$repo_certs/server.crt" ] && [ -f "$repo_certs/server.key" ]; then
     echo "Using FujiNet Test CA certificates from repo"
     cp "$repo_certs/server.crt" "$cert_dir/"
