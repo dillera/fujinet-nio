@@ -26,6 +26,7 @@ FLAG_FOLLOW_REDIRECTS = 0x02
 FLAG_BODY_IS_CHUNKED_OR_UNKNOWN = 0x04
 FLAG_ALLOW_EVICT = 0x08
 FLAG_STREAM_NO_PROBE = 0x10
+FLAG_KEEP = 0x20   # keep until closed: exempt from idle reaping and eviction
 
 # NetworkCommand (v1)
 CMD_OPEN = 0x01

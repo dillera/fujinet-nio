@@ -26,6 +26,8 @@ struct NetworkDeviceDiagnosticsAccessor {
 
         std::uint64_t createdTick{0};
         std::uint64_t lastActivityTick{0};
+        std::uint64_t idleMs{0};      // wall-clock time since the last request
+        bool keepAlive{false};        // opened with the keep flag: never reaped for idleness
 
         std::string url;
 
@@ -58,6 +60,8 @@ struct NetworkDeviceDiagnosticsAccessor {
                 row.receivedBodyLen = s.receivedBodyLen;
                 row.createdTick = s.createdTick;
                 row.lastActivityTick = s.lastActivityTick;
+                row.idleMs = dev.now_ms() - s.lastActivityMs;
+                row.keepAlive = s.keepAlive;
                 row.url = s.url;
                 row.translationType = static_cast<std::uint8_t>(s.translation.type);
                 row.translationSelector = s.translation.selector;

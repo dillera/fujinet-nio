@@ -508,6 +508,10 @@ private:
             text += std::to_string(r.expectedBodyLen);
             text += " completed=";
             text += (r.completed ? "1" : "0");
+            text += " idle_s=";
+            text += std::to_string(r.idleMs / 1000);
+            text += " keep=";
+            text += (r.keepAlive ? "1" : "0");
             text += " url=";
             text += r.url;
             text += " translation=";

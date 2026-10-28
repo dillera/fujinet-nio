@@ -7,6 +7,7 @@
 #include "fujinet/io/devices/network_protocol_registry.h"
 #include "fujinet/io/devices/network_translation.h"
 
+#include <functional>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -24,6 +25,16 @@ struct NetworkDeviceSettings {
     // Runs image decoding on a temporary large stack, so the core task's
     // stack can stay small. nullptr decodes on the caller's stack.
     core::LargeStackRunner largeStackRunner{nullptr};
+
+    // A session with no request for this long is closed, so a client that went away (an Atari has no
+    // reset line the firmware can see) does not hold a handle for ever. Wall-clock time, not poll ticks:
+    // the core loop ticks between 50 and several hundred times a second, so a tick count meant nothing.
+    // A session opened with the keep flag (open flag bit5) is exempt until it is closed.
+    std::uint32_t idleTimeoutMs{20u * 60u * 1000u};
+    // A POST/PUT still waiting for its body is reaped sooner.
+    std::uint32_t bodyUploadTimeoutMs{10u * 1000u};
+    // Millisecond clock for the above. Empty uses std::chrono::steady_clock; tests inject one.
+    std::function<std::uint64_t()> clockMs{};
 };
 
 // One finished translation, kept for diagnostics (net.translation.stats).
@@ -54,10 +65,6 @@ private:
     static constexpr std::uint8_t NETPROTO_VERSION = 1;
     static constexpr std::size_t MAX_SESSIONS = 4;
 
-    // Timeouts expressed in "device poll ticks".
-    // With a 50ms tick, 20 ticks = 1s.
-    static constexpr std::uint64_t IDLE_TIMEOUT_TICKS = 20ull * 60ull * 20ull; // ~20m
-
     struct Session {
         bool active{false};
         const void* clientOwner{nullptr};
@@ -71,7 +78,11 @@ private:
 
         // New: bookkeeping for reaping
         std::uint64_t createdTick{0};
-        std::uint64_t lastActivityTick{0};
+        std::uint64_t lastActivityTick{0};   // poll ticks: orders sessions for eviction
+        std::uint64_t lastActivityMs{0};     // wall clock: what idle reaping measures
+
+        // Opened with the keep flag: not reaped for being idle, not evicted; only Close or a host reset ends it.
+        bool keepAlive{false};
 
         // Optional: mark "completed" once response is fully readable
         // (useful when you later do async backends)
@@ -133,7 +144,10 @@ private:
     void touch(Session& s) noexcept
     {
         s.lastActivityTick = _tickNow;
+        s.lastActivityMs = now_ms();
     }
+
+    std::uint64_t now_ms() const;
 
     void close_and_free(Session& s) noexcept
     {
@@ -148,6 +162,8 @@ private:
         s.url.clear();
         s.createdTick = 0;
         s.lastActivityTick = 0;
+        s.lastActivityMs = 0;
+        s.keepAlive = false;
         s.completed = false;
         s.readyNotified = false;
         s.infoNotified = false;
@@ -166,7 +182,7 @@ private:
     {
         Session* victim = nullptr;
         for (auto& s : _sessions) {
-            if (!s.active) continue;
+            if (!s.active || s.keepAlive) continue;   // a keep session is never taken from its client
             // lower lastActivityTick means it's older
             if (!victim || s.lastActivityTick < victim->lastActivityTick) {
                 victim = &s;

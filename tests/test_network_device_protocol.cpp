@@ -4,6 +4,7 @@
 #include "image_fixtures.h"
 #include "net_device_test_helpers.h"
 #include "fujinet/io/core/io_device_manager.h"
+#include "fujinet/io/devices/network_device_diagnostics.h"
 
 #include <algorithm>
 #include <cstring>
@@ -1498,4 +1499,147 @@ TEST_CASE("NetworkDevice says nothing for a session still waiting for its reques
     CHECK(notes.heard.empty());
     StagedProtocol::info_known = false;
     StagedProtocol::body_ready = false;
+}
+
+// ---------------------------------------------------------------------------
+// Session lifetime: idle reaping is wall-clock, and the keep flag exempts a session until it is closed.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr std::uint8_t kOpenKeep = 0x20;
+constexpr std::uint8_t kOpenAllowEvict = 0x08;
+
+struct LifetimeFixture {
+    std::uint64_t now_ms{1000};
+    NetworkDevice dev;
+    std::uint16_t deviceId = to_device_id(WireDeviceId::NetworkService);
+
+    LifetimeFixture()
+        : dev(make_stub_registry_http_only(), [this] {
+              fujinet::io::NetworkDeviceSettings s;
+              s.clockMs = [this] { return now_ms; };
+              return s;
+          }())
+    {}
+
+    // A GET (method 1) with the given open flags; returns its handle.
+    std::uint16_t open(std::uint8_t flags, const char* url = "http://example.com/x", std::uint8_t method = 1,
+                       std::uint32_t bodyLen = 0)
+    {
+        IORequest req{};
+        req.deviceId = deviceId;
+        req.command = 1;
+        req.payload = to_vec(open_payload(url, method, flags, bodyLen, {}));
+        auto resp = dev.handle(req);
+        if (resp.status != StatusCode::Ok) return 0;
+        return static_cast<std::uint16_t>(resp.payload[4] | (resp.payload[5] << 8));
+    }
+
+    StatusCode open_status(std::uint8_t flags)
+    {
+        IORequest req{};
+        req.deviceId = deviceId;
+        req.command = 1;
+        req.payload = to_vec(open_payload("http://example.com/x", 1, flags, 0, {}));
+        return dev.handle(req).status;
+    }
+
+    bool alive(std::uint16_t handle) { return info_req(dev, deviceId, handle).status != StatusCode::InvalidRequest; }
+};
+
+} // namespace
+
+TEST_CASE("NetworkDevice reaps an idle session by wall-clock time, not by poll ticks")
+{
+    LifetimeFixture f;
+    const auto h = f.open(0);
+    REQUIRE(h != 0);
+
+    // A great many ticks with no time passing reap nothing.
+    for (int i = 0; i < 100000; ++i) f.dev.poll();
+    CHECK(f.alive(h));
+
+    // Just under the timeout: alive, and a request restarts the idle clock.
+    f.now_ms += 20u * 60u * 1000u - 1;
+    f.dev.poll();
+    CHECK(f.alive(h));
+    f.now_ms += 20u * 60u * 1000u - 1;
+    f.dev.poll();
+    CHECK(f.alive(h));
+
+    // Past it with no request: reaped.
+    f.now_ms += 20u * 60u * 1000u + 1;
+    f.dev.poll();
+    CHECK_FALSE(f.alive(h));
+}
+
+TEST_CASE("NetworkDevice keeps a session opened with the keep flag until it is closed")
+{
+    LifetimeFixture f;
+    const auto keep = f.open(kOpenKeep);
+    const auto plain = f.open(0);
+    REQUIRE(keep != 0);
+    REQUIRE(plain != 0);
+
+    f.now_ms += 24u * 60u * 60u * 1000u;   // a day
+    f.dev.poll();
+    CHECK(f.alive(keep));
+    CHECK_FALSE(f.alive(plain));
+
+    // Close still ends it.
+    CHECK(close_req(f.dev, f.deviceId, keep).status == StatusCode::Ok);
+    CHECK_FALSE(f.alive(keep));
+}
+
+TEST_CASE("NetworkDevice never evicts a keep session to make room")
+{
+    LifetimeFixture f;
+    std::uint16_t keeps[4] = {};
+    for (auto& k : keeps) {
+        k = f.open(kOpenKeep);
+        REQUIRE(k != 0);
+    }
+    // Full of keep sessions: even allow_evict gets DeviceBusy and no handle is lost.
+    CHECK(f.open_status(kOpenAllowEvict) == StatusCode::DeviceBusy);
+    for (const auto k : keeps) CHECK(f.alive(k));
+
+    // With one ordinary session among them, that is the one evicted.
+    close_req(f.dev, f.deviceId, keeps[3]);
+    const auto plain = f.open(0);
+    REQUIRE(plain != 0);
+    f.now_ms += 1;
+    const auto replacement = f.open(kOpenAllowEvict);
+    CHECK(replacement != 0);
+    CHECK_FALSE(f.alive(plain));
+    for (int i = 0; i < 3; ++i) CHECK(f.alive(keeps[i]));
+}
+
+TEST_CASE("NetworkDevice reaps a session stuck waiting for its request body after ten seconds of wall clock")
+{
+    LifetimeFixture f;
+    const auto post = f.open(0, "http://example.com/post", 2, 10);   // POST, body of 10 bytes expected
+    REQUIRE(post != 0);
+    for (int i = 0; i < 100000; ++i) f.dev.poll();
+    CHECK(f.alive(post));
+    f.now_ms += 10u * 1000u + 1;
+    f.dev.poll();
+    CHECK_FALSE(f.alive(post));
+}
+
+TEST_CASE("net.sessions diagnostics report idle time and the keep flag")
+{
+    LifetimeFixture f;
+    const auto keep = f.open(kOpenKeep);
+    REQUIRE(keep != 0);
+    f.now_ms += 90u * 1000u;
+    const auto rows = fujinet::io::NetworkDeviceDiagnosticsAccessor::sessions(f.dev);
+    bool found = false;
+    for (const auto& r : rows) {
+        if (!r.active) continue;
+        found = true;
+        CHECK(r.keepAlive);
+        CHECK(r.idleMs == 90u * 1000u);
+    }
+    CHECK(found);
 }

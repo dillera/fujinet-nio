@@ -180,11 +180,23 @@ bit1 = follow_redirects
 bit2 = body_unknown_len  // POST/PUT only, bodyLenHint==0
 bit3 = allow_evict
 bit4 = stream_no_probe   // streaming-only hint: host will frame reads itself
+bit5 = keep              // keep until closed (see below)
+
+keep semantics (bit5):
+- A session with no request for the idle timeout is closed by the device, so a client that went away (an Atari
+  has no reset line the firmware can see) does not hold a handle for ever. The timeout is wall-clock time
+  (default 20 minutes; a POST/PUT still waiting for its body: 10 seconds), measured from the last request on
+  that handle, not poll ticks.
+- A session opened with `keep` is exempt: it stays until the host sends `Close`, or the client's host reset
+  reclaims it. Use it for a long-lived connection that may be quiet for a long time (a pipe read on demand).
+- A `keep` session is never chosen for eviction, whatever `allow_evict` says: if every handle is a `keep`
+  session, `Open` returns `DeviceBusy`.
+- Firmware that predates the flag ignores the bit, so a client may always set it; it just keeps the old timeout.
 
 allow_evict semantics:
 - When allow_evict=0 (default), `Open` MUST return `DeviceBusy` if no free handles are available.
   The device MUST NOT evict an existing active handle.
-- When allow_evict=1, the device MAY evict the least-recently-used (LRU) active handle to satisfy the Open.
+- When allow_evict=1, the device MAY evict the least-recently-used (LRU) active handle that is not a `keep` session to satisfy the Open.
   Any evicted handle becomes immediately invalid; subsequent Info/Read/Write/Close on it MUST return InvalidRequest.
 
 ### Response

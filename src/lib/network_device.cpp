@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <chrono>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -25,6 +26,7 @@ using fujinet::io::netproto::Reader;
 using fujinet::io::protocol::NetworkCommand;
 
 static constexpr std::uint8_t NET_OPEN_FLAG_STREAM_NO_PROBE = 0x10;
+static constexpr std::uint8_t NET_OPEN_FLAG_KEEP = 0x20;   // exempt from idle reaping and eviction
 static constexpr std::uint8_t NET_READ_FLAG_EOF = 0x01;
 static constexpr std::uint8_t NET_READ_FLAG_TRUNCATED = 0x02;
 static constexpr std::uint8_t NET_READ_FLAG_MORE_AVAILABLE = 0x04;
@@ -56,18 +58,23 @@ static bool extract_scheme_lower(std::string_view url, std::string& outSchemeLow
 
 NetworkDevice::NetworkDevice(ProtocolRegistry registry, NetworkDeviceSettings settings)
     : _registry(std::move(registry))
-    , _settings(settings)
+    , _settings(std::move(settings))
 {
+}
+
+std::uint64_t NetworkDevice::now_ms() const
+{
+    if (_settings.clockMs) return _settings.clockMs();
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
 void NetworkDevice::poll()
 {
     ++_tickNow;
 
-    // Shorter timeout for "body upload in progress" sessions so we don't
-    // wedge the session table if the host dies mid-upload.
-    // With a 50ms tick, 20 ticks = 1s.
-    static constexpr std::uint64_t BODY_UPLOAD_TIMEOUT_TICKS = 20ull * 10ull; // ~10s
+    const std::uint64_t nowMs = now_ms();
 
     for (auto& s : _sessions) {
         if (!s.active || !s.proto) continue;
@@ -88,19 +95,18 @@ void NetworkDevice::poll()
 
         // If backend can signal progress/completion later, we can update s.completed
         // and/or touch(s) here when progress is made.
-        // const std::uint64_t age  = _tickNow - s.createdTick;
-        const std::uint64_t idle = _tickNow - s.lastActivityTick;
+        const std::uint64_t idleMs = nowMs - s.lastActivityMs;
 
         // If we're waiting for request body data and the client goes away,
         // reap quickly to free the session slot.
-        if (s.awaitingBody && idle > BODY_UPLOAD_TIMEOUT_TICKS) {
+        if (s.awaitingBody && idleMs > _settings.bodyUploadTimeoutMs) {
             close_and_free(s);
             continue;
         }
 
         // Reap dead/leaked handles:
-        // - Enforce idle timeout
-        if (idle > IDLE_TIMEOUT_TICKS) {
+        // - Enforce idle timeout (a keep session waits until it is closed)
+        if (!s.keepAlive && idleMs > _settings.idleTimeoutMs) {
             close_and_free(s);
         }
     }
@@ -658,6 +664,7 @@ IOResponse NetworkDevice::handle(const IORequest& request)
             slot->method = method;
             slot->clientOwner = request.clientOwner;
             slot->flags = flags;
+            slot->keepAlive = (flags & NET_OPEN_FLAG_KEEP) != 0;
             slot->url = openReq.url;
             slot->proto = std::move(proto);
 

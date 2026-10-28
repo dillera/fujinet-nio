@@ -236,11 +236,14 @@ def tcp_open(
     wait_connected: bool,
     info_poll_s: float,
     stream_no_probe: bool = False,
+    keep: bool = False,
 ) -> TcpStreamSession:
     # method is ignored by TCP backend; use GET (1) for consistency
     open_flags = np.FLAG_ALLOW_EVICT
     if stream_no_probe:
         open_flags |= np.FLAG_STREAM_NO_PROBE
+    if keep:
+        open_flags |= np.FLAG_KEEP   # exempt from idle reaping; it also cannot be evicted
     open_req = np.build_open_req(
         method=1,
         flags=open_flags,
