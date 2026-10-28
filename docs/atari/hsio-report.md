@@ -424,13 +424,35 @@ same boot):
 - Whether the U1MB handler loses the same frames is not known yet; the next run reads the firmware's
   "command frames lost" for both paths.
 
+### Lost command frames, both paths (log 024: index 0, one boot, `sio.reset` between the runs)
+
+| | U1MB handler (`H` off) | library driver (`H` on) |
+|---|---|---|
+| native read 128 / 256 / 512 | 35.6 / 46.8 / 49.2 ms | 33.8 / **46.0** / 49.4 |
+| native info | 28.4 | 26.8 |
+| command frames lost (firmware's count) | 1 | 4 |
+| driver timeouts (Atari's count) | not counted | 11 |
+| frames the firmware saw | 1,400 (the minimum) | 1,404 (minimum plus the `3F`s and the `Q` the driver sends) |
+
+- Both paths lose command frames, the library driver slightly more (4 against 1 in 1,400, which is about
+  0.3 and 0.07 percent; two runs of this size cannot tell them apart with confidence).
+- **The driver's 11 timeouts are more than the 4 frames the firmware lost.** About 7 timeouts have no
+  counterpart on the firmware side: no abandoned frame, and (apart from at most one) no duplicate frame.
+  So some timeouts happen between the firmware having a command frame and the Atari seeing the reply, or
+  are the driver's own. That is the part still unexplained; at about 40 ms each, 11 timeouts cost 0.3 ms a
+  call.
+- The library driver is 1 to 2 ms faster on the smaller calls and level on the 512-byte read. The U1MB
+  handler is a fully adequate default, and the library driver is worth having only for a BIOS that does not
+  poll `$7F` (Ultimate BIOS 4.20) or no U1MB.
+
 - Changing `sio.hsio` between runs needs a power cycle: the U1MB keeps the `$7F` entry it polled.
 
 ## Open items
 
 - **The ACK timeouts**: about 6 of the roughly 20 a run were CMD glitches during a write (fixed, see
-  above); about 14 a run (1 percent of the transactions, 40 ms each) remain, cause unknown. Not CMD edges
-  while we transmit (trial 8).
+  above); 11-14 a run (about 1 percent of the transactions, 40 ms each) remain with the library driver, and
+  the U1MB handler loses frames too, at a similar order (log 024). The firmware sees only a third of them
+  as abandoned command frames; the rest are unexplained. Not CMD edges while we transmit (trial 8).
 - **The Atari's time after a response** (about 37 ms of a 79 ms read): not speed dependent; the checksum
   was about 14 ms of it and is fixed; the rest is to be measured.
 - **The U1MB speeds up only `D1:`**: only with Ultimate BIOS 4.20. 4.33 polls every device and speeds up
