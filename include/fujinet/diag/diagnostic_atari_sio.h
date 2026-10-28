@@ -19,6 +19,7 @@ namespace fujinet::diag {
 // compares what the UART can do with the POKEY high-speed rates (see docs/atari/hsio.md).
 // `save` (optional) backs sio.save: stores the current index and tuning in the config, returning an error text or "".
 // `set_tuning` (optional) backs sio.tune: the ACK and data gaps and the second-listener window.
+// `set_proc` and `pulse_proc` (optional) back sio.proc: assert or release the PROC line to the Atari, or pulse it (count, low ms, high ms).
 // `set_hsio_index` (optional) backs sio.hsio: -1 turns high-speed SIO off, 0..9 sets the index, and its second argument is whether to fall back to 19200 on unreadable command frames.
 std::unique_ptr<IDiagnosticProvider> create_atari_sio_diagnostic_provider(
     std::function<::fujinet::io::AtariSioStats()> snapshot,
@@ -26,6 +27,8 @@ std::unique_ptr<IDiagnosticProvider> create_atari_sio_diagnostic_provider(
     std::function<std::uint32_t(std::uint32_t)> probe_baud = {},
     std::function<bool(int, bool)> set_hsio_index = {},
     std::function<void(const ::fujinet::io::AtariSioTuning&)> set_tuning = {},
-    std::function<std::string(int, const ::fujinet::io::AtariSioTuning&)> save = {});
+    std::function<std::string(int, const ::fujinet::io::AtariSioTuning&)> save = {},
+    std::function<bool(bool)> set_proc = {},
+    std::function<bool(unsigned, unsigned, unsigned)> pulse_proc = {});
 
 } // namespace fujinet::diag

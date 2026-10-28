@@ -204,6 +204,11 @@ struct AtariSioStats {
     AtariSioTuning tuning;
     AtariSioTxnStats txn;
     std::uint32_t stale_replies_dropped{0};  // native replies the Atari never read, discarded after 2 s
+    // The PROC (proceed) line to the Atari, open drain: low asserts it and the Atari's PIA sees a falling
+    // edge. Driven only by sio.proc so far (docs/atari/proc.md).
+    bool proc_available{false};        // the board maps a PROC pin
+    bool proc_low{false};              // the pin reads low (asserted) right now
+    std::uint32_t proc_asserts{0};     // times it was driven low (a pulse is one)
 };
 
 } // namespace fujinet::io

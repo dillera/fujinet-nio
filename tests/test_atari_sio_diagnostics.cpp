@@ -374,3 +374,55 @@ TEST_CASE("sio.save hands the current high-speed index and tuning to the config 
     CHECK(r.status == DiagStatus::NotReady);
     CHECK(contains(r.text, "config store not available"));
 }
+
+TEST_CASE("sio.proc asserts, releases and pulses the PROC line, and sio.status shows it")
+{
+    AtariSioStats stats;
+    stats.proc_available = true;
+    std::vector<bool> levels;
+    std::vector<unsigned> pulses;
+    auto provider = fujinet::diag::create_atari_sio_diagnostic_provider(
+        [&] { return stats; }, [] {}, {}, {}, {}, {},
+        [&](bool asserted) { levels.push_back(asserted); stats.proc_low = asserted; if (asserted) ++stats.proc_asserts; return true; },
+        [&](unsigned count, unsigned low, unsigned high) { pulses = {count, low, high}; return true; });
+
+    CHECK(contains(run(*provider, {"sio.status"}).text, "proc: released (high), driven low 0 times"));
+    CHECK(contains(run(*provider, {"sio.proc"}).text, "released (high)"));
+
+    CHECK(contains(run(*provider, {"sio.proc", "low"}).text, "ASSERTED (low), driven low 1 times"));
+    CHECK(contains(run(*provider, {"sio.proc", "high"}).text, "released (high)"));
+    REQUIRE(levels.size() == 2);
+    CHECK(levels[0] == true);
+    CHECK(levels[1] == false);
+
+    CHECK(contains(run(*provider, {"sio.proc", "pulse"}).text, "pulsed PROC 1 time(s), low 10 ms, high 10 ms"));
+    CHECK(pulses == std::vector<unsigned>{1, 10, 10});
+    run(*provider, {"sio.proc", "pulse", "5", "20", "30"});
+    CHECK(pulses == std::vector<unsigned>{5, 20, 30});
+
+    // Out of range or malformed: refused, and nothing is driven.
+    pulses.clear();
+    for (const auto& bad : std::vector<std::vector<std::string_view>>{
+             {"sio.proc", "pulse", "0"}, {"sio.proc", "pulse", "101"}, {"sio.proc", "pulse", "1", "0"},
+             {"sio.proc", "pulse", "1", "1001"}, {"sio.proc", "pulse", "x"}, {"sio.proc", "flip"},
+             {"sio.proc", "low", "1"}, {"sio.proc", "pulse", "1", "1", "1", "1"}}) {
+        CHECK(run(*provider, bad).status != fujinet::diag::DiagStatus::Ok);
+    }
+    CHECK(pulses.empty());
+}
+
+TEST_CASE("sio.proc is absent without the callbacks, and says so on a board with no PROC pin")
+{
+    AtariSioStats stats;
+    auto plain = fujinet::diag::create_atari_sio_diagnostic_provider([&] { return stats; }, [] {});
+    std::vector<fujinet::diag::DiagCommandSpec> cmds;
+    plain->list_commands(cmds);
+    for (const auto& c : cmds) CHECK(c.name != "sio.proc");
+    CHECK_FALSE(contains(run(*plain, {"sio.status"}).text, "proc:"));
+
+    auto nopin = fujinet::diag::create_atari_sio_diagnostic_provider(
+        [&] { return stats; }, [] {}, {}, {}, {}, {}, [](bool) { return false; },
+        [](unsigned, unsigned, unsigned) { return false; });
+    CHECK(contains(run(*nopin, {"sio.status"}).text, "this board maps no PROC pin"));
+    CHECK(run(*nopin, {"sio.proc", "low"}).status != fujinet::diag::DiagStatus::Ok);
+}

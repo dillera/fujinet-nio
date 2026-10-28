@@ -400,6 +400,10 @@ extern "C" void fujinet_core_task(void* arg)
                         saved.ignoreWriteGlitches = tuning.ignore_write_glitches;
                         store->save(fuji->config());
                         return {};
+                    },
+                    [ingress](bool asserted) { return ingress->set_proc(asserted); },
+                    [ingress](unsigned count, unsigned lowMs, unsigned highMs) {
+                        return ingress->pulse_proc(count, lowMs, highMs);
                     });
                 if (atariSioDiag) diagRegistry.add_provider(*atariSioDiag);
             }

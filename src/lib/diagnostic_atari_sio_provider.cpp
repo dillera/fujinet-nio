@@ -96,9 +96,11 @@ public:
                                std::function<std::uint32_t(std::uint32_t)> probe_baud,
                                std::function<bool(int, bool)> set_hsio_index,
                                std::function<void(const io::AtariSioTuning&)> set_tuning,
-                               std::function<std::string(int, const io::AtariSioTuning&)> save)
+                               std::function<std::string(int, const io::AtariSioTuning&)> save,
+                               std::function<bool(bool)> set_proc, std::function<bool(unsigned, unsigned, unsigned)> pulse_proc)
         : _snapshot(std::move(snapshot)), _reset(std::move(reset)), _probe_baud(std::move(probe_baud)),
-          _set_hsio_index(std::move(set_hsio_index)), _set_tuning(std::move(set_tuning)), _save(std::move(save))
+          _set_hsio_index(std::move(set_hsio_index)), _set_tuning(std::move(set_tuning)), _save(std::move(save)),
+          _set_proc(std::move(set_proc)), _pulse_proc(std::move(pulse_proc))
     {}
 
     std::string_view provider_id() const noexcept override { return "sio"; }
@@ -135,6 +137,14 @@ public:
                 .safe = false,
             });
         }
+        if (_set_proc && _pulse_proc) {
+            out.push_back(DiagCommandSpec{
+                .name = "sio.proc",
+                .summary = "PROC (proceed) line to the Atari: show it, assert (low), release, or pulse it (Atari idle)",
+                .usage = "sio.proc [low|high|pulse [<count> [<low ms> [<high ms>]]]]",
+                .safe = false,
+            });
+        }
         if (_save) {
             out.push_back(DiagCommandSpec{
                 .name = "sio.save",
@@ -168,6 +178,9 @@ public:
         }
         if (cmd == "sio.tune" && _set_tuning) {
             return tune(args);
+        }
+        if (cmd == "sio.proc" && _set_proc && _pulse_proc) {
+            return proc(args);
         }
         if (cmd == "sio.save" && _save) {
             const io::AtariSioStats s = _snapshot();
@@ -219,6 +232,43 @@ private:
         std::string text;
         line(text, tuning_text(t));
         return DiagResult::ok(std::move(text));
+    }
+
+    static std::string proc_line(const io::AtariSioStats& s)
+    {
+        if (!s.proc_available) return "proc: this board maps no PROC pin\r\n";
+        return std::string("proc: ") + (s.proc_low ? "ASSERTED (low)" : "released (high)") + ", driven low " +
+               std::to_string(s.proc_asserts) + " times since boot (sio.proc low|high|pulse)\r\n";
+    }
+
+    // sio.proc: the only way to cause a PROC edge until the protocol uses the line (docs/atari/proc.md).
+    // A pulse blocks the SIO task for its whole length, so the bounds are small and the Atari should be
+    // idle (waiting for a key).
+    DiagResult proc(const DiagArgsView& args) const
+    {
+        const char* usage = "usage: sio.proc [low|high|pulse [<count 1-100> [<low ms 1-1000> [<high ms 1-1000>]]]]";
+        if (args.argv.size() == 1) return DiagResult::ok(proc_line(_snapshot()));
+        const std::string_view what = args.argv[1];
+        if (what == "low" || what == "high") {
+            if (args.argv.size() != 2) return DiagResult::invalid_args(usage);
+            if (!_set_proc(what == "low")) return DiagResult::not_ready("this board maps no PROC pin");
+            return DiagResult::ok(proc_line(_snapshot()));
+        }
+        if (what != "pulse" || args.argv.size() > 5) return DiagResult::invalid_args(usage);
+        unsigned v[3] = {1, 10, 10};
+        const unsigned max[3] = {100, 1000, 1000};
+        for (std::size_t i = 2; i < args.argv.size(); ++i) {
+            const std::string_view value = args.argv[i];
+            if (value.empty() || value.size() > 4 || value.find_first_not_of("0123456789") != std::string_view::npos) {
+                return DiagResult::invalid_args(usage);
+            }
+            v[i - 2] = static_cast<unsigned>(std::stoul(std::string(value)));
+            if (v[i - 2] < 1 || v[i - 2] > max[i - 2]) return DiagResult::invalid_args(usage);
+        }
+        if (!_pulse_proc(v[0], v[1], v[2])) return DiagResult::not_ready("this board maps no PROC pin");
+        std::string text = "pulsed PROC " + std::to_string(v[0]) + " time(s), low " + std::to_string(v[1]) + " ms, high " +
+                           std::to_string(v[2]) + " ms\r\n";
+        return DiagResult::ok(text + proc_line(_snapshot()));
     }
 
     DiagResult hsio(const DiagArgsView& args) const
@@ -349,6 +399,7 @@ private:
         line(text, "cmd_edges: " + n(s.cmd_edges) + "   cmd_line: " + (s.cmd_line_low ? "low (asserted)" : "high (idle)"));
         line(text, "baud: set " + n(s.uart_baud_set) + ", UART hardware reports " + n(s.uart_baud_hw));
         text += hsio_line(s);
+        if (_set_proc) text += proc_line(s);
         if (_set_tuning) line(text, tuning_text(s.tuning));
         if (s.alt_baud != 0) {
             line(text, "second listener (UART2, same RX pin) at " + n(s.alt_baud) + " baud: command frames decoded " +
@@ -514,6 +565,8 @@ private:
     std::function<bool(int, bool)> _set_hsio_index;
     std::function<void(const io::AtariSioTuning&)> _set_tuning;
     std::function<std::string(int, const io::AtariSioTuning&)> _save;
+    std::function<bool(bool)> _set_proc;
+    std::function<bool(unsigned, unsigned, unsigned)> _pulse_proc;
 };
 
 } // namespace
@@ -524,13 +577,16 @@ std::unique_ptr<IDiagnosticProvider> create_atari_sio_diagnostic_provider(
     std::function<std::uint32_t(std::uint32_t)> probe_baud,
     std::function<bool(int, bool)> set_hsio_index,
     std::function<void(const io::AtariSioTuning&)> set_tuning,
-    std::function<std::string(int, const io::AtariSioTuning&)> save)
+    std::function<std::string(int, const io::AtariSioTuning&)> save,
+    std::function<bool(bool)> set_proc,
+    std::function<bool(unsigned, unsigned, unsigned)> pulse_proc)
 {
     if (!snapshot || !reset) {
         return nullptr;
     }
     return std::make_unique<AtariSioDiagnosticProvider>(std::move(snapshot), std::move(reset), std::move(probe_baud),
-                                                        std::move(set_hsio_index), std::move(set_tuning), std::move(save));
+                                                        std::move(set_hsio_index), std::move(set_tuning), std::move(save),
+                                                        std::move(set_proc), std::move(pulse_proc));
 }
 
 } // namespace fujinet::diag

@@ -71,6 +71,7 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
     const auto& pins = pinmap();
     configure_sio_lines(pins);
     _cmd_pin = pins.sio.cmd;
+    _proc_pin = pins.sio.proc;
     if (pins.sio.cmd >= 0 && pins.sio.cmd < GPIO_NUM_MAX) {
         const auto cmd = static_cast<gpio_num_t>(pins.sio.cmd);
         gpio_set_intr_type(cmd, GPIO_INTR_ANYEDGE);
@@ -195,12 +196,35 @@ io::AtariSioStats AtariSioIngress::stats() const
     out.tuning = _tuning;
     out.txn = _txn;
     out.tx_noise_edges = _tx_noise_edges;
+    out.proc_available = _proc_pin >= 0 && _proc_pin < GPIO_NUM_MAX;
+    out.proc_low = out.proc_available && gpio_get_level(static_cast<gpio_num_t>(_proc_pin)) == 0;
+    out.proc_asserts = _proc_asserts;
     if (_alt) {
         out.alt_baud = _alt->uart_config().baudRate;
         out.alt_valid_frames = _alt_valid;
         out.alt_last_frame = _alt_last;
     }
     return out;
+}
+
+bool AtariSioIngress::set_proc(bool asserted)
+{
+    if (_proc_pin < 0 || _proc_pin >= GPIO_NUM_MAX) return false;
+    if (asserted) ++_proc_asserts;
+    gpio_set_level(static_cast<gpio_num_t>(_proc_pin), asserted ? 0 : 1);
+    return true;
+}
+
+bool AtariSioIngress::pulse_proc(unsigned count, unsigned low_ms, unsigned high_ms)
+{
+    if (_proc_pin < 0 || _proc_pin >= GPIO_NUM_MAX) return false;
+    for (unsigned i = 0; i < count; ++i) {
+        set_proc(true);
+        vTaskDelay(pdMS_TO_TICKS(low_ms) ? pdMS_TO_TICKS(low_ms) : 1);
+        set_proc(false);
+        vTaskDelay(pdMS_TO_TICKS(high_ms) ? pdMS_TO_TICKS(high_ms) : 1);
+    }
+    return true;
 }
 
 bool AtariSioIngress::set_hsio_index(int index, bool fallback)

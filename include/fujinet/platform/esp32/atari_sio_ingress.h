@@ -37,6 +37,11 @@ public:
     // effect when the Atari next asks, and is not saved. False for an index out of range.
     // `fallback` false keeps the UART at the high speed however many command frames are unreadable.
     bool set_hsio_index(int index, bool fallback = true);
+    // PROC (proceed) to the Atari: drive the open-drain pin low (asserted) or release it. False when the
+    // board maps no PROC pin. pulse_proc() asserts it `count` times for `low_ms` with `high_ms` between and
+    // blocks the calling task for the whole time, so run it with the Atari idle (sio.proc).
+    bool set_proc(bool asserted);
+    bool pulse_proc(unsigned count, unsigned low_ms, unsigned high_ms);
     // The tunable gaps and window (sio.tune); not saved.
     void set_tuning(const io::AtariSioTuning& tuning)
     {
@@ -87,6 +92,8 @@ private:
     std::uint32_t _poll_gap_us_max{0};
     std::uint32_t _poll_gap_at_us{0};
     int _cmd_pin{-1};
+    int _proc_pin{-1};
+    std::uint32_t _proc_asserts{0};
     void* _owner_task{nullptr};
 };
 
