@@ -57,6 +57,13 @@ the 20 ms between pulses) after each flag it cleared, so pulses 2 to 5 merged. T
 tight loop and redraws only after the edges stop. The "flag set for about a second" and "pending for about
 five seconds" seen were the old redraw interval, not the hardware.
 
+Second run: poll mode then counted far too many (2,964 for 25 pulses; 133, 420 and 686 for runs of 5, growing
+with how long the program ran before the reset). The cause was in the program, not the line: the clearing
+read of `PORTA` was written in C as an unused read, and cc65 removes an unused read of anything that is not
+`volatile` (the PIA struct in `<atari.h>` is not), so the flag was never cleared and was counted on every
+pass of the loop. The library's handler clears it in assembly, which is why interrupt mode counted 25 of 25
+throughout. PROCTEST now reads `PORTA` through a volatile pointer (checked in the compiler listing).
+
 ## Not done yet: using it for the protocol
 
 The point of PROC for NIO is that a client can wait for a response (or for data a service has pending) on an
