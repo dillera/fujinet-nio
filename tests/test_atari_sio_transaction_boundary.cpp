@@ -460,9 +460,10 @@ TEST_CASE("Atari SIO capture takes the frame a second listener decoded when the 
     const std::array<std::uint8_t, 5> heard{0x7f, 0x51, 0, 0, 0xd0};
     auto poll = [&] {
         capture.poll(boundary, router, uart, [&] { return low; }, [&] { return time; },
-                     [&](std::array<std::uint8_t, 5>& frame) {
+                     [&](std::array<std::uint8_t, 5>& frame, bool unambiguous) {
                          if (!alt_ready) return false;
                          alt_ready = false;
+                         if (!unambiguous) return false;
                          ++alt_taken;
                          frame = heard;
                          return true;
@@ -503,6 +504,34 @@ TEST_CASE("Atari SIO capture takes the frame a second listener decoded when the 
     capture.reset_stats();
     CHECK(capture.stats().frames_from_second_listener == 0);
     CHECK(capture.stats().first_alt_decisions[0].frame[0] == 0);
+}
+
+TEST_CASE("Atari SIO discards an alternate frame after ambiguous CMD edges")
+{
+    fujinet::io::AtariSioCapture capture;
+    fujinet::io::AtariSioTransactionBoundary boundary;
+    CaptureUart uart;
+    CaptureRouter router;
+    bool pending = true;
+    int toggles = 0;
+    boundary.note_cmd_edge();
+    boundary.note_cmd_edge();
+    auto alternate = [&](std::array<std::uint8_t, 5>& frame, bool unambiguous) {
+        if (!pending) return false;
+        pending = false;
+        if (!unambiguous) return false;
+        ++toggles;
+        frame = {0x31, 'R', 0x1c, 0, 0x9f};
+        return true;
+    };
+    auto poll = [&] { capture.poll(boundary, router, uart, [] { return false; }, [] { return 1; }, alternate); };
+    poll();
+    CHECK_FALSE(pending);
+    CHECK(toggles == 0);
+    CHECK(router.command.empty());
+    CHECK(capture.stats().frames_from_second_listener == 0);
+    poll();
+    CHECK(router.command.empty());
 }
 
 TEST_CASE("Atari SIO per-command time splits our service time from the Atari's idle time")

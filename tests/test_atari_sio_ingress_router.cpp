@@ -154,6 +154,29 @@ TEST_CASE("Atari SIO ingress router keeps D1 and D8 on the disk frontend")
     CHECK(harness.device->requests.empty());
 }
 
+TEST_CASE("disk read acknowledges a valid command before accessing the image")
+{
+    Harness h;
+    int acknowledgements = 0;
+    h.disk_frontend.set_early_read_ack([&] {
+        if (acknowledgements == 0) CHECK(h.disks.stats(0).readRequests == 0);
+        ++acknowledgements;
+    });
+    auto bad = command(0x31, 'R', 1);
+    bad.back() ^= 1;
+    feed(h.router, bad);
+    CHECK(acknowledgements == 0);
+    REQUIRE(h.replies.back() == std::vector<std::uint8_t>{'N'});
+    feed(h.router, command(0x31, 'R', 1));
+    CHECK(acknowledgements == 1);
+    REQUIRE(h.replies.back().size() == 130);
+    CHECK(h.replies.back()[0] == 'C');
+    CHECK(h.replies.back()[1] == 0x11);
+    feed(h.router, command(0x31, 'R', 0));
+    CHECK(acknowledgements == 2);
+    CHECK(h.replies.back() == std::vector<std::uint8_t>{'E'});
+}
+
 TEST_CASE("Atari SIO ingress router sends native W data to the real core route")
 {
     Harness harness;

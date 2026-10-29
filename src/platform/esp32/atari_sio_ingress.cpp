@@ -67,6 +67,7 @@ AtariSioIngress::AtariSioIngress(const config::FujiConfig& config,
 {
     _router.set_high_speed_handler([this] { enter_high_speed(); });
     _nio.set_early_ack([this] { send_early_ack(); });
+    _disk.set_early_read_ack([this] { send_early_ack(); });
     _owner_task = xTaskGetCurrentTaskHandle();
     _nio.set_clock([]() -> std::uint64_t { return static_cast<std::uint64_t>(esp_timer_get_time()); });
     // The network service says when a session of this client can be read (docs/atari/proc.md).
@@ -138,6 +139,7 @@ void AtariSioIngress::send_early_ack()
     if (!_uart) return;
     _reply.record(static_cast<std::uint32_t>(esp_timer_get_time()), _capture.processing_start_us(),
                   _capture.processing_command(), _capture.processing_release_us());
+    if (_capture.processing_command()) _txn.begin(_capture.last_frame()[1], _capture.processing_release_us());
     _uart->write(&sio_ack, 1);
     _uart->flushOutput();
     _early_ack_us = static_cast<std::uint32_t>(esp_timer_get_time());
@@ -149,15 +151,24 @@ void AtariSioIngress::send(const std::vector<std::uint8_t>& bytes)
     if (bytes.empty() || !_uart) return;
     // Timed before the write: this is when the reply starts, which is what the Atari waits for.
     _reply.record(static_cast<std::uint32_t>(esp_timer_get_time()), _capture.processing_start_us(),
-                  _capture.processing_command(), _capture.processing_release_us());
-    if (_capture.processing_command()) _txn.begin(_capture.last_frame()[1], _capture.processing_release_us());
-    if (_early_ack_us != 0 && bytes.size() == 1 && (bytes[0] == sio_complete || bytes[0] == sio_error)) {
+                  _capture.processing_command() && _early_ack_us == 0, _capture.processing_release_us());
+    if (_capture.processing_command() && _early_ack_us == 0)
+        _txn.begin(_capture.last_frame()[1], _capture.processing_release_us());
+    if (_early_ack_us != 0 && (bytes[0] == sio_complete || bytes[0] == sio_error)) {
         // The ACK went out before the request ran: keep the gap the Atari needs between ACK and COMPLETE.
         const std::uint32_t since = static_cast<std::uint32_t>(esp_timer_get_time()) - _early_ack_us;
         if (since < _tuning.ack_gap_us) esp_rom_delay_us(_tuning.ack_gap_us - since);
         _early_ack_us = 0;
         _uart->write(bytes.data(), 1);
         _uart->flushOutput();
+        if (bytes.size() > 1) {
+            if (_speed.high() && _tuning.data_gap_us) esp_rom_delay_us(_tuning.data_gap_us);
+            const auto data_start = static_cast<std::uint32_t>(esp_timer_get_time());
+            _uart->write(bytes.data() + 1, bytes.size() - 1);
+            _uart->flushOutput();
+            _reply.record_data(static_cast<std::uint32_t>(bytes.size() - 1),
+                               static_cast<std::uint32_t>(esp_timer_get_time()) - data_start);
+        }
         drop_tx_noise_edges();
         _txn.end(static_cast<std::uint32_t>(esp_timer_get_time()));
         return;
@@ -236,6 +247,7 @@ io::AtariSioStats AtariSioIngress::stats() const
     if (_alt) {
         out.alt_baud = _alt->uart_config().baudRate;
         out.alt_valid_frames = _alt_valid;
+        out.alt_ambiguous_dropped = _alt_ambiguous_dropped;
         out.alt_last_frame = _alt_last;
     }
     return out;
@@ -352,11 +364,12 @@ void AtariSioIngress::toggle_speed()
 }
 
 // A frame heard at the other speed only counts for the command that has just ended, so it expires fast.
-bool AtariSioIngress::take_alt_frame(std::array<std::uint8_t, 5>& frame)
+bool AtariSioIngress::take_alt_frame(std::array<std::uint8_t, 5>& frame, bool unambiguous)
 {
     if (!_alt_pending) return false;
     _alt_pending = false;
-    if (!_speed.enabled() || static_cast<std::uint32_t>(esp_timer_get_time()) - _alt_found_us > _tuning.alt_window_us) return false;
+    if (!unambiguous) ++_alt_ambiguous_dropped;
+    if (!unambiguous || !_speed.enabled() || static_cast<std::uint32_t>(esp_timer_get_time()) - _alt_found_us > _tuning.alt_window_us) return false;
     frame = _alt_last;
     toggle_speed();
     return true;
@@ -382,6 +395,7 @@ void AtariSioIngress::reset_stats()
     _hsio_switches = 0;
     _hsio_fallbacks = 0;
     _alt_valid = 0;
+    _alt_ambiguous_dropped = 0;
     _alt_last = {};
     _tx_noise_edges = 0;
     _poll_gap_us_max = 0;
@@ -439,7 +453,7 @@ void AtariSioIngress::poll()
     _capture.poll(_boundary, _router, *_uart,
                   [this] { return gpio_get_level(static_cast<gpio_num_t>(_cmd_pin)) == 0; },
                   [] { return esp_timer_get_time(); },
-                  [this](std::array<std::uint8_t, 5>& frame) { return take_alt_frame(frame); });
+                  [this](std::array<std::uint8_t, 5>& frame, bool unambiguous) { return take_alt_frame(frame, unambiguous); });
     // The legacy firmware's rule, kept as the backup for when the second listener does not catch it: two
     // unreadable command frames in a row mean the Atari is at the other speed, so toggle.
     if (_speed.enabled() && _speed.fallback() &&

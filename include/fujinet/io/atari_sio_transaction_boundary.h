@@ -60,13 +60,14 @@ public:
     void poll(AtariSioTransactionBoundary& boundary, Router& router, Uart& uart,
               Asserted asserted, Now now)
     {
-        poll(boundary, router, uart, asserted, now, [](std::array<std::uint8_t, 5>&) { return false; });
+        poll(boundary, router, uart, asserted, now, [](std::array<std::uint8_t, 5>&, bool) { return false; });
     }
 
-    // `alt_frame(frame)` (a second listener at the other speed): true, with a good command frame, when
+    // `alt_frame(frame, unambiguous)` (a second listener at the other speed): true, with a good command frame, when
     // one was decoded for the command that just ended. The capture then drops what the main UART made
     // of it and handles that frame instead. The callable switches the speed before it returns true, so
-    // the reply goes out at the speed the Atari used.
+    // the reply goes out at the speed the Atari used. When unambiguous is false,
+    // the callable must discard any pending frame without switching speed.
     template<class Router, class Uart, class Asserted, class Now, class AltFrame>
     void poll(AtariSioTransactionBoundary& boundary, Router& router, Uart& uart,
               Asserted asserted, Now now, AltFrame alt_frame)
@@ -112,7 +113,9 @@ public:
         }
         if (!low) {
             std::array<std::uint8_t, 5> from_alt{};
-            if (alt_frame(from_alt)) {
+            // Multiple pending CMD edges cannot identify the transaction that
+            // produced an alternate frame. Discard it without changing baud.
+            if (alt_frame(from_alt, edges <= 1)) {
                 if (_stats.frames_from_second_listener < _stats.first_alt_decisions.size()) {
                     auto& decision = _stats.first_alt_decisions[_stats.frames_from_second_listener];
                     decision.frame = from_alt;

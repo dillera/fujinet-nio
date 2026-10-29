@@ -5,6 +5,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <utility>
 #include <vector>
 
 namespace fujinet::io {
@@ -37,6 +39,9 @@ public:
 
     // The index answered to `3F` (the high-speed SIO query, docs/atari/hsio.md); -1 NAKs it.
     void set_hsio_index(int index) { _hsio_index = index; }
+    // Physical SIO can acknowledge a validated read before slow storage work.
+    // When installed, the returned read reply starts with COMPLETE or ERROR.
+    void set_early_read_ack(std::function<void()> send) { _early_read_ack = std::move(send); }
 
 private:
     enum class PendingWrite { None, Put, Verify };
@@ -53,6 +58,7 @@ private:
     std::size_t sector_bytes(std::size_t slot, std::uint16_t sector) const;
 
     int _hsio_index{-1};
+    std::function<void()> _early_read_ack;
     disk::DiskService& _service;
     std::array<DriveState, disk::DiskService::MAX_SLOTS> _state{};
     PendingWrite _pending{PendingWrite::None};

@@ -65,7 +65,7 @@ private:
     // second listener.
     void toggle_speed();
     // For the capture: a command frame the second listener decoded for the command that just ended.
-    bool take_alt_frame(std::array<std::uint8_t, 5>& frame);
+    bool take_alt_frame(std::array<std::uint8_t, 5>& frame, bool unambiguous);
     void leave_high_speed();
     void service_proc_notice();
     // The ACK for a native W's data frame, sent before the request runs (AtariSioNioFrontend::set_early_ack).
@@ -76,6 +76,7 @@ private:
     std::array<std::uint8_t, 5> _alt_window{};
     std::size_t _alt_used{0};
     std::uint32_t _alt_valid{0};
+    std::uint32_t _alt_ambiguous_dropped{0};
     std::array<std::uint8_t, 5> _alt_last{};
     bool _alt_pending{false};
     std::uint32_t _alt_found_us{0};

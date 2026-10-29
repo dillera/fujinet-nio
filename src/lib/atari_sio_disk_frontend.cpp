@@ -119,8 +119,12 @@ AtariSioDiskFrontend::Result AtariSioDiskFrontend::begin(const std::array<std::u
         result.high_speed = true;
         return result;
     }
-    case READ:
-        return read(slot, sector);
+    case READ: {
+        if (_early_read_ack) _early_read_ack();
+        auto result = read(slot, sector);
+        if (_early_read_ack) result.bytes.erase(result.bytes.begin());
+        return result;
+    }
     case PUT:
     case WRITE: {
         if (sector == 0) {

@@ -408,6 +408,7 @@ private:
             line(text, "second listener (UART2, same RX pin) at " + n(s.alt_baud) + " baud: command frames decoded " +
                            n(s.alt_valid_frames) + ", used instead of the main UART's " +
                            n(s.capture.frames_from_second_listener) + (s.alt_valid_frames ? ", last " + frame_text(s.alt_last_frame) : ""));
+            line(text, "second listener frames discarded with ambiguous CMD edges: " + n(s.alt_ambiguous_dropped));
         }
         for (std::size_t i = 0; i < s.capture.first_alt_decisions.size() &&
                                 i < s.capture.frames_from_second_listener; ++i) {

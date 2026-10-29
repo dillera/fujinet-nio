@@ -12,6 +12,12 @@ the second listener's decoded-frame count.
 The reply timing retains the command's release-edge timestamp when dispatching;
 previous builds could report too small a delay if another CMD edge arrived
 while the disk read was blocking.
+Physical disk reads acknowledge a valid command before accessing the image;
+COMPLETE and the data (or ERROR) follow when the read finishes. This protects
+the command ACK deadline from a slow TNFS fetch, but does not remove the
+Atari's overall wait for the read. A second-listener frame is discarded without
+switching speeds when multiple CMD edges are pending, because its transaction
+cannot be identified reliably.
 
 The trials, measurements and the justification for each timing value are in [hsio-report.md](hsio-report.md).
 
