@@ -10,6 +10,7 @@ enum class FileCommand : std::uint8_t {
     WriteFile     = 0x04,
     ResolvePath   = 0x05,
     MakeDirectory = 0x06,
+    ListPages     = 0x07,
 };
 
 // ListDirectory (0x02) request: after startIndex and maxPayloadBytes (u16le each), an
@@ -31,6 +32,20 @@ inline constexpr std::uint8_t kListEntryFlagDirectory = 0x01U;
 inline constexpr std::uint8_t kListEntryFlagNameTruncated = 0x80U;
 inline constexpr std::uint8_t kListLegacyMaxNameBytes = 220U;
 } // namespace list_directory
+
+// ListPages (0x07): paged directory listing for small clients. See docs/file_device_protocol.md.
+namespace list_pages {
+inline constexpr std::uint8_t kFlagSortByName      = 0x01U; // request: basename, ASCII case-insensitive
+inline constexpr std::uint8_t kFlagDirsFirst       = 0x02U; // request: directories first (with bit0)
+inline constexpr std::uint8_t kFlagRefresh         = 0x04U; // request: re-read, replacing the cache
+inline constexpr std::uint8_t kFlagTotalOnly       = 0x08U; // request: return no pages
+inline constexpr std::uint8_t kResponseFlagMore    = 0x01U; // response: pages exist after those returned
+inline constexpr std::uint8_t kResponseFlagNameCut = 0x02U; // response: some name was cut
+inline constexpr std::uint8_t kEntryFlagDirectory  = 0x01U;
+inline constexpr std::uint8_t kEntryFlagNameCut    = 0x80U;
+inline constexpr std::uint8_t kMaxPageSize         = 64U;
+inline constexpr std::uint8_t kDefaultMaxNameBytes = 220U;
+} // namespace list_pages
 
 inline FileCommand to_file_command(std::uint16_t raw)
 {

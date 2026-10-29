@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <chrono>
 
 #include "fujinet/fs/filesystem.h"
 
@@ -49,6 +50,18 @@ static constexpr uint16_t OPENMODE_WRITE_APPEND = 0x0008;
 static constexpr uint16_t OPENMODE_WRITE_CREATE = 0x0100;
 static constexpr uint16_t OPENMODE_WRITE_TRUNCATE = 0x0200;
 static constexpr uint16_t OPENMODE_CREATE_EXCLUSIVE = 0x0400;
+
+// OPENDIRX directory options (TNFS 1.1).
+static constexpr uint8_t DIROPT_NO_FOLDERSFIRST = 0x01;
+// OPENDIRX sort options (TNFS 1.1). Zero means "by name, ascending, case-insensitive".
+static constexpr uint8_t DIRSORT_NONE = 0x01;
+// READDIRX per-entry flags and reply status flags.
+static constexpr uint8_t DIRENTRY_DIR = 0x01;
+static constexpr uint8_t DIRSTATUS_EOF = 0x01;
+
+// Overall time budget for one directory listing operation (all retries included).
+// The core is single threaded; a dead server must not block it for longer.
+static constexpr std::chrono::milliseconds kListingDeadline{10000};
 
 static constexpr uint8_t RESULT_SUCCESS = 0x00;
 static constexpr uint8_t RESULT_NOT_PERMITTED = 0x01;
@@ -103,6 +116,20 @@ struct TnfsStat {
     uint16_t mode;
 };
 
+// One directory entry with its metadata (from READDIRX, or stat in the fallback).
+struct TnfsDirEntry {
+    std::string name;
+    bool isDir{false};
+    uint32_t size{0};
+    uint32_t mTime{0};
+};
+
+enum class TnfsListStatus {
+    Ok,
+    Error,
+    Timeout, // the listing deadline expired
+};
+
 class ITnfsClient {
 public:
     virtual ~ITnfsClient() = default;
@@ -120,6 +147,18 @@ public:
     virtual bool rename(const std::string& from, const std::string& to) = 0;
 
     virtual std::vector<std::string> listDirectory(const std::string& path) = 0;
+
+    // Entries [start, start+count) of the directory sorted as requested, with size and mtime,
+    // and the directory's total entry count. Bounded by `deadline` overall.
+    //
+    // The default implementation is the TNFS 1.0 fallback: OPENDIR/READDIR for names (sorted by
+    // name here, case-insensitively; directories-first cannot be honoured because that needs a
+    // stat of every entry), then stat() of ONLY the entries in the requested range.
+    // Clients with OPENDIRX/READDIRX override this and fall back to it.
+    virtual TnfsListStatus listDirectoryRange(const std::string& path, fs::DirSort sort, std::size_t start,
+                                              std::size_t count, std::vector<TnfsDirEntry>& out,
+                                              std::size_t& total,
+                                              std::chrono::milliseconds deadline = kListingDeadline);
 
     virtual int open(const std::string& path, uint16_t openMode, uint16_t createPerms) = 0;
     virtual bool close(int fileHandle) = 0;

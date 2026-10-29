@@ -438,33 +438,45 @@ public:
     }
 
     bool listDirectory(const std::string& path, std::vector<FileInfo>& outEntries) override {
+        // Whole directory in server order, through the bounded extended-directory path.
+        std::size_t total = 0;
+        return listDirectoryRange(path, DirSort::None, 0, static_cast<std::size_t>(-1), outEntries, total) ==
+               ListStatus::Ok;
+    }
+
+    bool supportsRangeListing() const override { return true; }
+
+    // Extended directory commands: one bounded round trip per page, no per-entry stat.
+    ListStatus listDirectoryRange(const std::string& path, DirSort sort, std::size_t start, std::size_t count,
+                                  std::vector<FileInfo>& out, std::size_t& total) override {
+        out.clear();
+        total = 0;
         ResolvedPath resolved{};
         if (!resolve_path(path, resolved)) {
-            return false;
+            return ListStatus::Error;
         }
 
-        if (!resolved.client->isDirectory(resolved.path)) {
-            return false;
+        std::vector<tnfs::TnfsDirEntry> entries;
+        const tnfs::TnfsListStatus st = resolved.client->listDirectoryRange(
+            resolved.path, sort, start, count, entries, total, tnfs::kListingDeadline);
+        if (st == tnfs::TnfsListStatus::Timeout) {
+            return ListStatus::Timeout;
+        }
+        if (st != tnfs::TnfsListStatus::Ok) {
+            return ListStatus::Error;
         }
 
-        outEntries.clear();
-        std::vector<std::string> entries = resolved.client->listDirectory(resolved.path);
-        for (const auto& entryName : entries) {
-            std::string entryPath = join_path(resolved.path, entryName);
-            tnfs::TnfsStat st{};
-            if (!resolved.client->stat(entryPath, st)) {
-                continue;
-            }
-
+        out.reserve(entries.size());
+        for (auto& e : entries) {
             FileInfo info{};
-            info.path = entryPath;
-            info.isDirectory = st.isDir;
-            info.sizeBytes = st.filesize;
-            info.modifiedTime = std::chrono::system_clock::from_time_t(st.mTime);
-            outEntries.push_back(std::move(info));
+            info.path = join_path(resolved.path, e.name);
+            info.isDirectory = e.isDir;
+            info.sizeBytes = e.isDir ? 0 : e.size;
+            info.modifiedTime = e.mTime == 0 ? std::chrono::system_clock::time_point{}
+                                             : std::chrono::system_clock::from_time_t(e.mTime);
+            out.push_back(std::move(info));
         }
-
-        return true;
+        return ListStatus::Ok;
     }
 
 private:

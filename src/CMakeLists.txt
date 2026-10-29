@@ -32,6 +32,7 @@ idf_component_register(
         lib/diagnostic_parse.cpp
         lib/diagnostic_registry.cpp
         lib/diagnostic_packet_link_provider.cpp
+        lib/directory_cache.cpp
         lib/diagnostic_uart_channel_provider.cpp
         lib/disk/atr_image.cpp
         lib/disk/dc42_image.cpp
@@ -47,6 +48,7 @@ idf_component_register(
         lib/file_device.cpp
         lib/file_device_init.cpp
         lib/fs/http_filesystem.cpp
+        lib/fs/directory_range.cpp
         lib/fs/tnfs_filesystem.cpp
         lib/fs_stdio.cpp
         lib/fuji_bus_packet.cpp
@@ -99,6 +101,7 @@ idf_component_register(
         lib/time_formatter.cpp
         lib/time_platform.cpp
         lib/tnfs/tnfs_tcp_client.cpp
+        lib/tnfs/tnfs_list_range.cpp
         lib/tnfs/tnfs_udp_client.cpp
         lib/transport/legacy/byte_based_legacy_transport.cpp
         lib/transport/legacy/iwm_traits.cpp

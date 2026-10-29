@@ -186,6 +186,77 @@ def cmd_list(args) -> int:
     return 0
 
 
+def cmd_list_pages(args) -> int:
+    uri = _parse_uri(args.uri)
+    flags = 0
+    if not args.no_sort:
+        flags |= fp.PAGES_FLAG_SORT_BY_NAME
+        if not args.no_dirs_first:
+            flags |= fp.PAGES_FLAG_DIRS_FIRST
+    if args.refresh:
+        flags |= fp.PAGES_FLAG_REFRESH
+    if args.total_only:
+        flags |= fp.PAGES_FLAG_TOTAL_ONLY
+
+    page = args.page
+    page_size = args.page_size
+    remaining = args.pages  # 0 = all
+    shown = 0
+    total = 0
+
+    with open_serial(args.port, args.baud, timeout_s=0.01) as ser:
+        bus = FujiBusSession().attach(ser, debug=args.debug)
+        while True:
+            req = fp.build_list_pages_req(
+                uri,
+                page,
+                page_size,
+                args.max_payload,
+                list_flags=flags,
+                max_name_bytes=args.max_name,
+            )
+            # Refresh only on the first request; later pages come from the cache.
+            flags &= ~fp.PAGES_FLAG_REFRESH
+            pkt = _send_file_command(
+                args=args,
+                bus=bus,
+                command=fp.CMD_LIST_PAGES,
+                payload=req,
+                cmd_txt="LIST_PAGES",
+            )
+            if pkt is None:
+                return 2
+            lr = fp.parse_list_pages_resp(pkt.payload)
+            total = lr.total_entries
+            if args.total_only:
+                print(f"{args.uri} total={total}")
+                return 0
+            if lr.page_count == 0:
+                if lr.more:
+                    if page_size > 1:
+                        page_size = max(1, page_size // 2)
+                        page *= 2  # keep roughly the same position
+                        continue
+                    print("page does not fit the payload budget", file=sys.stderr)
+                    return 1
+                break
+            for idx, entries in enumerate(lr.pages):
+                print(f"-- page {lr.start_page + idx} (size {lr.page_size}) --")
+                for e in entries:
+                    kind = "DIR " if e.is_dir else "FILE"
+                    cut = "~" if e.name_cut else ""
+                    print(f"{kind} {e.size_bytes:10d}  {fp.fmt_utc(e.mtime_unix):>20}  {e.name}{cut}")
+                shown += 1
+                if remaining and shown >= remaining:
+                    print(f"total={total}")
+                    return 0
+            page = lr.start_page + lr.page_count
+            if not lr.more:
+                break
+    print(f"total={total}")
+    return 0
+
+
 def cmd_stat(args) -> int:
     uri = _parse_uri(args.uri)
     req = fp.build_stat_req(uri)
@@ -660,6 +731,26 @@ def register_subcommands(subparsers) -> None:
     pl.add_argument("--verbose", action="store_true")
     pl.add_argument("uri", help="URI (e.g., tnfs://host:port/, /path, sd0:/path)")
     pl.set_defaults(fn=cmd_list)
+
+    plp = subparsers.add_parser(
+        "list-pages", help="List a directory by fixed-size pages (ListPages 0x07)"
+    )
+    plp.add_argument("--page", type=int, default=0, help="First page (0-based)")
+    plp.add_argument("--page-size", type=int, default=8, help="Entries per page (1..64)")
+    plp.add_argument("--pages", type=int, default=0, help="Stop after N pages (0 = all)")
+    plp.add_argument(
+        "--max-payload",
+        type=int,
+        default=480,
+        help="Byte budget for the pages in each response",
+    )
+    plp.add_argument("--max-name", type=int, default=0, help="Cut names longer than this (0 = 220)")
+    plp.add_argument("--no-sort", action="store_true", help="Filesystem order")
+    plp.add_argument("--no-dirs-first", action="store_true", help="Sort by name only")
+    plp.add_argument("--refresh", action="store_true", help="Re-read, replacing the cache")
+    plp.add_argument("--total-only", action="store_true", help="Only report the entry count")
+    plp.add_argument("uri", help="URI (e.g., tnfs://host:port/dir, sd0:/path)")
+    plp.set_defaults(fn=cmd_list_pages)
 
     ps = subparsers.add_parser("stat", help="Stat a file/dir via FileDevice")
     ps.add_argument("uri", help="URI (e.g., tnfs://host:port/file, /path, sd0:/path)")

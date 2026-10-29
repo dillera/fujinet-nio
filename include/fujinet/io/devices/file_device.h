@@ -2,6 +2,7 @@
 
 #include "fujinet/io/devices/virtual_device.h"
 #include "fujinet/fs/storage_manager.h"
+#include "fujinet/io/directory_cache.h"
 
 namespace fujinet::io {
 
@@ -14,9 +15,11 @@ public:
 
 private:
     fs::StorageManager& _storage;
+    DirectoryCache _dirCache;
 
     IOResponse handle_stat(const IORequest& request);
     IOResponse handle_list_directory(const IORequest& request);
+    IOResponse handle_list_pages(const IORequest& request);
     IOResponse handle_read_file(const IORequest& request);
     IOResponse handle_write_file(const IORequest& request);
     IOResponse handle_resolve_path(const IORequest& request);

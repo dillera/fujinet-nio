@@ -60,6 +60,14 @@ public:
         }
 
         _sessionId = read_u16le(pkt.sessionIdL, pkt.sessionIdH);
+        // Reply: status, server version (minor, major), min retry. OPENDIRX/READDIRX are 1.1+.
+        const unsigned serverMinor = pkt.payload[1];
+        const unsigned serverMajor = pkt.payload[2];
+        if (serverMajor == 0 && serverMinor == 0) {
+            // Unknown version: try the extended commands and learn from the reply.
+        } else if (serverMajor < 1 || (serverMajor == 1 && serverMinor < 1)) {
+            _noDirX = true;
+        }
         FN_LOGI(TAG, "Mounted %s session 0x%04X", _transportName, static_cast<unsigned>(_sessionId));
         return true;
     }
@@ -199,6 +207,45 @@ public:
         send_and_receive(closePkt, 1);
 
         return entries;
+    }
+
+    TnfsListStatus listDirectoryRange(const std::string& path, fs::DirSort sort, std::size_t start,
+                                      std::size_t count, std::vector<TnfsDirEntry>& out, std::size_t& total,
+                                      std::chrono::milliseconds deadline = kListingDeadline) override
+    {
+        out.clear();
+        total = 0;
+        if (_sessionId == 0) {
+            return TnfsListStatus::Error;
+        }
+
+        DeadlineScope scope(*this, deadline);
+
+        if (!_noDirX) {
+            const XResult r = list_range_x(path, sort, start, count, out, total);
+            switch (r) {
+            case XResult::Ok:          return TnfsListStatus::Ok;
+            case XResult::Error:       return TnfsListStatus::Error;
+            case XResult::Timeout:     return TnfsListStatus::Timeout;
+            case XResult::Unsupported: break;
+            }
+            out.clear();
+            total = 0;
+        }
+
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+            _deadline - std::chrono::steady_clock::now());
+        if (left.count() <= 0) {
+            return TnfsListStatus::Timeout;
+        }
+        TnfsListStatus r = ITnfsClient::listDirectoryRange(path, sort, start, count, out, total, left);
+        if (r == TnfsListStatus::Error && _deadlineHit) {
+            r = TnfsListStatus::Timeout;
+        }
+        if (r != TnfsListStatus::Ok) {
+            out.clear();
+        }
+        return r;
     }
 
     int open(const std::string& path, uint16_t openMode, uint16_t createPerms) override
@@ -430,6 +477,147 @@ private:
         return send_and_receive(pkt, offset);
     }
 
+    enum class XResult { Ok, Error, Timeout, Unsupported };
+
+    // Bounds an operation: every send_and_receive inside gives up at the deadline.
+    struct DeadlineScope {
+        CommonTnfsClient& c;
+        DeadlineScope(CommonTnfsClient& client, std::chrono::milliseconds budget) : c(client)
+        {
+            c._deadline = std::chrono::steady_clock::now() + budget;
+            c._hasDeadline = true;
+            c._deadlineHit = false;
+        }
+        ~DeadlineScope() { c._hasDeadline = false; }
+    };
+
+    XResult list_range_x(const std::string& path, fs::DirSort sort, std::size_t start, std::size_t count,
+                         std::vector<TnfsDirEntry>& out, std::size_t& total)
+    {
+        TnfsPacket pkt{};
+        fill_session_header(pkt, CMD_OPENDIRX);
+        pkt.payload[0] = (sort == fs::DirSort::Name) ? DIROPT_NO_FOLDERSFIRST : 0;
+        pkt.payload[1] = (sort == fs::DirSort::None) ? DIRSORT_NONE : 0;
+        pkt.payload[2] = 0; // max results: unlimited
+        pkt.payload[3] = 0;
+        std::size_t offset = 4;
+        const std::string noPattern;
+        if (!append_cstring(pkt.payload, sizeof(pkt.payload), offset, noPattern) ||
+            !append_cstring(pkt.payload, sizeof(pkt.payload), offset, path)) {
+            return XResult::Error;
+        }
+        if (!send_and_receive(pkt, offset)) {
+            return _deadlineHit ? XResult::Timeout : XResult::Error;
+        }
+        const std::uint8_t status = pkt.payload[0];
+        if (status != RESULT_SUCCESS) {
+            if (status == RESULT_FUNCTION_UNIMPLEMENTED) {
+                _noDirX = true;
+                return XResult::Unsupported;
+            }
+            if (status == RESULT_PROTOCOL_ERROR || status == RESULT_INVALID_ARGUMENT) {
+                return XResult::Unsupported; // this call only; the path may be at fault
+            }
+            return XResult::Error;
+        }
+
+        const std::uint8_t handle = pkt.payload[1];
+        total = read_u16le(pkt.payload[2], pkt.payload[3]);
+
+        XResult result = XResult::Ok;
+        std::size_t pos = 0;
+        if (start > 0 && start < total) {
+            TnfsPacket seekPkt{};
+            fill_session_header(seekPkt, CMD_SEEKDIR);
+            seekPkt.payload[0] = handle;
+            seekPkt.payload[1] = static_cast<std::uint8_t>(start & 0xFFU);
+            seekPkt.payload[2] = static_cast<std::uint8_t>((start >> 8) & 0xFFU);
+            seekPkt.payload[3] = static_cast<std::uint8_t>((start >> 16) & 0xFFU);
+            seekPkt.payload[4] = static_cast<std::uint8_t>((start >> 24) & 0xFFU);
+            if (send_and_receive(seekPkt, 5) && seekPkt.payload[0] == RESULT_SUCCESS) {
+                pos = start;
+            } else if (_deadlineHit) {
+                result = XResult::Timeout;
+            }
+            // Otherwise read forward from the beginning and drop the leading entries.
+        }
+
+        const std::size_t want = (count > total - std::min(total, start)) ? total - std::min(total, start) : count;
+        const std::size_t stop = start + want;
+        bool eof = (start >= total);
+        while (result == XResult::Ok && !eof && pos < stop) {
+            TnfsPacket rd{};
+            fill_session_header(rd, CMD_READDIRX);
+            rd.payload[0] = handle;
+            rd.payload[1] = static_cast<std::uint8_t>(std::min<std::size_t>(stop - pos, 255));
+            if (!send_and_receive(rd, 2)) {
+                result = _deadlineHit ? XResult::Timeout : XResult::Error;
+                break;
+            }
+            if (rd.payload[0] == RESULT_END_OF_FILE) {
+                break;
+            }
+            if (rd.payload[0] != RESULT_SUCCESS) {
+                result = XResult::Error;
+                break;
+            }
+            const std::size_t entryCount = rd.payload[1];
+            if ((rd.payload[2] & DIRSTATUS_EOF) != 0) {
+                eof = true;
+            }
+            std::size_t idx = read_u16le(rd.payload[3], rd.payload[4]);
+            std::size_t p = 5;
+            std::size_t parsed = 0;
+            for (; parsed < entryCount; ++parsed) {
+                if (p + 13 + 1 > sizeof(rd.payload)) {
+                    break;
+                }
+                const std::uint8_t flags = rd.payload[p];
+                const std::uint32_t size = read_u32le(rd.payload + p + 1);
+                const std::uint32_t mtime = read_u32le(rd.payload + p + 5);
+                p += 13;
+                const void* nul = std::memchr(rd.payload + p, 0, sizeof(rd.payload) - p);
+                if (nul == nullptr) {
+                    break;
+                }
+                std::string name(reinterpret_cast<const char*>(rd.payload + p));
+                p += name.size() + 1;
+                if (idx >= start && idx < stop && name != "." && name != "..") {
+                    TnfsDirEntry e;
+                    e.name = std::move(name);
+                    e.isDir = (flags & DIRENTRY_DIR) != 0;
+                    e.size = size;
+                    e.mTime = mtime;
+                    out.push_back(std::move(e));
+                }
+                ++idx;
+            }
+            if (parsed == 0) {
+                break; // no progress
+            }
+            pos = idx;
+        }
+
+        close_dir(handle);
+        if (result != XResult::Ok) {
+            out.clear();
+        }
+        return result;
+    }
+
+    void close_dir(std::uint8_t handle)
+    {
+        TnfsPacket closePkt{};
+        fill_session_header(closePkt, CMD_CLOSEDIR);
+        closePkt.payload[0] = handle;
+        if (_deadlineHit) {
+            // Out of time: free the server's handle without waiting for the reply.
+            _channel->write(reinterpret_cast<const std::uint8_t*>(&closePkt), 5);
+            return;
+        }
+        send_and_receive(closePkt, 1);
+    }
+
     bool lseek_internal(int fileHandle, std::uint32_t offset, std::uint8_t whence, std::uint32_t& outPos)
     {
         if (_sessionId == 0) {
@@ -501,8 +689,15 @@ private:
         std::memcpy(tx.data(), &pkt, tx.size());
 
         for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+            if (_hasDeadline && std::chrono::steady_clock::now() >= _deadline) {
+                _deadlineHit = true;
+                break;
+            }
             _channel->write(tx.data(), tx.size());
-            const auto deadline = std::chrono::steady_clock::now() + kTimeoutPerAttempt;
+            auto deadline = std::chrono::steady_clock::now() + kTimeoutPerAttempt;
+            if (_hasDeadline && _deadline < deadline) {
+                deadline = _deadline;
+            }
 
             TnfsPacket response{};
             while (receive(response, deadline)) {
@@ -513,6 +708,9 @@ private:
             }
         }
 
+        if (_hasDeadline && std::chrono::steady_clock::now() >= _deadline) {
+            _deadlineHit = true;
+        }
         FN_LOGE(TAG, "%s TNFS timeout for command 0x%02X", _transportName, static_cast<unsigned>(pkt.command));
         return false;
     }
@@ -557,6 +755,10 @@ private:
     bool _parallelReads{false};
     std::uint16_t _sessionId{0};
     std::uint8_t _sequenceNum{0};
+    bool _noDirX{false};
+    bool _hasDeadline{false};
+    bool _deadlineHit{false};
+    std::chrono::steady_clock::time_point _deadline{};
 };
 
 } // namespace fujinet::tnfs

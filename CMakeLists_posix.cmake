@@ -138,6 +138,7 @@ set(FUJINET_NIO_SOURCES
         src/lib/diagnostic_parse.cpp
         src/lib/diagnostic_registry.cpp
         src/lib/diagnostic_packet_link_provider.cpp
+        src/lib/directory_cache.cpp
         src/lib/diagnostic_uart_channel_provider.cpp
         src/lib/disk/atr_image.cpp
         src/lib/disk/dc42_image.cpp
@@ -153,6 +154,7 @@ set(FUJINET_NIO_SOURCES
         src/lib/file_device.cpp
         src/lib/file_device_init.cpp
         src/lib/fs/http_filesystem.cpp
+        src/lib/fs/directory_range.cpp
         src/lib/fs/tnfs_filesystem.cpp
         src/lib/fs_stdio.cpp
         src/lib/fuji_bus_packet.cpp
@@ -205,6 +207,7 @@ set(FUJINET_NIO_SOURCES
         src/lib/time_formatter.cpp
         src/lib/time_platform.cpp
         src/lib/tnfs/tnfs_tcp_client.cpp
+        src/lib/tnfs/tnfs_list_range.cpp
         src/lib/tnfs/tnfs_udp_client.cpp
         src/lib/transport/legacy/byte_based_legacy_transport.cpp
         src/lib/transport/legacy/iwm_traits.cpp

@@ -82,8 +82,41 @@ public:
         const std::string& path,
         std::vector<FileInfo>& outEntries
     ) = 0;
+
+    // Entries [start, start+count) in the requested order, plus the directory total.
+    // Default: listDirectory() + sort + slice. TNFS overrides it.
+    virtual ListStatus listDirectoryRange(
+        const std::string& path, DirSort sort, std::size_t start, std::size_t count,
+        std::vector<FileInfo>& out, std::size_t& total);
+    virtual bool supportsRangeListing() const { return false; }
 };
 ```
+
+`DirSort` is `None`, `Name` or `NameDirsFirst`; name order is the basename, ASCII
+case-insensitive. `ListStatus` is `Ok`, `Error` or `Timeout`. Sorting lives in this layer
+(`sort_directory_entries`), not in the devices; `FileDevice` pages through a small shared
+`DirectoryCache` (see `file_device_protocol.md`, ListPages).
+
+#### TNFS directory listing
+
+`TnfsFileSystem::listDirectoryRange` uses the TNFS 1.1 extended directory commands through
+`ITnfsClient::listDirectoryRange`: `OPENDIRX` (the server sorts by name, directories first, and
+reports the total), `SEEKDIR` to the first wanted entry, then `READDIRX`, which returns several
+entries per datagram with size and mtime, so there is no per-entry `STAT`. A 266-entry
+directory costs a handful of round trips per page instead of ~530.
+
+- A server that reports a version below 1.1 at mount, or answers `OPENDIRX` with
+  "unimplemented", is remembered as lacking the commands. The fallback reads names with
+  `OPENDIR`/`READDIR` (one round trip per entry, so still linear in the directory size), sorts
+  them by name here, and `STAT`s **only** the entries inside the requested range.
+  Directories-first cannot be honoured there.
+- A server without `SEEKDIR` is read forward from the start, dropping leading entries.
+- Every listing operation has an overall deadline (`tnfs::kListingDeadline`, 10 s) covering all
+  retries. When it expires the operation fails with `Timeout` (status `Timeout` in the
+  FileDevice protocol) and an open directory handle is closed without waiting for the reply, so
+  a dead server cannot block the single-threaded core for longer. Per-request timeout/retry
+  (1.5 s x 3) is unchanged inside the deadline.
+- `listDirectory()` on TNFS (whole directory, server order) now goes through the same path.
 
 The **core concepts**:
 

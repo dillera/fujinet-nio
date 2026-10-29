@@ -50,6 +50,7 @@ COMMAND_NAMES: dict[int, dict[int, str]] = {
     fp.FILE_DEVICE_ID: {
         fp.CMD_STAT: "Stat",
         fp.CMD_LIST: "ListDirectory",
+        fp.CMD_LIST_PAGES: "ListPages",
         fp.CMD_READ: "ReadFile",
         fp.CMD_WRITE: "WriteFile",
         fp.CMD_MAKE_DIRECTORY: "MakeDirectory",

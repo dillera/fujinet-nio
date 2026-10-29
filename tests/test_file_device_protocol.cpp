@@ -646,9 +646,10 @@ TEST_CASE("FileDevice ListDirectory caches listing and skips repeated filesystem
     CHECK(device.handle(req).status == StatusCode::Ok);
     CHECK(spy->list_directory_calls() == 2);
 
+    // The shared cache keeps a few directories, so A is still cached after B.
     req.payload = make_list_request(kDirA, 0, kListMaxPayloadBytes);
     CHECK(device.handle(req).status == StatusCode::Ok);
-    CHECK(spy->list_directory_calls() == 3);
+    CHECK(spy->list_directory_calls() == 2);
 }
 
 TEST_CASE("HostService manipulates current host and LRU history")

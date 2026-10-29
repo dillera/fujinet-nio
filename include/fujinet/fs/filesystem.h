@@ -43,6 +43,20 @@ constexpr bool is_network_kind(FileSystemKind kind)
     return false;
 }
 
+// Directory ordering for range listings. Name order is the basename, ASCII
+// case-insensitive; NameDirsFirst additionally puts directories before files.
+enum class DirSort : std::uint8_t {
+    None,           // filesystem order
+    Name,
+    NameDirsFirst,
+};
+
+enum class ListStatus : std::uint8_t {
+    Ok,
+    Error,
+    Timeout, // a bounded network listing ran out of time
+};
+
 struct FileInfo {
     std::string path;   // Path relative to the root of this filesystem ("/", "/foo/bar.atr")
     bool        isDirectory{false};
@@ -115,7 +129,29 @@ public:
         const std::string& path,
         std::vector<FileInfo>& outEntries
     ) = 0;
+
+    // List entries [start, start+count) of a directory in the requested order and report the
+    // directory's total entry count. Pass count == npos for "everything from start".
+    // The default is listDirectory() + sort + slice, so every filesystem works; filesystems
+    // that can page cheaply (TNFS) override it together with supportsRangeListing().
+    virtual ListStatus listDirectoryRange(
+        const std::string& path,
+        DirSort sort,
+        std::size_t start,
+        std::size_t count,
+        std::vector<FileInfo>& out,
+        std::size_t& total
+    );
+
+    // True when listDirectoryRange() fetches only the requested range (callers should then
+    // request small ranges and cache them; otherwise request the whole directory once).
+    virtual bool supportsRangeListing() const { return false; }
 };
+
+// Sort by basename (ASCII case-insensitive, ties by exact name), optionally directories first.
+void sort_directory_entries(std::vector<FileInfo>& entries, DirSort sort);
+// Case-insensitive ASCII "less" on names, ties broken by exact comparison.
+bool name_less_ascii_ci(const std::string& a, const std::string& b);
 
 
 

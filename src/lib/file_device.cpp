@@ -33,44 +33,6 @@ using fujinet::io::fileproto::Reader;
 // static constexpr const char* TAG = "io";
 
 static constexpr std::uint8_t FILEPROTO_VERSION = 1;
-static constexpr auto LIST_DIRECTORY_CACHE_TTL = std::chrono::seconds(120);
-
-struct ListDirectoryCache {
-    std::string uri;
-    std::vector<FileInfo> entries;
-    std::chrono::steady_clock::time_point expires_at{};
-    bool valid{false};
-};
-
-static ListDirectoryCache g_list_directory_cache{};
-
-static bool get_cached_directory_entries(const std::string& uri, std::vector<FileInfo>& out)
-{
-    if (!g_list_directory_cache.valid) {
-        return false;
-    }
-
-    if (g_list_directory_cache.uri != uri) {
-        return false;
-    }
-
-    if (std::chrono::steady_clock::now() > g_list_directory_cache.expires_at) {
-        g_list_directory_cache.valid = false;
-        return false;
-    }
-
-    out = g_list_directory_cache.entries;
-    g_list_directory_cache.expires_at = std::chrono::steady_clock::now() + LIST_DIRECTORY_CACHE_TTL;
-    return true;
-}
-
-static void store_cached_directory_entries(const std::string& uri, const std::vector<FileInfo>& entries)
-{
-    g_list_directory_cache.uri = uri;
-    g_list_directory_cache.entries = entries;
-    g_list_directory_cache.expires_at = std::chrono::steady_clock::now() + LIST_DIRECTORY_CACHE_TTL;
-    g_list_directory_cache.valid = true;
-}
 
 // Common request prefix:
 // u8 version
@@ -119,6 +81,8 @@ IOResponse FileDevice::handle(const IORequest& request)
             return handle_stat(request);
         case protocol::FileCommand::ListDirectory:
             return handle_list_directory(request);
+        case protocol::FileCommand::ListPages:
+            return handle_list_pages(request);
         case protocol::FileCommand::ReadFile:
             return handle_read_file(request);
         case protocol::FileCommand::WriteFile:
@@ -405,13 +369,20 @@ IOResponse FileDevice::handle_list_directory(const IORequest& request)
         return resp;
     }
 
-    std::vector<FileInfo> entries;
-    if (!get_cached_directory_entries(canonical_uri, entries)) {
-        if (!fs->listDirectory(resolvedPath, entries)) {
-            resp.status = StatusCode::IOError;
+    // Sorted/paged listing comes from the shared directory cache; only the entries this
+    // reply can use are fetched, in windows.
+    const fs::DirSort sortOrder = sortName ? fs::DirSort::Name : fs::DirSort::None;
+    constexpr std::size_t kLegacyWindow = 32;
+    std::vector<FileInfo> window;
+    std::size_t total = 0;
+    std::size_t windowStart = startIndex;
+    {
+        const auto st = _dirCache.get_range(*fs, canonical_uri, resolvedPath, sortOrder, false, windowStart,
+                                            kLegacyWindow, window, total);
+        if (st != fs::ListStatus::Ok) {
+            resp.status = (st == fs::ListStatus::Timeout) ? StatusCode::Timeout : StatusCode::IOError;
             return resp;
         }
-        store_cached_directory_entries(canonical_uri, entries);
     }
 
     auto basename_sv = [](const std::string& s) -> std::string_view {
@@ -425,17 +396,22 @@ IOResponse FileDevice::handle_list_directory(const IORequest& request)
         return std::string_view{s}.substr(pos + 1);
     };
 
-    const std::vector<FileInfo>* source = &entries;
-    std::vector<FileInfo> sorted;
-    if (sortName) {
-        sorted = entries;
-        std::sort(
-            sorted.begin(), sorted.end(), [&](const FileInfo& a, const FileInfo& b) { return basename_sv(a.path) < basename_sv(b.path); });
-        source = &sorted;
-    }
-
-    const std::size_t total = source->size();
     const std::size_t start = (startIndex < total) ? startIndex : total;
+
+    // Next entry at index i, fetching another window when needed.
+    auto entry_at = [&](std::size_t i) -> const FileInfo* {
+        if (i >= total) return nullptr;
+        if (i < windowStart || i - windowStart >= window.size()) {
+            windowStart = i;
+            std::size_t t = 0;
+            if (_dirCache.get_range(*fs, canonical_uri, resolvedPath, sortOrder, false, windowStart,
+                                    kLegacyWindow, window, t) != fs::ListStatus::Ok) {
+                window.clear();
+                return nullptr;
+            }
+        }
+        return (i - windowStart < window.size()) ? &window[i - windowStart] : nullptr;
+    };
 
     // Response:
     // u8 version
@@ -464,7 +440,9 @@ IOResponse FileDevice::handle_list_directory(const IORequest& request)
 
     if (formatted) {
         for (std::size_t i = start; i < total; ++i) {
-            const auto& e = (*source)[i];
+            const FileInfo* ep = entry_at(i);
+            if (ep == nullptr) break;
+            const auto& e = *ep;
             const auto name = basename_sv(e.path);
             const std::string line = format_list_directory_line(e, name);
             const std::size_t entriesUsed = out.size() - entriesStart;
@@ -476,7 +454,9 @@ IOResponse FileDevice::handle_list_directory(const IORequest& request)
         }
     } else {
         for (std::size_t i = start; i < total; ++i) {
-            const auto& e = (*source)[i];
+            const FileInfo* ep = entry_at(i);
+            if (ep == nullptr) break;
+            const auto& e = *ep;
             const auto name = basename_sv(e.path);
 
             const std::size_t entryOverhead = 2U + (compact ? 0U : 16U);
@@ -532,6 +512,180 @@ IOResponse FileDevice::handle_list_directory(const IORequest& request)
     out[entriesLenPos + 0] = static_cast<char>(entriesLen & 0xFF);
     out[entriesLenPos + 1] = static_cast<char>((entriesLen >> 8) & 0xFF);
 
+    resp.payload.assign(out.begin(), out.end());
+    return resp;
+}
+
+// --------------------
+// ListPages (0x07)
+// --------------------
+// Whole pages only. Request after the common prefix: u16 startPage, u8 pageSize (1..64),
+// u16 maxPayloadBytes, u8 listFlags, u8 maxNameBytes. See docs/file_device_protocol.md.
+IOResponse FileDevice::handle_list_pages(const IORequest& request)
+{
+    namespace lp = fujinet::io::protocol::list_pages;
+
+    auto resp = make_success_response(request);
+
+    Reader r(request.payload.data(), request.payload.size());
+    CommonPrefix p{};
+    if (!parse_common_prefix(r, p, true)) {
+        resp.status = StatusCode::InvalidRequest;
+        return resp;
+    }
+
+    std::uint16_t startPage = 0;
+    std::uint8_t pageSize = 0;
+    std::uint16_t maxPayloadBytes = 0;
+    std::uint8_t listFlags = 0;
+    std::uint8_t maxNameBytes = 0;
+    if (!r.read_u16le(startPage) || !r.read_u8(pageSize) || !r.read_u16le(maxPayloadBytes) ||
+        !r.read_u8(listFlags) || !r.read_u8(maxNameBytes)) {
+        resp.status = StatusCode::InvalidRequest;
+        return resp;
+    }
+    if (pageSize == 0 || pageSize > lp::kMaxPageSize) {
+        resp.status = StatusCode::InvalidRequest;
+        return resp;
+    }
+    if (maxNameBytes == 0 || maxNameBytes > lp::kDefaultMaxNameBytes) {
+        maxNameBytes = lp::kDefaultMaxNameBytes;
+    }
+    // Smallest possible page: u8 count + u16 dataLen + one entry (flags, nameLen, size, mtime).
+    constexpr std::size_t kPageHeader = 3U;
+    constexpr std::size_t kEntryFixed = 2U + 8U;
+    if (maxPayloadBytes < kPageHeader + kEntryFixed) {
+        resp.status = StatusCode::InvalidRequest;
+        return resp;
+    }
+
+    const bool sortName = (listFlags & lp::kFlagSortByName) != 0;
+    const bool dirsFirst = sortName && (listFlags & lp::kFlagDirsFirst) != 0;
+    const bool refresh = (listFlags & lp::kFlagRefresh) != 0;
+    const bool totalOnly = (listFlags & lp::kFlagTotalOnly) != 0;
+    const fs::DirSort sortOrder =
+        dirsFirst ? fs::DirSort::NameDirsFirst : (sortName ? fs::DirSort::Name : fs::DirSort::None);
+
+    HostState hostState(_storage);
+    std::string canonical_uri;
+    if (!hostState.resolve_target(p.uri, canonical_uri, nullptr)) {
+        resp.status = StatusCode::DeviceNotFound;
+        return resp;
+    }
+    auto [fs, resolvedPath] = _storage.resolveUri(canonical_uri);
+    if (!fs) {
+        resp.status = StatusCode::DeviceNotFound;
+        return resp;
+    }
+
+    // One page worth of entries is fetched at a time (the cache fetches chunks underneath);
+    // further pages only if the byte budget still has room.
+    const std::size_t firstIndex = static_cast<std::size_t>(startPage) * pageSize;
+    std::vector<FileInfo> window;
+    std::size_t total = 0;
+    std::size_t windowStart = firstIndex;
+    const std::size_t want = pageSize;
+    {
+        // total-only still needs one fetch to learn the total.
+        const auto st = _dirCache.get_range(*fs, canonical_uri, resolvedPath, sortOrder, refresh, windowStart,
+                                            totalOnly ? 1 : want, window, total);
+        if (st != fs::ListStatus::Ok) {
+            resp.status = (st == fs::ListStatus::Timeout) ? StatusCode::Timeout : StatusCode::IOError;
+            return resp;
+        }
+    }
+
+    auto basename_sv = [](const std::string& s) -> std::string_view {
+        const auto pos = s.find_last_of('/');
+        if (pos == std::string::npos || pos + 1 >= s.size()) {
+            return std::string_view{s};
+        }
+        return std::string_view{s}.substr(pos + 1);
+    };
+    auto clamp32 = [](std::uint64_t v) -> std::uint32_t {
+        return v > 0xFFFFFFFFULL ? 0xFFFFFFFFU : static_cast<std::uint32_t>(v);
+    };
+
+    std::string pages;
+    std::uint8_t pageCount = 0;
+    bool anyCut = false;
+    bool firstPageDidNotFit = false;
+    std::size_t nextIndex = firstIndex; // first entry not yet returned
+
+    if (!totalOnly) {
+        std::size_t budget = maxPayloadBytes;
+        while (nextIndex < total) {
+            const std::size_t inPage = std::min<std::size_t>(pageSize, total - nextIndex);
+            if (pageCount > 0 && budget < kPageHeader + inPage * (kEntryFixed + 1)) {
+                break; // cannot fit another page; avoid fetching it
+            }
+            // Encode the page into a scratch string so a page that does not fit is dropped whole.
+            std::string page;
+            bool pageCut = false;
+            fileproto::write_u8(page, static_cast<std::uint8_t>(inPage));
+            fileproto::write_u16le(page, 0); // dataLen placeholder
+            for (std::size_t k = 0; k < inPage; ++k) {
+                const std::size_t idx = nextIndex + k;
+                if (idx < windowStart || idx - windowStart >= window.size()) {
+                    // The window is sized from the budget; if it ran short, reload from here.
+                    windowStart = idx;
+                    std::size_t t = 0;
+                    if (_dirCache.get_range(*fs, canonical_uri, resolvedPath, sortOrder, false, windowStart, want,
+                                            window, t) != fs::ListStatus::Ok ||
+                        window.empty()) {
+                        resp.status = StatusCode::IOError;
+                        resp.payload.clear();
+                        return resp;
+                    }
+                }
+                const FileInfo& e = window[idx - windowStart];
+                const auto name = basename_sv(e.path);
+                const std::size_t nameLen = std::min<std::size_t>(name.size(), maxNameBytes);
+                std::uint8_t eflags = e.isDirectory ? lp::kEntryFlagDirectory : 0;
+                if (nameLen < name.size()) {
+                    eflags |= lp::kEntryFlagNameCut;
+                    pageCut = true;
+                }
+                fileproto::write_u8(page, eflags);
+                fileproto::write_u8(page, static_cast<std::uint8_t>(nameLen));
+                fileproto::write_bytes(page, name.data(), nameLen);
+                fileproto::write_u32le(page, e.isDirectory ? 0U : clamp32(e.sizeBytes));
+                fileproto::write_u32le(page, clamp32(to_unix_seconds(e.modifiedTime)));
+            }
+            const std::size_t dataLen = page.size() - kPageHeader;
+            if (page.size() > budget || pageCount == 0xFF) {
+                if (pageCount == 0) {
+                    firstPageDidNotFit = true;
+                }
+                break;
+            }
+            page[1] = static_cast<char>(dataLen & 0xFF);
+            page[2] = static_cast<char>((dataLen >> 8) & 0xFF);
+            budget -= page.size();
+            pages.append(page);
+            anyCut = anyCut || pageCut;
+            ++pageCount;
+            nextIndex += inPage;
+        }
+    }
+
+    const bool more = totalOnly ? (firstIndex < total) : (firstPageDidNotFit || nextIndex < total);
+    std::uint8_t flags = 0;
+    if (more) flags |= lp::kResponseFlagMore;
+    if (anyCut) flags |= lp::kResponseFlagNameCut;
+
+    // Response: u8 version, u8 flags, u16 reserved, u32 total, u16 startPage, u8 pageSize,
+    // u8 pageCount, pages...
+    std::string out;
+    out.reserve(11 + pages.size());
+    fileproto::write_u8(out, FILEPROTO_VERSION);
+    fileproto::write_u8(out, flags);
+    fileproto::write_u16le(out, 0);
+    fileproto::write_u32le(out, static_cast<std::uint32_t>(total));
+    fileproto::write_u16le(out, startPage);
+    fileproto::write_u8(out, pageSize);
+    fileproto::write_u8(out, pageCount);
+    out.append(pages);
     resp.payload.assign(out.begin(), out.end());
     return resp;
 }

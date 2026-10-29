@@ -69,6 +69,7 @@ Command IDs (initial set):
 | `WriteFile`     | `0x04` | Write bytes to a file at offset |
 | `ResolvePath`   | `0x05` | Resolve a base URI plus a path fragment into a canonical URI |
 | `MakeDirectory` | `0x06` | Create a directory |
+| `ListPages`     | `0x07` | Enumerate a directory in fixed-size pages, with a total (for small clients) |
 
 (IDs are intentionally compact to allow use by 8-bit transports.)
 
@@ -247,8 +248,83 @@ Notes:
 - Basename-only avoids repeating the directory path per entry.
 - `startIndex`/`maxPayloadBytes` make this **stateless** for the device; only **whole** entries are encoded so clients can cap response size regardless of name lengths.
 - If `maxPayloadBytes` is too small for even one entry, the device returns `entryCount=0` with `more=1` when additional entries exist.
-- Ordering is filesystem-defined unless `listFlags` bit1 requests basename sort.
+- Ordering is filesystem-defined unless `listFlags` bit1 requests basename sort (ASCII case-insensitive; served from the shared directory cache, see ListPages).
 - This command already accepts a full URI, so it provides the minimal list contract needed by fn-rom `*FLIST`.
+
+---
+
+## Command: ListPages (0x07)
+
+Page-oriented directory listing for clients with very little memory (8-bit machines whose
+transport carries at most a few hundred bytes per reply). The client asks for page N of
+`pageSize` entries; the device sorts, keeps a small shared cache (see Notes), and returns whole
+pages that fit the client's byte budget, plus the directory's total entry count.
+
+### Request
+
+```
+[Common Request Prefix]
+u16  startPage          // LE; 0-based page number
+u8   pageSize           // entries per page, 1..64
+u16  maxPayloadBytes    // LE; budget for everything after the response header
+u8   listFlags
+u8   maxNameBytes       // 0 = 220; longer names are cut and marked
+```
+
+All fields are required. `listFlags` bits:
+
+- bit0: sort by basename (ASCII case-insensitive)
+- bit1: directories first (only with bit0)
+- bit2: refresh — re-read the directory, replacing any cached listing
+- bit3: total only — return the total and no pages
+
+### Response
+
+```
+u8   version            // = 1
+u8   flags              // bit0=more (pages exist after those returned), bit1=some name was cut
+u16  reserved           // = 0
+u32  totalEntries       // LE
+u16  startPage          // echoed
+u8   pageSize           // echoed
+u8   pageCount          // pages that follow
+
+pages, repeated pageCount times:
+  u8   entryCount       // == pageSize except for the directory's last page
+  u16  dataLen          // LE; bytes of entries
+  entries, repeated entryCount times:
+    u8   entryFlags     // bit0=directory, bit7=name cut to maxNameBytes
+    u8   nameLen
+    u8[] name           // basename only
+    u32  size           // bytes, saturating at 0xFFFFFFFF; 0 for directories
+    u32  mtime          // Unix seconds, saturating; 0 if unknown
+```
+
+Only **whole pages** are returned: the response never exceeds `maxPayloadBytes` after the
+12-byte header, and never splits a page. If not even the first requested page fits, the reply
+has `pageCount=0` and `more` set; retry with a smaller `pageSize`. A `startPage` beyond the end
+gives `pageCount=0`, `more=0` and the total. With `total only`, `more` says whether any page
+exists at `startPage`. Page boundaries are `pageSize` aligned from entry 0, so `startPage` N is
+entry `N*pageSize`; keep `pageSize` and `listFlags` constant while paging one listing.
+
+### Status codes
+
+- `Ok`
+- `InvalidRequest`: malformed, `pageSize` 0 or above 64, `maxPayloadBytes` below one entry (13 bytes)
+- `DeviceNotFound`: filesystem not found
+- `IOError`: listing failed
+- `Timeout`: a network listing exceeded its 10 s deadline (TNFS)
+
+Notes:
+- Sorting happens in the device (a filesystem layer), not per request: ListPages and
+  `ListDirectory` share one bounded directory cache keyed by canonical URI plus sort order
+  (TTL 120 s, refreshed on use, at most a few directories and 1024 entries). A request for an
+  already fetched page does no filesystem or network access. `refresh` bypasses and replaces it.
+- On TNFS only the requested ranges are fetched (in chunks of 24 entries) using the TNFS 1.1
+  extended directory commands; see `filesystem.md`.
+- On a TNFS 1.0 server directories-first cannot be honoured (it would need a stat of every
+  entry); the order is by name only.
+- A listing that changes while paging (another client, `refresh`) can shift entries between pages.
 
 ---
 

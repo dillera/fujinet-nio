@@ -27,6 +27,18 @@ CMD_READ = 0x03
 CMD_WRITE = 0x04
 CMD_MAKE_DIRECTORY = 0x06
 CMD_MKDIR = CMD_MAKE_DIRECTORY  # backward-compatible alias
+CMD_LIST_PAGES = 0x07
+
+# ListPages listFlags / response flags / entry flags (matches file_commands.h list_pages)
+PAGES_FLAG_SORT_BY_NAME = 0x01
+PAGES_FLAG_DIRS_FIRST = 0x02
+PAGES_FLAG_REFRESH = 0x04
+PAGES_FLAG_TOTAL_ONLY = 0x08
+PAGES_RESP_MORE = 0x01
+PAGES_RESP_NAME_CUT = 0x02
+PAGES_ENTRY_DIR = 0x01
+PAGES_ENTRY_NAME_CUT = 0x80
+PAGES_MAX_PAGE_SIZE = 64
 
 # ListDirectory listFlags (matches file_commands.h)
 LIST_FLAG_COMPACT = 0x01
@@ -96,6 +108,43 @@ def build_list_req(
     if list_flags:
         req += bytes([list_flags & 0xFF])
     return req
+
+
+def build_list_pages_req(
+    uri: str,
+    start_page: int,
+    page_size: int,
+    max_payload_bytes: int,
+    *,
+    list_flags: int = PAGES_FLAG_SORT_BY_NAME,
+    max_name_bytes: int = 0,
+) -> bytes:
+    """
+    Build a ListPages (0x07) request.
+
+    Args:
+        uri: Full URI for directory
+        start_page: 0-based page number
+        page_size: Entries per page, 1..64
+        max_payload_bytes: Budget for everything after the response header
+        list_flags: PAGES_FLAG_* (sort by name, dirs first, refresh, total only)
+        max_name_bytes: Longest name to return (0 = 220); longer names are cut
+    """
+    if not (0 <= start_page <= 0xFFFF):
+        raise ValueError("start_page must fit u16")
+    if not (1 <= page_size <= PAGES_MAX_PAGE_SIZE):
+        raise ValueError("page_size must be 1..64")
+    if not (1 <= max_payload_bytes <= 0xFFFF):
+        raise ValueError("max_payload_bytes must fit u16 and be >0")
+    if not (0 <= max_name_bytes <= 0xFF):
+        raise ValueError("max_name_bytes must fit u8")
+    return (
+        build_uri_request(uri)
+        + u16le(start_page)
+        + bytes([page_size])
+        + u16le(max_payload_bytes)
+        + bytes([list_flags & 0xFF, max_name_bytes & 0xFF])
+    )
 
 
 def build_read_req(uri: str, offset: int, max_bytes: int) -> bytes:
@@ -184,6 +233,29 @@ class ListResp:
     entries_len: int
     entries: List[ListEntry]
     text: str
+
+
+@dataclass
+class PageEntry:
+    is_dir: bool
+    name_cut: bool
+    name: str
+    size_bytes: int
+    mtime_unix: int
+
+
+@dataclass
+class ListPagesResp:
+    more: bool
+    name_cut: bool
+    total_entries: int
+    start_page: int
+    page_size: int
+    pages: List[List[PageEntry]]
+
+    @property
+    def page_count(self) -> int:
+        return len(self.pages)
 
 
 @dataclass
@@ -291,6 +363,58 @@ def parse_list_resp(payload: bytes) -> ListResp:
         entries_len=entries_len,
         entries=entries,
         text="",
+    )
+
+
+def parse_list_pages_resp(payload: bytes) -> ListPagesResp:
+    off = 0
+    off = _check_version(payload, off)
+    flags, off = read_u8(payload, off)
+    _reserved, off = read_u16le(payload, off)
+    total, off = read_u32le(payload, off)
+    start_page, off = read_u16le(payload, off)
+    page_size, off = read_u8(payload, off)
+    page_count, off = read_u8(payload, off)
+
+    pages: List[List[PageEntry]] = []
+    for _ in range(page_count):
+        count, off = read_u8(payload, off)
+        data_len, off = read_u16le(payload, off)
+        end = off + data_len
+        if end > len(payload):
+            raise ValueError("page out of bounds")
+        entries: List[PageEntry] = []
+        for _ in range(count):
+            eflags, off = read_u8(payload, off)
+            name_len, off = read_u8(payload, off)
+            if off + name_len > end:
+                raise ValueError("name out of bounds")
+            name = payload[off : off + name_len].decode("utf-8", errors="replace")
+            off += name_len
+            size, off = read_u32le(payload, off)
+            mtime, off = read_u32le(payload, off)
+            entries.append(
+                PageEntry(
+                    is_dir=bool(eflags & PAGES_ENTRY_DIR),
+                    name_cut=bool(eflags & PAGES_ENTRY_NAME_CUT),
+                    name=name,
+                    size_bytes=size,
+                    mtime_unix=mtime,
+                )
+            )
+        if off != end:
+            raise ValueError(f"page dataLen mismatch: parsed to {off}, header says {end}")
+        pages.append(entries)
+
+    if off != len(payload):
+        raise ValueError("trailing bytes after last page")
+    return ListPagesResp(
+        more=bool(flags & PAGES_RESP_MORE),
+        name_cut=bool(flags & PAGES_RESP_NAME_CUT),
+        total_entries=total,
+        start_page=start_page,
+        page_size=page_size,
+        pages=pages,
     )
 
 
