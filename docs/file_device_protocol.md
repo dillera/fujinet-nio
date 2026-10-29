@@ -269,9 +269,19 @@ u8   pageSize           // entries per page, 1..64
 u16  maxPayloadBytes    // LE; budget for everything after the response header
 u8   listFlags
 u8   maxNameBytes       // 0 = 220; longer names are cut and marked
+u8   filterLen           // optional trailing field; 1..255 when present
+u8[] filter              // case-insensitive * / ? glob, filterLen bytes
 ```
 
-All fields are required. `listFlags` bits:
+The fixed fields are required. The filter field is omitted for no filter, preserving
+compatibility with older clients and firmware. A pattern without `*` or `?` is a
+case-insensitive substring match. Directories always remain visible so navigation is
+possible; the filter stays in effect when entering a directory.
+
+Older firmware ignores the trailing filter and returns an unfiltered listing; the
+v1 reply does not indicate whether the filter was understood.
+
+`listFlags` bits:
 
 - bit0: sort by basename (ASCII case-insensitive)
 - bit1: directories first (only with bit0)
@@ -317,7 +327,7 @@ entry `N*pageSize`; keep `pageSize` and `listFlags` constant while paging one li
 
 Notes:
 - Sorting happens in the device (a filesystem layer), not per request: ListPages and
-  `ListDirectory` share one bounded directory cache keyed by canonical URI plus sort order
+  `ListDirectory` share one bounded directory cache keyed by canonical URI, sort order and filter
   (TTL 120 s, refreshed on use, at most a few directories and 1024 entries). A request for an
   already fetched page does no filesystem or network access. `refresh` bypasses and replaces it.
 - On TNFS only the requested ranges are fetched (in chunks of 24 entries) using the TNFS 1.1

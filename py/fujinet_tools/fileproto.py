@@ -118,6 +118,7 @@ def build_list_pages_req(
     *,
     list_flags: int = PAGES_FLAG_SORT_BY_NAME,
     max_name_bytes: int = 0,
+    filter: str = "",
 ) -> bytes:
     """
     Build a ListPages (0x07) request.
@@ -129,6 +130,7 @@ def build_list_pages_req(
         max_payload_bytes: Budget for everything after the response header
         list_flags: PAGES_FLAG_* (sort by name, dirs first, refresh, total only)
         max_name_bytes: Longest name to return (0 = 220); longer names are cut
+        filter: Optional case-insensitive glob; a bare value is a substring
     """
     if not (0 <= start_page <= 0xFFFF):
         raise ValueError("start_page must fit u16")
@@ -138,13 +140,17 @@ def build_list_pages_req(
         raise ValueError("max_payload_bytes must fit u16 and be >0")
     if not (0 <= max_name_bytes <= 0xFF):
         raise ValueError("max_name_bytes must fit u8")
-    return (
+    filter_bytes = filter.encode("utf-8")
+    if len(filter_bytes) > 0xFF:
+        raise ValueError("filter must fit u8 length")
+    req = (
         build_uri_request(uri)
         + u16le(start_page)
         + bytes([page_size])
         + u16le(max_payload_bytes)
         + bytes([list_flags & 0xFF, max_name_bytes & 0xFF])
     )
+    return req + (bytes([len(filter_bytes)]) + filter_bytes if filter_bytes else b"")
 
 
 def build_read_req(uri: str, offset: int, max_bytes: int) -> bytes:

@@ -214,6 +214,7 @@ def cmd_list_pages(args) -> int:
                 args.max_payload,
                 list_flags=flags,
                 max_name_bytes=args.max_name,
+                filter=args.filter,
             )
             # Refresh only on the first request; later pages come from the cache.
             flags &= ~fp.PAGES_FLAG_REFRESH
@@ -749,6 +750,7 @@ def register_subcommands(subparsers) -> None:
     plp.add_argument("--no-dirs-first", action="store_true", help="Sort by name only")
     plp.add_argument("--refresh", action="store_true", help="Re-read, replacing the cache")
     plp.add_argument("--total-only", action="store_true", help="Only report the entry count")
+    plp.add_argument("--filter", default="", help="Case-insensitive glob (bare text means substring)")
     plp.add_argument("uri", help="URI (e.g., tnfs://host:port/dir, sd0:/path)")
     plp.set_defaults(fn=cmd_list_pages)
 

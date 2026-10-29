@@ -43,6 +43,12 @@ class TestListPagesProto(unittest.TestCase):
         with self.assertRaises(ValueError):
             fp.build_list_pages_req("sd0:/", 0, 8, 0)
 
+    def test_request_filter_trailer(self) -> None:
+        req = fp.build_list_pages_req("sd0:/", 0, 8, 480, filter="*miner*")
+        self.assertTrue(req.endswith(b"\x07*miner*"))
+        with self.assertRaises(ValueError):
+            fp.build_list_pages_req("sd0:/", 0, 8, 480, filter="x" * 256)
+
     def test_response_round_trip(self) -> None:
         payload = (
             b"\x01"

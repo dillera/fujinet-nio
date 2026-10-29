@@ -116,7 +116,7 @@ struct Rig {
     static void u16(std::vector<std::uint8_t>& v, unsigned x) { v.push_back(x & 0xFF); v.push_back((x >> 8) & 0xFF); }
 
     IOResponse list_pages(unsigned startPage, unsigned pageSize, unsigned maxBytes, unsigned flags,
-                          unsigned maxName = 0, const std::string& uri = kDir)
+                          unsigned maxName = 0, const std::string& uri = kDir, const std::string& filter = {})
     {
         IORequest req{};
         req.command = static_cast<std::uint16_t>(FileCommand::ListPages);
@@ -129,6 +129,10 @@ struct Rig {
         u16(p, maxBytes);
         p.push_back(static_cast<std::uint8_t>(flags));
         p.push_back(static_cast<std::uint8_t>(maxName));
+        if (!filter.empty()) {
+            p.push_back(static_cast<std::uint8_t>(filter.size()));
+            p.insert(p.end(), filter.begin(), filter.end());
+        }
         return device->handle(req);
     }
 };
@@ -247,6 +251,24 @@ TEST_CASE("ListPages: sort by name is ASCII case-insensitive, directories first 
     // Directories-first needs the sort bit.
     CHECK(names(parse(r.list_pages(0, 8, 480, lp::kFlagDirsFirst))) ==
           V{"beta.atr", "Alpha.atr", "zeta", "Delta", "alpha2.atr"});
+}
+
+TEST_CASE("ListPages: filters names case-insensitively and preserves directories")
+{
+    Rig r(true);
+    add(*r.fs, "Miner 2049er.atr", false);
+    add(*r.fs, "Manic Miner.atr", false);
+    add(*r.fs, "other.atr", false);
+    add(*r.fs, "games", true);
+    auto p = parse(r.list_pages(0, 2, 480, lp::kFlagSortByName | lp::kFlagDirsFirst, 0, kDir, "*MiNeR*"));
+    CHECK(p.total == 3);
+    REQUIRE(p.pageCount == 2);
+    CHECK(p.pages[0].entries[0].dir);
+    CHECK(p.pages[0].entries[1].name == "Manic Miner.atr");
+    CHECK(p.pages[1].entries[0].name == "Miner 2049er.atr");
+    CHECK(parse(r.list_pages(0, 8, 480, lp::kFlagSortByName, 0, kDir, "2049")).total == 2);
+    CHECK(parse(r.list_pages(0, 8, 480, lp::kFlagSortByName, 0, kDir, "nomatch")).total == 1);
+    CHECK(parse(r.list_pages(0, 8, 480, lp::kFlagSortByName, 0, kDir, "m?ner*")).total == 2);
 }
 
 TEST_CASE("ListPages: long names are cut and marked")

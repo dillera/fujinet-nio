@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstring>
 #include <ctime>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -66,6 +67,24 @@ static std::uint64_t to_unix_seconds(std::chrono::system_clock::time_point tp)
     if (tp == std::chrono::system_clock::time_point{}) return 0;
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::seconds>(tp.time_since_epoch()).count());
+}
+
+/* ASCII case-insensitive glob. A bare pattern is a substring, while * and ?
+ * have their usual glob meanings. Kept here because ListPages owns its view. */
+static bool name_matches_filter(std::string_view name, const std::string& pattern)
+{
+    auto fold = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c; };
+    std::string glob = pattern;
+    if (glob.find_first_of("*?") == std::string::npos) glob = "*" + glob + "*";
+    std::size_t ni = 0, pi = 0, star = std::string::npos, retry = 0;
+    while (ni < name.size()) {
+        if (pi < glob.size() && (glob[pi] == '?' || fold(glob[pi]) == fold(name[ni]))) { ++pi; ++ni; }
+        else if (pi < glob.size() && glob[pi] == '*') { star = pi++; retry = ni; }
+        else if (star != std::string::npos) { pi = star + 1; ni = ++retry; }
+        else return false;
+    }
+    while (pi < glob.size() && glob[pi] == '*') ++pi;
+    return pi == glob.size();
 }
 
 FileDevice::FileDevice(StorageManager& storage)
@@ -520,7 +539,7 @@ IOResponse FileDevice::handle_list_directory(const IORequest& request)
 // ListPages (0x07)
 // --------------------
 // Whole pages only. Request after the common prefix: u16 startPage, u8 pageSize (1..64),
-// u16 maxPayloadBytes, u8 listFlags, u8 maxNameBytes. See docs/file_device_protocol.md.
+// u16 maxPayloadBytes, u8 listFlags, u8 maxNameBytes, optional u8 filterLen + filter.
 IOResponse FileDevice::handle_list_pages(const IORequest& request)
 {
     namespace lp = fujinet::io::protocol::list_pages;
@@ -543,6 +562,16 @@ IOResponse FileDevice::handle_list_pages(const IORequest& request)
         !r.read_u8(listFlags) || !r.read_u8(maxNameBytes)) {
         resp.status = StatusCode::InvalidRequest;
         return resp;
+    }
+    std::string filter;
+    if (r.remaining()) {
+        std::uint8_t filterLen = 0;
+        const std::uint8_t* filterBytes = nullptr;
+        if (!r.read_u8(filterLen) || !r.read_bytes(filterBytes, filterLen)) {
+            resp.status = StatusCode::InvalidRequest;
+            return resp;
+        }
+        filter.assign(reinterpret_cast<const char*>(filterBytes), filterLen);
     }
     if (pageSize == 0 || pageSize > lp::kMaxPageSize) {
         resp.status = StatusCode::InvalidRequest;
@@ -587,11 +616,28 @@ IOResponse FileDevice::handle_list_pages(const IORequest& request)
     const std::size_t want = pageSize;
     {
         // total-only still needs one fetch to learn the total.
-        const auto st = _dirCache.get_range(*fs, canonical_uri, resolvedPath, sortOrder, refresh, windowStart,
-                                            totalOnly ? 1 : want, window, total);
+        // Include the filter in the cache key. Filtering after a full listing keeps totals
+        // and page boundaries correct, including TNFS servers without 1.1 range listing.
+        const std::string cacheKey = filter.empty() ? canonical_uri : canonical_uri + "\nfilter:" + filter;
+        const auto st = _dirCache.get_range(*fs, cacheKey, resolvedPath, sortOrder, refresh,
+                                            filter.empty() ? windowStart : 0,
+                                            filter.empty() ? (totalOnly ? 1 : want) : std::numeric_limits<std::size_t>::max(),
+                                            window, total);
         if (st != fs::ListStatus::Ok) {
             resp.status = (st == fs::ListStatus::Timeout) ? StatusCode::Timeout : StatusCode::IOError;
             return resp;
+        }
+        if (!filter.empty()) {
+            std::vector<FileInfo> filtered;
+            for (const auto& e : window) {
+                const auto slash = e.path.find_last_of('/');
+                const std::string_view name = slash == std::string::npos ? std::string_view(e.path)
+                                                                            : std::string_view(e.path).substr(slash + 1);
+                if (e.isDirectory || name_matches_filter(name, filter)) filtered.push_back(e);
+            }
+            total = filtered.size();
+            window = std::move(filtered);
+            windowStart = 0;
         }
     }
 
