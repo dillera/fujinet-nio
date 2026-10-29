@@ -5,6 +5,8 @@
 #include "fujinet/core/logging.h"
 #include "fujinet/disk/image_probers/image_probe.h"
 #include "fujinet/disk/raw_image.h"
+#include <chrono>
+#include <limits>
 
 namespace fujinet::disk {
 
@@ -426,7 +428,19 @@ DiskResult DiskService::read_sector(std::size_t slotIndex, std::uint32_t lba, st
     if (s->statsReadCursorValid && lba == s->statsNextReadLba)
         ++stats.sequentialReadRequests;
 
+    const auto started = std::chrono::steady_clock::now();
     DiskResult r = s->image->read_sector(lba, dst, dstBytes);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - started).count();
+    const auto us = static_cast<std::uint64_t>(elapsed < 0 ? 0 : elapsed);
+    ++stats.readImageSamples;
+    stats.readImageUsTotal += us;
+    if (us > 16000) ++stats.readImageOver16ms;
+    if (us > stats.readImageUsMax) {
+        stats.readImageUsMax = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(us, std::numeric_limits<std::uint32_t>::max()));
+        stats.readImageSlowLba = lba;
+    }
     if (r.ok()) {
         stats.readBytes += r.bytes;
         s->statsReadCursorValid = true;

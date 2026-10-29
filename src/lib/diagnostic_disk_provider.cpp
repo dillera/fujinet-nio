@@ -196,6 +196,11 @@ private:
             text += std::to_string(st.sequentialReadRequests);
             text += "\r\n";
 
+            text += "slot=" + std::to_string(slot1) + " single-sector image read: samples=" +
+                    std::to_string(st.readImageSamples) + " total_us=" + std::to_string(st.readImageUsTotal) +
+                    " max_us=" + std::to_string(st.readImageUsMax) + " max_lba=" +
+                    std::to_string(st.readImageSlowLba) + " over_16ms=" + std::to_string(st.readImageOver16ms) + "\r\n";
+
             text += "slot=";
             text += std::to_string(slot1);
             text += " req write=";

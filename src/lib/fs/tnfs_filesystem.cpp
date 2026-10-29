@@ -59,7 +59,29 @@ public:
 
     std::size_t read(void* dst, std::size_t maxBytes) override {
         auto* out = static_cast<std::uint8_t*>(dst);
-        if (_cacheable && maxBytes == kBlock && _position % kBlock == 0) {
+        std::size_t copied = 0;
+        // UDP read-ahead caches aligned blocks. XEX sectors and other clients
+        // read smaller, unaligned slices; use the same blocks for those reads.
+        // A short final block or failed prefetch falls through to the ordinary
+        // read, preserving its EOF and error behaviour.
+        if (_cacheable && maxBytes <= kBlock && _client->supports_parallel_reads()) {
+            while (copied < maxBytes) {
+                const auto block = _position - _position % kBlock;
+                CacheEntry* entry = cache_find(block);
+                if (!entry && read_ahead(block)) entry = cache_find(block);
+                if (!entry) break;
+                const auto inBlock = static_cast<std::size_t>(_position - block);
+                if (inBlock >= entry->length) break;
+                const auto n = std::min(maxBytes - copied, entry->length - inBlock);
+                entry->lastUse = ++_useClock;
+                std::memcpy(out + copied, block_data(*entry) + inBlock, n);
+                copied += n;
+                _position += n;
+            }
+            if (copied == maxBytes) return copied;
+        }
+        if (copied == 0 && _cacheable && maxBytes == kBlock && _position % kBlock == 0 &&
+            !_client->supports_parallel_reads()) {
             if (cache_get(_position, out) || (read_ahead(_position) && cache_get(_position, out))) {
                 _position += kBlock;
                 return kBlock;
@@ -67,19 +89,20 @@ public:
         }
 
         if (!sync_position()) {
-            return 0;
+            return copied;
         }
-        const std::size_t bytesRead = _client->read(_fileHandle, out, maxBytes);
-        if (bytesRead == std::min<std::size_t>(maxBytes, kBlock)) {
+        const std::size_t remaining = maxBytes - copied;
+        const std::size_t bytesRead = _client->read(_fileHandle, out + copied, remaining);
+        if (bytesRead == std::min<std::size_t>(remaining, kBlock)) {
             _serverPos += bytesRead;
         } else {
             _serverPos = kUnknown;
         }
         if (_cacheable && bytesRead == kBlock && _position % kBlock == 0) {
-            cache_put(_position, out);
+            cache_put(_position, out + copied);
         }
         _position += bytesRead;
-        return bytesRead;
+        return copied + bytesRead;
     }
 
     std::size_t write(const void* src, std::size_t bytes) override {
@@ -132,6 +155,7 @@ private:
     struct CacheEntry {
         std::uint64_t offset{kUnknown};
         std::uint32_t lastUse{0};
+        std::size_t length{0};
     };
 
     bool sync_position() {
@@ -157,7 +181,7 @@ private:
 
     bool cache_get(std::uint64_t offset, std::uint8_t* out) {
         CacheEntry* e = cache_find(offset);
-        if (!e) {
+        if (!e || e->length != kBlock) {
             return false;
         }
         e->lastUse = ++_useClock;
@@ -165,7 +189,7 @@ private:
         return true;
     }
 
-    void cache_put(std::uint64_t offset, const std::uint8_t* in) {
+    void cache_put(std::uint64_t offset, const std::uint8_t* in, std::size_t length = kBlock) {
         if (_entries.empty()) {
             _entries.resize(kCacheBlocks);
             _data.resize(kCacheBlocks * kBlock);
@@ -185,7 +209,8 @@ private:
             e->offset = offset;
         }
         e->lastUse = ++_useClock;
-        std::memcpy(block_data(*e), in, kBlock);
+        e->length = length;
+        std::memcpy(block_data(*e), in, length);
     }
 
     void cache_written(std::uint64_t offset, const std::uint8_t* in, std::size_t bytes) {
@@ -241,8 +266,8 @@ private:
 
         bool gotFirst = false;
         for (const auto& r : reads) {
-            if (r.got == kBlock) {
-                cache_put(r.offset, r.dst);
+            if (r.got > 0) {
+                cache_put(r.offset, r.dst, r.got);
                 gotFirst = gotFirst || r.offset == offset;
             }
         }

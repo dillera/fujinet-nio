@@ -137,7 +137,7 @@ void AtariSioIngress::send_early_ack()
 {
     if (!_uart) return;
     _reply.record(static_cast<std::uint32_t>(esp_timer_get_time()), _capture.processing_start_us(),
-                  _capture.processing_command(), _boundary.last_edge_us());
+                  _capture.processing_command(), _capture.processing_release_us());
     _uart->write(&sio_ack, 1);
     _uart->flushOutput();
     _early_ack_us = static_cast<std::uint32_t>(esp_timer_get_time());
@@ -149,8 +149,8 @@ void AtariSioIngress::send(const std::vector<std::uint8_t>& bytes)
     if (bytes.empty() || !_uart) return;
     // Timed before the write: this is when the reply starts, which is what the Atari waits for.
     _reply.record(static_cast<std::uint32_t>(esp_timer_get_time()), _capture.processing_start_us(),
-                  _capture.processing_command(), _boundary.last_edge_us());
-    if (_capture.processing_command()) _txn.begin(_capture.last_frame()[1], _boundary.last_edge_us());
+                  _capture.processing_command(), _capture.processing_release_us());
+    if (_capture.processing_command()) _txn.begin(_capture.last_frame()[1], _capture.processing_release_us());
     if (_early_ack_us != 0 && bytes.size() == 1 && (bytes[0] == sio_complete || bytes[0] == sio_error)) {
         // The ACK went out before the request ran: keep the gap the Atari needs between ACK and COMPLETE.
         const std::uint32_t since = static_cast<std::uint32_t>(esp_timer_get_time()) - _early_ack_us;
@@ -381,6 +381,8 @@ void AtariSioIngress::reset_stats()
     _txn.reset();
     _hsio_switches = 0;
     _hsio_fallbacks = 0;
+    _alt_valid = 0;
+    _alt_last = {};
     _tx_noise_edges = 0;
     _poll_gap_us_max = 0;
     _poll_gap_at_us = 0;

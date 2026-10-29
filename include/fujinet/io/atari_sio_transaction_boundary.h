@@ -113,6 +113,14 @@ public:
         if (!low) {
             std::array<std::uint8_t, 5> from_alt{};
             if (alt_frame(from_alt)) {
+                if (_stats.frames_from_second_listener < _stats.first_alt_decisions.size()) {
+                    auto& decision = _stats.first_alt_decisions[_stats.frames_from_second_listener];
+                    decision.frame = from_alt;
+                    decision.edges = edges;
+                    decision.main_bytes = static_cast<std::uint8_t>(_frame_used);
+                    decision.collecting = _collecting;
+                    decision.released = _released;
+                }
                 router.reset_command_collection();
                 uart.discardInput();
                 _rx_errors = uart.rx_errors();
@@ -202,6 +210,7 @@ public:
     // For the ingress's reply timing: when the frame or data now being handled started processing,
     // and whether it is a command frame (judged against the CMD release edge) or a data frame.
     std::uint32_t processing_start_us() const noexcept { return _processing_start_us; }
+    std::uint32_t processing_release_us() const noexcept { return _processing_release_us; }
     bool processing_command() const noexcept { return _processing_command; }
     void reset_stats() noexcept { _stats = {}; }
     // Command frames in a row that could not be read. The ingress uses it to leave high-speed SIO.
@@ -218,6 +227,7 @@ private:
         const std::uint32_t lag = start - boundary.last_edge_us();
         if (lag > _stats.lag_us_max) _stats.lag_us_max = lag;
         _processing_start_us = start;
+        _processing_release_us = boundary.last_edge_us();
         _processing_command = true;
         for (const auto byte : _frame) router.consume(byte);
         _write_started_us = router.pending_write_bytes() ? now() : 0;
@@ -247,6 +257,7 @@ private:
     AtariSioCaptureStats _stats;
     std::uint32_t _bad_frames_in_a_row{0};
     std::uint32_t _processing_start_us{0};
+    std::uint32_t _processing_release_us{0};
     bool _processing_command{false};
     std::array<std::uint8_t, 5> _frame{};
     std::size_t _frame_used{0};

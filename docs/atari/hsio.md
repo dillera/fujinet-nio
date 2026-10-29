@@ -1,5 +1,18 @@
 # High-speed SIO (HSIO) on the Atari
 
+For TNFS boot investigations, reset `sio.reset` and `disk.stats.reset` at the
+same point before each run and capture both `sio.status` and `disk.stats` after
+it. `disk.stats` reports single-sector image-read time (excluding mount and SIO
+transmission), its slowest zero-based LBA, and the count above 16 ms. The first
+eight second-listener decisions in `sio.status` show the accepted frame and the
+capture state before the main UART is discarded; `main bytes already collected`
+does not include bytes still waiting in the UART. Capturing these counters does
+not print during the time-sensitive SIO transaction. `sio.reset` also resets
+the second listener's decoded-frame count.
+The reply timing retains the command's release-edge timestamp when dispatching;
+previous builds could report too small a delay if another CMD edge arrived
+while the disk read was blocking.
+
 The trials, measurements and the justification for each timing value are in [hsio-report.md](hsio-report.md).
 
 Status: implemented for `3F` on `D1:`-`D8:`, off by default, switched on at run time with the console

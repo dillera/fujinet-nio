@@ -466,12 +466,17 @@ TEST_CASE("DiskService: mount raw + read/write sector")
 
     auto stats = svc.stats(0);
     CHECK(stats.readRequests == 2);
+    CHECK(stats.readImageSamples == 2);
+    CHECK(stats.readImageUsTotal >= stats.readImageUsMax);
     CHECK(stats.readSectors == 2);
     CHECK(stats.writeRequests == 1);
     CHECK(stats.writeSectors == 1);
     CHECK(stats.failedRequests == 1);
     CHECK(stats.image.readOps == 2);
     CHECK(stats.image.writeOps == 1);
+
+    svc.reset_stats(0);
+    CHECK(svc.stats(0).readImageSamples == 0);
 
     CHECK(svc.info(0).dirty);
     REQUIRE(svc.unmount(0).ok());

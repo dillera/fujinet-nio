@@ -409,6 +409,13 @@ private:
                            n(s.alt_valid_frames) + ", used instead of the main UART's " +
                            n(s.capture.frames_from_second_listener) + (s.alt_valid_frames ? ", last " + frame_text(s.alt_last_frame) : ""));
         }
+        for (std::size_t i = 0; i < s.capture.first_alt_decisions.size() &&
+                                i < s.capture.frames_from_second_listener; ++i) {
+            const auto& d = s.capture.first_alt_decisions[i];
+            line(text, "  alt decision " + n(static_cast<std::uint32_t>(i + 1)) + ": " + frame_text(d.frame) +
+                       "; CMD edges " + n(d.edges) + ", collecting " + n(d.collecting) +
+                       ", released " + n(d.released) + ", main bytes already collected " + n(d.main_bytes));
+        }
     }
 
     [[gnu::noinline]] void status_frames(const io::AtariSioStats& s, std::string& text) const

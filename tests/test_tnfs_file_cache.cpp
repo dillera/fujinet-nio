@@ -236,3 +236,28 @@ TEST_CASE("TnfsFile: without parallel reads, blocks are read one by one and cach
     CHECK(read_block(*f, 5) == slice(server->files["/img.hda"], 5));
     CHECK(server->reads == 8);
 }
+
+TEST_CASE("TnfsFile: XEX sized reads use read-ahead across block boundaries")
+{
+    auto server = std::make_shared<FakeTnfsServer>(true);
+    auto& contents = server->files["/boot.xex"];
+    contents = image(10);
+    contents.resize(10 * 512 - 37);
+    auto fs = make_tnfs_filesystem(server);
+    auto f = fs->open("/boot.xex", "rb");
+    REQUIRE(f);
+    std::vector<std::uint8_t> out(253);
+    std::size_t position = 0;
+    while (position < contents.size()) {
+        const auto n = std::min(out.size(), contents.size() - position);
+        REQUIRE(f->read(out.data(), n) == n);
+        CHECK(std::equal(out.begin(), out.begin() + n, contents.begin() + position));
+        position += n;
+    }
+    CHECK(server->batches <= 4);
+    CHECK(server->reads <= 2); // short final block can use the normal EOF path
+    CHECK(f->read(out.data(), out.size()) == 0);
+    REQUIRE(f->seek(500));
+    REQUIRE(f->read(out.data(), out.size()) == out.size());
+    CHECK(std::equal(out.begin(), out.end(), contents.begin() + 500));
+}

@@ -36,6 +36,11 @@ struct DiskServiceSlotStats {
     std::uint64_t multiWriteRequests{0};
     std::uint64_t sequentialWriteRequests{0};
     std::uint64_t failedRequests{0};
+    std::uint64_t readImageUsTotal{0};
+    std::uint64_t readImageSamples{0};
+    std::uint32_t readImageUsMax{0};
+    std::uint32_t readImageSlowLba{0};
+    std::uint64_t readImageOver16ms{0};
     DiskImageStats image{};
 };
 

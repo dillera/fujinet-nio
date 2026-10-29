@@ -475,12 +475,19 @@ TEST_CASE("Atari SIO capture takes the frame a second listener decoded when the 
     poll();
     CHECK(router.command.empty());
     // CMD released; the second listener has the real frame. It is handled, once, and counted.
-    low = false; boundary.note_cmd_edge();
+    low = false; boundary.note_cmd_edge(42);
     alt_ready = true;
     poll();
     CHECK((router.command == std::vector<std::uint8_t>{0x7f, 0x51, 0, 0, 0xd0}));
     CHECK(alt_taken == 1);
     CHECK(capture.stats().frames_from_second_listener == 1);
+    CHECK(capture.processing_release_us() == 42);
+    boundary.note_cmd_edge(100); // later activity must not rewrite the command's timestamp
+    CHECK(capture.processing_release_us() == 42);
+    boundary.consume();
+    CHECK(capture.stats().first_alt_decisions[0].frame == heard);
+    CHECK(capture.stats().first_alt_decisions[0].edges == 1);
+    CHECK_FALSE(capture.stats().first_alt_decisions[0].collecting);
     CHECK(capture.bad_frames_in_a_row() == 0);
 
     // The next command is read by the main UART as usual, and the listener is not asked for it again.
@@ -493,6 +500,9 @@ TEST_CASE("Atari SIO capture takes the frame a second listener decoded when the 
     CHECK((router.command == std::vector<std::uint8_t>{0x31, 'S', 0, 0, 0x84}));
     CHECK(alt_taken == 1);
     CHECK(capture.stats().frames_from_second_listener == 1);
+    capture.reset_stats();
+    CHECK(capture.stats().frames_from_second_listener == 0);
+    CHECK(capture.stats().first_alt_decisions[0].frame[0] == 0);
 }
 
 TEST_CASE("Atari SIO per-command time splits our service time from the Atari's idle time")
