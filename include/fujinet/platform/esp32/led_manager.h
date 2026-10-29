@@ -8,6 +8,25 @@ namespace fujinet::platform::esp32 {
 enum class LedId {
     Wifi = 0,  ///< WiFi status LED
     Bus = 1,   ///< Bus activity LED
+    Bluetooth = 2,
+};
+
+// Called only after application network bytes have actually been transferred.
+// It never waits for a timer or GPIO operation.
+void note_network_activity() noexcept;
+
+// Timer-side pulse state; the counter can coalesce any number of events.
+class NetworkActivityPulse {
+public:
+    bool tick(std::uint32_t count) noexcept {
+        if (count != _seen) { _seen = count; _ticks = 4; }
+        if (!_ticks) return false;
+        --_ticks;
+        return true;
+    }
+private:
+    std::uint32_t _seen{0};
+    unsigned _ticks{0};
 };
 
 /// Manages status LEDs on the FujiNet device.
@@ -24,7 +43,7 @@ enum class LedId {
 class LedManager {
 public:
     LedManager();
-    ~LedManager() = default;
+    ~LedManager();
 
     /// Initialize LED GPIO pins.
     /// Must be called once before using other methods.
@@ -51,9 +70,12 @@ public:
     bool isOn(LedId id) const;
 
 private:
-    bool _state[2] = {false, false};  ///< Current LED states
-    int _pin[2] = {-1, -1};           ///< GPIO pins for each LED
+    bool _state[3] = {false, false, false};
+    int _pin[3] = {-1, -1, -1};
     bool _initialized = false;        ///< True if setup() was called
+    void* _activity_timer = nullptr;
+    NetworkActivityPulse _activity_pulse;
+    static void activity_tick(void* arg);
 };
 
 } // namespace fujinet::platform::esp32

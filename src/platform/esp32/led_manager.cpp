@@ -5,6 +5,8 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_timer.h"
+#include <atomic>
 
 namespace fujinet::platform::esp32 {
 
@@ -12,6 +14,27 @@ static constexpr const char* TAG = "led";
 
 // Blink duration in milliseconds
 static constexpr int BLINK_TIME_MS = 100;
+static std::atomic<std::uint32_t> network_events{0};
+
+void note_network_activity() noexcept
+{
+    network_events.fetch_add(1, std::memory_order_relaxed);
+}
+
+void LedManager::activity_tick(void* arg)
+{
+    auto* self = static_cast<LedManager*>(arg);
+    const bool on = self->_activity_pulse.tick(network_events.load(std::memory_order_relaxed));
+    if (self->isOn(LedId::Bus) != on) self->set(LedId::Bus, on);
+}
+
+LedManager::~LedManager()
+{
+    if (_activity_timer) {
+        esp_timer_stop(static_cast<esp_timer_handle_t>(_activity_timer));
+        esp_timer_delete(static_cast<esp_timer_handle_t>(_activity_timer));
+    }
+}
 
 LedManager::LedManager()
 {
@@ -20,6 +43,7 @@ LedManager::LedManager()
     // Initialize pin array from pinmap
     _pin[static_cast<int>(LedId::Wifi)] = pins.led.wifi;
     _pin[static_cast<int>(LedId::Bus)] = pins.led.bus;
+    _pin[static_cast<int>(LedId::Bluetooth)] = pins.led.bluetooth;
 }
 
 void LedManager::setup()
@@ -29,7 +53,7 @@ void LedManager::setup()
     }
 
     // Configure GPIO for each enabled LED
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < 3; ++i) {
         if (_pin[i] >= 0) {
             gpio_config_t io_conf = {};
             io_conf.intr_type = GPIO_INTR_DISABLE;
@@ -46,12 +70,27 @@ void LedManager::setup()
                 // LEDs are active LOW, so set HIGH to turn off initially
                 gpio_set_level(static_cast<gpio_num_t>(_pin[i]), 1);
                 _state[i] = false;
-                FN_LOGI(TAG, "LED %c enabled on GPIO %d", (i == 0) ? 'W' : 'B', _pin[i]);
+                FN_LOGI(TAG, "LED %d enabled on GPIO %d", i, _pin[i]);
             }
         }
     }
 
     _initialized = true;
+    if (pinmap().led.network_activity && _pin[static_cast<int>(LedId::Bus)] >= 0) {
+        esp_timer_create_args_t args{};
+        args.callback = &LedManager::activity_tick;
+        args.arg = this;
+        args.name = "network_led";
+        esp_timer_handle_t timer = nullptr;
+        if (esp_timer_create(&args, &timer) == ESP_OK) {
+            _activity_timer = timer;
+            if (esp_timer_start_periodic(timer, 25000) != ESP_OK) {
+                esp_timer_delete(timer);
+                _activity_timer = nullptr;
+            }
+        }
+        if (!_activity_timer) FN_LOGW(TAG, "Could not start activity LED timer");
+    }
 }
 
 void LedManager::set(LedId id, bool on)

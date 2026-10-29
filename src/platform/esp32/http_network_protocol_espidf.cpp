@@ -1,4 +1,5 @@
 #include "fujinet/platform/esp32/http_network_protocol_espidf.h"
+#include "fujinet/platform/esp32/led_manager.h"
 
 #include <algorithm>
 #include <atomic>
@@ -253,7 +254,11 @@ static esp_err_t event_handler(esp_http_client_event_t* evt)
     }
 
     switch (evt->event_id) {
+    case HTTP_EVENT_HEADERS_SENT:
+        note_network_activity();
+        break;
     case HTTP_EVENT_ON_HEADER: {
+        note_network_activity();
         // Store ONLY requested headers. If none requested, store nothing.
         if (evt->header_key && evt->header_value && header_requested(*s, evt->header_key)) {
             const std::size_t klen = std::strlen(evt->header_key);
@@ -270,6 +275,7 @@ static esp_err_t event_handler(esp_http_client_event_t* evt)
     }
 
     case HTTP_EVENT_ON_DATA: {
+        if (evt->data_len > 0) note_network_activity();
         // For HEAD, ignore the body entirely (but allow perform() to drain).
         if (s->method == 5) {
             break;
@@ -423,6 +429,7 @@ static void http_task_entry_after_upload(void* arg)
         while (!s->stop_requested) {
             std::uint8_t buf[512];
             const int r = esp_http_client_read(client, reinterpret_cast<char*>(buf), sizeof(buf));
+            if (r > 0) note_network_activity();
 
             if (r < 0) { err = ESP_FAIL; break; }
             if (r == 0) { err = ESP_OK;   break; }
@@ -718,6 +725,7 @@ fujinet::io::StatusCode HttpNetworkProtocolEspIdf::write_body(
                 reinterpret_cast<const char*>(p + sent_total),
                 static_cast<int>(n - sent_total)
             );
+            if (w > 0) note_network_activity();
 
             if (w < 0) {
                 return false;
@@ -779,6 +787,7 @@ fujinet::io::StatusCode HttpNetworkProtocolEspIdf::write_body(
                 reinterpret_cast<const char*>(data + total),
                 static_cast<int>(dataLen - total)
             );
+            if (w > 0) note_network_activity();
 
             if (w < 0) {
                 FN_LOGE(TAG, "write_body: write error ret=%d", w);

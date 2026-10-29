@@ -1,4 +1,5 @@
 #include "fujinet/platform/esp32/tls_network_protocol_espidf.h"
+#include "fujinet/platform/esp32/led_manager.h"
 
 #include <algorithm>
 #include <cstring>
@@ -178,6 +179,7 @@ fujinet::io::StatusCode TlsNetworkProtocolEspIdf::write_body(std::uint32_t offse
 
     // Write data
     int ret = esp_tls_conn_write(_tls, data, len);
+    if (ret > 0) note_network_activity();
     
     if (ret < 0) {
         int espErr = 0;
@@ -242,6 +244,7 @@ fujinet::io::StatusCode TlsNetworkProtocolEspIdf::read_body(std::uint32_t offset
     // Try to read more data if buffer is empty
     if (_rxAvailable == 0 && _state == State::Connected) {
         int ret = esp_tls_conn_read(_tls, _rxBuffer.data(), _rxBuffer.size());
+        if (ret > 0) note_network_activity();
         
         if (ret < 0) {
             int espErr = 0;
@@ -316,6 +319,7 @@ void TlsNetworkProtocolEspIdf::poll()
     if (_state != State::Connected || !_tls || _rxAvailable != 0 || _peerClosed) return;
 
     const int ret = esp_tls_conn_read(_tls, _rxBuffer.data(), _rxBuffer.size());
+    if (ret > 0) note_network_activity();
     if (ret > 0) {
         _rxAvailable = static_cast<std::size_t>(ret);
     } else if (ret == 0) {

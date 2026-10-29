@@ -1,4 +1,5 @@
 #include "fujinet/net/tcp_socket_ops.h"
+#include "fujinet/platform/esp32/led_manager.h"
 
 #include <cerrno>
 #include <cstring>
@@ -123,13 +124,17 @@ public:
     {
         // ESP-IDF lwIP: MSG_DONTWAIT for nonblocking
         // Note: MSG_NOSIGNAL not available on lwIP
-        return lwip_send(fd, buf, len, MSG_DONTWAIT);
+        const auto n = lwip_send(fd, buf, len, MSG_DONTWAIT);
+        if (n > 0) fujinet::platform::esp32::note_network_activity();
+        return n;
     }
 
     SSize recv(int fd, void* buf, std::size_t len) override
     {
         // ESP-IDF lwIP: MSG_DONTWAIT for nonblocking
-        return lwip_recv(fd, buf, len, MSG_DONTWAIT);
+        const auto n = lwip_recv(fd, buf, len, MSG_DONTWAIT);
+        if (n > 0) fujinet::platform::esp32::note_network_activity();
+        return n;
     }
 
     int shutdown_write(int fd) override

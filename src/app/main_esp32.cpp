@@ -27,6 +27,7 @@ extern "C" {
 #include "fujinet/platform/esp32/button_manager.h"
 #include "fujinet/platform/esp32/fs_factory.h"
 #include "fujinet/platform/esp32/led_manager.h"
+#include "fujinet/platform/esp32/pinmap.h"
 #include "fujinet/platform/esp32/fs_init.h"
 #include "fujinet/platform/esp32/sntp_service.h"
 #include "fujinet/platform/esp32/wifi_link.h"
@@ -165,10 +166,9 @@ struct Esp32Services {
         // Initialize LED manager
         leds = std::make_unique<fujinet::platform::esp32::LedManager>();
         leds->setup();
-        // Turn on WiFi LED to indicate boot
-        leds->set(fujinet::platform::esp32::LedId::Wifi, true);
-        // Blinking blocks, but this is how you would do it:
-        // leds->blink(fujinet::platform::esp32::LedId::Bus, 100);
+        // Atari v1 leaves its blue status LEDs off and uses the bus LED for network traffic.
+        if (!fujinet::platform::esp32::pinmap().led.network_activity)
+            leds->set(fujinet::platform::esp32::LedId::Wifi, true);
     }
 
     void start_phase1(fujinet::core::FujinetCore& core)

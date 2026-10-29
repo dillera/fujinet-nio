@@ -55,6 +55,8 @@ static constexpr PinMap BOARD_PINMAP{
     .led = LedPins{
         .wifi = 2,     // PIN_LED_WIFI
         .bus = 4,      // PIN_LED_BUS (Atari override)
+        .bluetooth = 13, // PIN_LED_BT
+        .network_activity = true,
     },
     .button = ButtonPins{
         .a = 0,        // PIN_BUTTON_A

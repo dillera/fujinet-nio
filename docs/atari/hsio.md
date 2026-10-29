@@ -1,5 +1,12 @@
 # High-speed SIO (HSIO) on the Atari
 
+On Atari FujiNet v1, the power LED is hardware controlled. The blue Wi-Fi and
+Bluetooth status outputs are left off; GPIO 4's activity LED lights briefly on
+application UDP, TCP, TLS and HTTP transfers, including TNFS. Transfers only
+record an event; a timer updates the LED, so SIO and network calls do not wait
+for a blink. This indicates application network activity, not every Wi-Fi radio
+frame or background management packet.
+
 For TNFS boot investigations, reset `sio.reset` and `disk.stats.reset` at the
 same point before each run and capture both `sio.status` and `disk.stats` after
 it. `disk.stats` reports single-sector image-read time (excluding mount and SIO
