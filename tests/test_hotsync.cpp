@@ -8,7 +8,10 @@
 
 #include "fujinet/config/fuji_config.h"
 #include "fujinet/config/fuji_config_yaml_store_fs.h"
-#include "fujinet/diag/diagnostic_provider.h"
+#include "fujinet/diag/diagnostic_hotsync.h"
+#include "fujinet/diag/diagnostic_registry.h"
+#include "fujinet/fs/fs_stdio.h"
+#include "fujinet/fs/storage_manager.h"
 #include "fujinet/hotsync/dlp.h"
 #include "fujinet/hotsync/dlp_client.h"
 #include "fujinet/hotsync/fs_storage.h"
@@ -20,18 +23,25 @@
 #include "fujinet/hotsync/padp_transport.h"
 #include "fujinet/hotsync/palm_database.h"
 #include "fujinet/hotsync/session.h"
+#include "fujinet/hotsync/sha256.h"
 #include "fujinet/hotsync/slp.h"
 #include "fujinet/io/core/baud_control.h"
 #include "fujinet/io/core/channel.h"
 #include "fujinet/io/devices/fuji_device.h"
+#include "fujinet/io/protocol/fuji_bus_packet.h"
+#include "fujinet/io/protocol/slip_codec.h"
+#include "fujinet/io/transport/slip_framer.h"
 #include "fujinet/net/tcp_socket_ops.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <map>
 #include <memory>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -721,6 +731,94 @@ TEST_CASE("HotSync storage: queue, install and back up in a filesystem folder")
     CHECK(info.sizeBytes == 2);
 }
 
+TEST_CASE("HotSync storage: syncs share a local filesystem with another task's file traffic")
+{
+    // A sync on the HotSync task while the core task, as FileDevice does,
+    // writes, reads, lists and removes files on the same filesystem.
+    namespace stdfs = std::filesystem;
+    const stdfs::path root =
+        stdfs::temp_directory_path() / ("fn-hotsync-share-" + std::to_string(std::random_device{}()));
+    stdfs::remove_all(root);
+    stdfs::create_directories(root);
+    std::shared_ptr<fujinet::fs::IFileSystem> fs =
+        fujinet::fs::create_stdio_filesystem(root.string(), "host", fujinet::fs::FileSystemKind::HostPosix);
+
+    std::atomic_bool synced{false};
+    std::atomic_int fileOps{0};
+    std::atomic_int fileFaults{0};
+    std::thread core([&] {
+        fs->createDirectory("/apps");
+        for (int i = 0; !synced.load() || i < 200; ++i) {
+            const std::string path = "/apps/f" + std::to_string(i % 8) + ".bin";
+            const Bytes data(512 + static_cast<std::size_t>(i % 1024), static_cast<std::uint8_t>(i));
+            {
+                auto f = fs->open(path, "wb");
+                if (!f || f->write(data.data(), data.size()) != data.size()) {
+                    ++fileFaults;
+                    continue;
+                }
+            }
+            Bytes back(data.size());
+            {
+                auto f = fs->open(path, "rb");
+                if (!f || f->read(back.data(), back.size()) != back.size() || back != data) {
+                    ++fileFaults;
+                }
+            }
+            std::vector<fujinet::fs::FileInfo> entries;
+            if (!fs->listDirectory("/apps", entries)) {
+                ++fileFaults;
+            }
+            fs->listDirectory("/hotsync/backup/Ada", entries); // being written by the sync
+            if (i % 3 == 0 && !fs->removeFile(path)) {
+                ++fileFaults;
+            }
+            ++fileOps;
+        }
+    });
+
+    int failedSyncs = 0;
+    for (int n = 0; n < 100; ++n) {
+        FsStorage storage(*fs, "/hotsync");
+        if (!storage.create_install_folder() ||
+            !storage.queue_install("hello" + std::to_string(n) + ".prc", sample_app().serialize())) {
+            ++failedSyncs;
+            continue;
+        }
+        FakePalm palm;
+        palm.userName = "Ada";
+        palm.userId = 7;
+        palm.databases["FujiTest"] = sample_record_db();
+        palm.databases["Hello"] = sample_app();
+        SessionOptions options;
+        options.backup = BackupPolicy::All;
+        const SessionReport report = Session(palm, storage, options).run();
+        if (report.error != DlpError::None || report.installed != 1 || report.backedUp != 2) {
+            ++failedSyncs;
+        }
+    }
+    synced = true;
+    core.join();
+
+    CHECK(failedSyncs == 0);
+    CHECK(fileFaults.load() == 0);
+    CHECK(fileOps.load() >= 200);
+    Bytes saved;
+    {
+        auto f = fs->open("/hotsync/backup/Ada/FujiTest.pdb", "rb");
+        REQUIRE(f);
+        std::uint8_t buf[4096];
+        for (std::size_t got; (got = f->read(buf, sizeof(buf))) > 0;) {
+            saved.insert(saved.end(), buf, buf + got);
+        }
+    }
+    PalmDatabase db;
+    CHECK(db.parse(saved));
+    CHECK(db.records.size() == 2);
+    fs.reset();
+    stdfs::remove_all(root);
+}
+
 TEST_CASE("HotSync config: the hotsync block round-trips through YAML")
 {
     auto fs = std::make_unique<fujinet::tests::MemoryFileSystem>("primary");
@@ -998,6 +1096,51 @@ TEST_CASE("HotSync fetch: failures queue nothing")
     CHECK(storage.pending_installs().empty());
 }
 
+TEST_CASE("HotSync SHA-256: the FIPS 180-4 examples and block-boundary lengths")
+{
+    auto text = [](const std::string& t) { return Bytes(t.begin(), t.end()); };
+    CHECK(sha256_hex({}) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    CHECK(sha256_hex(text("abc")) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    CHECK(sha256_hex(text("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")) ==
+          "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+    CHECK(sha256_hex(Bytes(1000000, 'a')) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+    // 55 and 56 bytes: the length fits in the last block, or needs one more.
+    CHECK(sha256_hex(Bytes(55, 'a')) == "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318");
+    CHECK(sha256_hex(Bytes(56, 'a')) == "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a");
+    CHECK(sha256_hex(Bytes(64, 'a')) == "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb");
+}
+
+TEST_CASE("HotSync fetch: with sha256= only a matching download is queued")
+{
+    ProbeSocketOps ops;
+    ops.connects = true;
+    ops.reply = "HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+    fujinet::tests::MemoryFileSystem fs("host");
+    auto service = std::make_shared<HotSyncService>(ops, fs, HotSyncSettings{}, nullptr);
+    auto provider = fujinet::diag::create_hotsync_diagnostic_provider(service, nullptr);
+    FsStorage storage(fs, "/hotsync");
+    const std::string hello = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+    const std::string other = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    std::string arg = "sha256=" + other;
+    fujinet::diag::DiagResult r = run_diag(*provider, {"hotsync.fetch", "http://mac:8000/A.prc", arg});
+    CHECK(r.status == fujinet::diag::DiagStatus::Error);
+    CHECK(r.text == "fetch failed: SHA-256 is " + hello + ", not the one given; nothing queued");
+    CHECK(storage.pending_installs().empty());
+
+    arg = "sha256=2CF24DBA5FB0A30E26E83B2AC5B9E29E1B161E5C1FA7425E73043362938B9824"; // either case
+    ops.reply = "HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+    r = run_diag(*provider, {"hotsync.fetch", "http://mac:8000/A.prc", "B.prc", arg});
+    REQUIRE(r.status == fujinet::diag::DiagStatus::Ok);
+    CHECK(r.text == "queued: B.prc\r\nbytes: 5\r\nsha256: ok\r\n(installed at the next HotSync)\r\n");
+    CHECK(storage.pending_installs() == std::vector<std::string>{"B.prc"});
+
+    ops.sent.clear();
+    r = run_diag(*provider, {"hotsync.fetch", "http://mac:8000/A.prc", "sha256=abc"});
+    CHECK(r.status == fujinet::diag::DiagStatus::InvalidArgs);
+    CHECK(ops.sent.empty());
+}
+
 // ---------------------------------------------------------------------------
 // Cradle: one serial line shared by FujiBus and HotSync.
 
@@ -1132,6 +1275,71 @@ TEST_CASE("HotSync cradle: escaped bytes are decoded before the length and check
     CHECK(f.cradle->stats().strayBytes == 0);
 }
 
+TEST_CASE("HotSync cradle: a frame holds the line exactly when the FujiBus transport would take it")
+{
+    using fujinet::io::protocol::FujiBusPacket;
+    using fujinet::io::protocol::WireDeviceId;
+    using fujinet::io::protocol::encodeSLIP;
+
+    // Raw packets, framed below: good ones (params, payloads with END and ESC
+    // bytes, a large payload) and the same broken in each way fromRaw checks.
+    const Bytes ping = FujiBusPacket(WireDeviceId::FujiNet, 0x01).serializeRaw();
+    const Bytes params =
+        FujiBusPacket(WireDeviceId::NetworkService, 0x05, std::uint8_t{3}, std::uint16_t{0xC0DB}).serializeRaw();
+    const Bytes payload =
+        FujiBusPacket(WireDeviceId::FileService, 0x02, Bytes{0xC0, 0xDB, 0xDC, 0xDD, 0x00}).serializeRaw();
+    const Bytes big = FujiBusPacket(WireDeviceId::DiskService, 0x03, Bytes(4000, 0xC0)).serializeRaw();
+    std::vector<Bytes> raws = {ping, params, payload, big};
+    auto broken = [&](Bytes raw, auto change) {
+        change(raw);
+        raws.push_back(raw);
+    };
+    broken(ping, [](Bytes& r) { r[4] ^= 0x01; });           // checksum
+    broken(params, [](Bytes& r) { r[2] += 1; });            // length field
+    broken(payload, [](Bytes& r) { r.push_back(0x00); });   // a trailing byte
+    broken(payload, [](Bytes& r) { r.pop_back(); });        // cut short
+    broken(params, [](Bytes& r) { r[5] = 0xFF; });          // descriptor
+    // Broken inside while the length and checksum still hold: what a
+    // scanner checking only the header would take.
+    auto reseal = [](Bytes& r) {
+        r[2] = static_cast<std::uint8_t>(r.size());
+        r[3] = static_cast<std::uint8_t>(r.size() >> 8);
+        r[4] = 0;
+        std::uint16_t sum = 0;
+        for (const std::uint8_t b : r) {
+            sum = static_cast<std::uint16_t>(sum + b);
+            sum = static_cast<std::uint16_t>((sum >> 8) + (sum & 0xFF));
+        }
+        r[4] = static_cast<std::uint8_t>(sum);
+    };
+    broken(ping, [&](Bytes& r) { r[5] = 0x80; reseal(r); });             // a missing descriptor
+    broken(params, [&](Bytes& r) { r[5] = 0xFF; reseal(r); });           // descriptor
+    raws.push_back({0x70, 0x01});                           // shorter than a header
+    raws.push_back(hex("beefed030302000effaf01"));          // SLP noise
+
+    unsigned taken = 0;
+    for (const Bytes& raw : raws) {
+        CAPTURE(raw.size());
+        const Bytes framed = encodeSLIP(raw);
+
+        // The transport's path: SlipFramer, then FujiBusPacket::fromRaw.
+        FakeLine transportLine;
+        transportLine.receive(framed);
+        fujinet::io::SlipFramer framer;
+        framer.poll(transportLine);
+        Bytes packet;
+        const bool transportTakes = framer.nextPacket(packet) && FujiBusPacket::fromRaw(packet) != nullptr;
+
+        CradleFixture f;
+        f.line->receive(framed);
+        CHECK(f.bus_read() == framed);
+        CHECK(f.cradle->host_active() == transportTakes);
+        CHECK(f.cradle->stats().frames == (transportTakes ? 1u : 0u));
+        taken += transportTakes ? 1 : 0;
+    }
+    CHECK(taken == 4); // the four good packets, and none of the broken ones
+}
+
 TEST_CASE("HotSync cradle: a request still waiting at claim time keeps the line and reaches FujiBus")
 {
     CradleFixture f;
@@ -1263,4 +1471,40 @@ TEST_CASE("HotSync service: cradle windows alternate with the bus and stop while
     CHECK(s.cradle == "app");
     CHECK(s.cradleWindows == 1);
     CHECK(f.line->rates.size() == 2);
+}
+
+TEST_CASE("HotSync start: off leaves the line alone; the cradle wraps it; hotsync.* is always registered")
+{
+    fujinet::fs::StorageManager storage; // no persistent filesystem: no service starts
+    fujinet::diag::DiagnosticRegistry registry;
+    fujinet::config::HotSyncConfig config;
+    auto run = [&](std::string_view cmd) {
+        fujinet::diag::DiagArgsView args;
+        args.line = cmd;
+        args.argv = {cmd};
+        return registry.dispatch(args);
+    };
+
+    std::unique_ptr<fujinet::io::Channel> line = std::make_unique<FakeLine>();
+    fujinet::io::Channel* const bus = line.get();
+    auto off = start_hotsync({storage, config, nullptr, registry}, line);
+    CHECK(off != nullptr);
+    CHECK(line.get() == bus);
+    CHECK(run("hotsync.status").text.rfind("enabled: 0\r\n", 0) == 0);
+
+    // The cradle takes the line even when the service cannot start, so the
+    // transports always get the channel start_hotsync leaves in `line`.
+    config.enabled = true;
+    config.cradle = true;
+    fujinet::diag::DiagnosticRegistry registry2;
+    auto on = start_hotsync({storage, config, nullptr, registry2}, line);
+    auto* cradle = dynamic_cast<CradleChannel*>(line.get());
+    REQUIRE(cradle != nullptr);
+    CHECK(&cradle->line() == bus);
+
+    // No line at all (a build without a FujiBus channel) is fine.
+    std::unique_ptr<fujinet::io::Channel> none;
+    fujinet::diag::DiagnosticRegistry registry3;
+    CHECK(start_hotsync({storage, config, nullptr, registry3}, none) != nullptr);
+    CHECK(none == nullptr);
 }

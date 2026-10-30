@@ -14,6 +14,7 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <utility>
 
 namespace fujinet::fs {
 class IFileSystem;
@@ -26,6 +27,10 @@ class ITcpSocketOps;
 namespace fujinet::hotsync {
 
 class CradleChannel;
+
+// `hotsync.backup` in fujinet.yaml: false for an unknown value.
+bool parse_backup_policy(const std::string& text, BackupPolicy& out);
+const char* backup_policy_name(BackupPolicy policy);
 
 struct HotSyncSettings {
     std::uint16_t port{kNetSyncPort}; // NetSync; 0 turns it off
@@ -62,6 +67,9 @@ struct HotSyncStatus {
     // "syncing" or "idle".
     std::string cradle{"off"};
     std::uint32_t cradleWindows{0};
+    // The service task's lowest free stack so far, in bytes; 0 when the
+    // platform cannot tell.
+    std::size_t taskStackMinFree{0};
 };
 
 class HotSyncService {
@@ -69,6 +77,8 @@ public:
     // Local wall-clock time for the Palm's "last synced" stamp; year 0 when
     // the clock is not set.
     using Clock = std::function<DlpDateTime()>;
+    // The calling task's lowest free stack so far, for HotSyncStatus.
+    using StackProbe = std::function<std::size_t()>;
 
     // `cradle` may be null: no cradle on this build or config.
     HotSyncService(net::ITcpSocketOps& ops, fs::IFileSystem& fs, HotSyncSettings settings, Clock clock,
@@ -86,13 +96,18 @@ public:
     void stop() { _stop.store(true); }
 
     HotSyncStatus status() const;
+    // Called on the service task after each pass that did something.
+    void set_stack_probe(StackProbe probe) { _stackProbe = std::move(probe); }
 
     // Downloads an http:// URL into the install queue for the next sync. The
     // file is named after the URL's last path segment unless `name` is given;
-    // either must end in .prc, .pdb or .pqa. Returns an empty string on success
-    // (`name` and `size` describe the file), otherwise what went wrong. Blocks
-    // while it downloads: for the console task.
-    std::string fetch_install(const std::string& url, std::string& name, std::size_t& size);
+    // either must end in .prc, .pdb or .pqa. With `sha256` (64 hex digits) the
+    // download is queued only if its digest matches, since plain HTTP lets the
+    // network substitute it. Returns an empty string on success (`name` and
+    // `size` describe the file), otherwise what went wrong. Blocks while it
+    // downloads: for the console task.
+    std::string fetch_install(const std::string& url, std::string& name, std::size_t& size,
+                              const std::string& sha256 = {});
     const HotSyncSettings& settings() const { return _settings; }
     bool has_cradle() const { return _cradle != nullptr; }
     // Null without a cradle.
@@ -111,6 +126,7 @@ private:
     fs::IFileSystem& _fs;
     HotSyncSettings _settings;
     Clock _clock;
+    StackProbe _stackProbe;
     CradleChannel* _cradle;
     CradleWindow _window;
     int _listenFd{-1};

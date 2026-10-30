@@ -1,3 +1,7 @@
+// HotSync builds only (FN_WITH_HOTSYNC): the ESP32 build compiles every
+// source, so elsewhere this file compiles to nothing.
+#if FN_WITH_HOTSYNC == 1
+
 #include "fujinet/hotsync/hotsync_service.h"
 
 #include "fujinet/core/logging.h"
@@ -7,6 +11,7 @@
 #include "fujinet/hotsync/http_fetch.h"
 #include "fujinet/hotsync/netsync_transport.h"
 #include "fujinet/hotsync/padp_transport.h"
+#include "fujinet/hotsync/sha256.h"
 #include "fujinet/hotsync/tcp_link.h"
 #include "fujinet/net/tcp_socket_ops.h"
 
@@ -24,7 +29,8 @@ namespace {
 
 constexpr const char* TAG = "hotsync";
 
-// Until the network is up a bind fails; try again this often.
+// Until the network is up a bind fails; try again this often (docs/hotsync.md,
+// Design, says why this polls rather than waiting for a SystemEvents event).
 constexpr std::uint64_t kListenRetryMs = 5000;
 constexpr auto kIdlePoll = std::chrono::milliseconds(100);
 
@@ -39,6 +45,30 @@ std::uint32_t new_user_id()
 }
 
 } // namespace
+
+bool parse_backup_policy(const std::string& text, BackupPolicy& out)
+{
+    if (text == "none") {
+        out = BackupPolicy::None;
+    } else if (text == "flagged") {
+        out = BackupPolicy::Flagged;
+    } else if (text == "all") {
+        out = BackupPolicy::All;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+const char* backup_policy_name(BackupPolicy policy)
+{
+    switch (policy) {
+    case BackupPolicy::None: return "none";
+    case BackupPolicy::Flagged: return "flagged";
+    case BackupPolicy::All: return "all";
+    }
+    return "flagged";
+}
 
 HotSyncService::HotSyncService(net::ITcpSocketOps& ops, fs::IFileSystem& fs, HotSyncSettings settings,
                                Clock clock, CradleChannel* cradle, CradleWindow window)
@@ -178,6 +208,12 @@ void HotSyncService::run()
     while (!_stop.load()) {
         if (!poll()) {
             std::this_thread::sleep_for(kIdlePoll);
+            continue;
+        }
+        if (_stackProbe) {
+            const std::size_t free = _stackProbe();
+            std::lock_guard<std::mutex> lock(_statusMutex);
+            _status.taskStackMinFree = free;
         }
     }
 }
@@ -275,7 +311,8 @@ bool installable_name(const std::string& name)
 
 } // namespace
 
-std::string HotSyncService::fetch_install(const std::string& url, std::string& name, std::size_t& size)
+std::string HotSyncService::fetch_install(const std::string& url, std::string& name, std::size_t& size,
+                                          const std::string& sha256)
 {
     HttpUrl parsed;
     if (!parse_http_url(url, parsed)) {
@@ -296,6 +333,16 @@ std::string HotSyncService::fetch_install(const std::string& url, std::string& n
     if (data.empty()) {
         return "the file is empty";
     }
+    if (!sha256.empty()) {
+        std::string expected = sha256;
+        for (char& c : expected) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        const std::string actual = sha256_hex(data);
+        if (actual != expected) {
+            return "SHA-256 is " + actual + ", not the one given; nothing queued";
+        }
+    }
     if (!FsStorage(_fs, _settings.root).queue_install(name, data)) {
         return "cannot write to " + _settings.root + "/install";
     }
@@ -311,3 +358,5 @@ HotSyncStatus HotSyncService::status() const
 }
 
 } // namespace fujinet::hotsync
+
+#endif // FN_WITH_HOTSYNC

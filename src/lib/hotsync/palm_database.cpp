@@ -1,3 +1,7 @@
+// HotSync builds only (FN_WITH_HOTSYNC): the ESP32 build compiles every
+// source, so elsewhere this file compiles to nothing.
+#if FN_WITH_HOTSYNC == 1
+
 #include "fujinet/hotsync/palm_database.h"
 
 #include <algorithm>
@@ -236,3 +240,5 @@ DlpDateTime palm_date_from_seconds(std::uint32_t seconds)
 }
 
 } // namespace fujinet::hotsync
+
+#endif // FN_WITH_HOTSYNC

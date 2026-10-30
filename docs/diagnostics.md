@@ -152,8 +152,9 @@ sending, or CMD is wired to a different pin than `pinmap.cpp` says); edges but
 Pair it with `disk.stats` to see whether sector requests reach the disk.
 ### Provider: `hotsync`
 
-Created with `fujinet::diag::create_hotsync_diagnostic_provider(service, fuji)`
-on POSIX and ESP32; `service` is null when HotSync is off. It exposes:
+Registered by `fujinet::hotsync::start_hotsync()` in builds with HotSync
+(`FN_WITH_HOTSYNC`; see [`hotsync.md`](hotsync.md)), on POSIX and ESP32,
+whether or not `hotsync.enabled` is on. It exposes:
 
 - `hotsync.status` — whether NetSync is listening, the cradle's state and
   counters, the settings, sync counts, and the source, user, time and result
@@ -164,9 +165,10 @@ on POSIX and ESP32; `service` is null when HotSync is off. It exposes:
   turns NetSync off; `backup` is `none`, `flagged` or `all`; `user_name` may
   contain spaces, up to 40 characters)
 - `hotsync.save` — write the `hotsync:` settings into `fujinet.yaml`
-- `hotsync.fetch <http://host[:port]/file.prc> [name]` — download a `.prc`,
-  `.pdb` or `.pqa` over plain HTTP into `install/` for the next sync (needs
-  HotSync on)
+- `hotsync.fetch <http://host[:port]/file.prc> [name] [sha256=<hex>]` —
+  download a `.prc`, `.pdb` or `.pqa` over plain HTTP into `install/` for the
+  next sync (needs HotSync on); with `sha256=` it is queued only if its
+  SHA-256 matches
 
 `get`, `set` and `save` need the FujiDevice. The service reads its settings at
 start-up, so a change takes effect after `hotsync.save` and a restart. See

@@ -1,3 +1,7 @@
+// HotSync builds only (FN_WITH_HOTSYNC): the ESP32 build compiles every
+// source, so elsewhere this file compiles to nothing.
+#if FN_WITH_HOTSYNC == 1
+
 #include "fujinet/hotsync/fs_storage.h"
 
 #include "fujinet/fs/filesystem.h"
@@ -141,3 +145,5 @@ bool FsStorage::write_backup(const std::string& user, const std::string& fileNam
 }
 
 } // namespace fujinet::hotsync
+
+#endif // FN_WITH_HOTSYNC

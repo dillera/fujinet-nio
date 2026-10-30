@@ -1,9 +1,12 @@
-#include "fujinet/diag/diagnostic_provider.h"
+// HotSync builds only (FN_WITH_HOTSYNC): the ESP32 build compiles every
+// source, so elsewhere this file compiles to nothing.
+#if FN_WITH_HOTSYNC == 1
+
+#include "fujinet/diag/diagnostic_hotsync.h"
 
 #include "fujinet/config/fuji_config.h"
 #include "fujinet/diag/diagnostic_parse.h"
 #include "fujinet/hotsync/cradle_channel.h"
-#include "fujinet/hotsync/hotsync_init.h"
 #include "fujinet/hotsync/hotsync_service.h"
 #include "fujinet/hotsync/session.h"
 #include "fujinet/io/devices/fuji_device.h"
@@ -75,7 +78,7 @@ public:
         out.push_back(DiagCommandSpec{
             .name = "hotsync.fetch",
             .summary = "download an app or database over HTTP into the queue for the next HotSync",
-            .usage = "hotsync.fetch <http://host[:port]/file.prc> [name]",
+            .usage = "hotsync.fetch <http://host[:port]/file.prc> [name] [sha256=<64 hex digits>]",
             .safe = false,
         });
         out.push_back(DiagCommandSpec{
@@ -140,26 +143,48 @@ private:
             add_line(r, "last_backed_up", std::to_string(s.lastBackedUp));
             add_line(r, "last_backup_failures", std::to_string(s.lastBackupFailures));
         }
+        if (s.taskStackMinFree > 0) {
+            add_line(r, "task_stack_min_free", std::to_string(s.taskStackMinFree));
+        }
         return r;
     }
 
     DiagResult cmd_fetch(const DiagArgsView& args)
     {
-        if (args.argv.size() < 2 || args.argv.size() > 3) {
-            return DiagResult::invalid_args("usage: hotsync.fetch <http://host[:port]/file.prc> [name]");
+        static constexpr const char* kUsage =
+            "usage: hotsync.fetch <http://host[:port]/file.prc> [name] [sha256=<64 hex digits>]";
+        if (args.argv.size() < 2 || args.argv.size() > 4) {
+            return DiagResult::invalid_args(kUsage);
+        }
+        std::string name;
+        std::string sha256;
+        for (std::size_t i = 2; i < args.argv.size(); ++i) {
+            const std::string_view arg = args.argv[i];
+            if (arg.rfind("sha256=", 0) == 0) {
+                sha256 = std::string(arg.substr(7));
+                if (sha256.size() != 64 || sha256.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
+                    return DiagResult::invalid_args("sha256= takes 64 hex digits");
+                }
+            } else if (name.empty()) {
+                name = std::string(arg);
+            } else {
+                return DiagResult::invalid_args(kUsage);
+            }
         }
         if (!_service) {
             return DiagResult::not_ready("HotSync is off (hotsync.set enabled 1, hotsync.save, then restart)");
         }
-        std::string name = args.argv.size() == 3 ? std::string(args.argv[2]) : std::string();
         std::size_t size = 0;
-        const std::string err = _service->fetch_install(std::string(args.argv[1]), name, size);
+        const std::string err = _service->fetch_install(std::string(args.argv[1]), name, size, sha256);
         if (!err.empty()) {
             return DiagResult::error("fetch failed: " + err);
         }
         DiagResult r = DiagResult::ok();
         add_line(r, "queued", name);
         add_line(r, "bytes", std::to_string(size));
+        if (!sha256.empty()) {
+            add_line(r, "sha256", "ok");
+        }
         r.text += "(installed at the next HotSync)\r\n";
         return r;
     }
@@ -250,3 +275,5 @@ std::unique_ptr<IDiagnosticProvider> create_hotsync_diagnostic_provider(
 }
 
 } // namespace fujinet::diag
+
+#endif // FN_WITH_HOTSYNC

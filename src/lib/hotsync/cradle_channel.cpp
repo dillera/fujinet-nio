@@ -1,6 +1,12 @@
+// HotSync builds only (FN_WITH_HOTSYNC): the ESP32 build compiles every
+// source, so elsewhere this file compiles to nothing.
+#if FN_WITH_HOTSYNC == 1
+
 #include "fujinet/hotsync/cradle_channel.h"
 
 #include "fujinet/io/core/baud_control.h"
+#include "fujinet/io/protocol/fuji_bus_packet.h"
+#include "fujinet/io/protocol/slip_codec.h"
 
 #include <algorithm>
 #include <thread>
@@ -10,18 +16,25 @@ namespace fujinet::hotsync {
 
 namespace {
 
-constexpr std::uint8_t kSlipEnd = 0xC0;
-constexpr std::uint8_t kSlipEsc = 0xDB;
-constexpr std::uint8_t kSlipEscEnd = 0xDC;
-constexpr std::uint8_t kSlipEscEsc = 0xDD;
-// The FujiBus packet header.
-constexpr std::size_t kMinFrameBytes = 6;
-// Longer than this without an END is not FujiBus.
-constexpr std::size_t kMaxFrameBytes = 65536;
+constexpr std::uint8_t kSlipEnd = io::protocol::to_byte(io::protocol::SlipByte::End);
+// The longest a FujiBus packet (at most 65535 bytes) can be once SLIP
+// escapes every byte, with its opening END. Longer is not FujiBus.
+constexpr std::size_t kMaxFrameBytes = 2 * 65535 + 1;
+// A frame buffer grown past this by a long run of noise is given back.
+constexpr std::size_t kKeepFrameCapacity = 4096;
 // Bounds the discard so a line that never goes quiet cannot hold us here.
 constexpr std::size_t kMaxDiscardBytes = 16384;
 constexpr auto kPoll = std::chrono::milliseconds(2);
 constexpr auto kLentIdle = std::chrono::milliseconds(10);
+
+// The FujiBus transport's own test of a frame: SlipFramer decodes it with
+// decodeSLIP and the transport takes it only if FujiBusPacket::fromRaw does.
+// `frame` starts with its opening END.
+bool is_fujibus_packet(const io::protocol::ByteBuffer& frame)
+{
+    const io::protocol::ByteBuffer raw = io::protocol::decodeSLIP(frame);
+    return !raw.empty() && io::protocol::FujiBusPacket::fromRaw(raw) != nullptr;
+}
 
 std::uint64_t steady_now_ms()
 {
@@ -90,18 +103,24 @@ bool CradleChannel::wait_for_readable(std::chrono::milliseconds timeout)
         return true;
     }
     // Held across the wait: some lines (the ESP32 UART) read their driver
-    // while waiting, so a claim must not start until the wait ends.
+    // while waiting, so a claim must not start until the wait ends. claim()
+    // therefore waits up to one core idle wait (20 ms on ESP32).
     return _line->wait_for_readable(timeout);
 }
 
 void CradleChannel::start_frame()
 {
     _inFrame = true;
-    _escape = false;
-    _frameLen = 0;
-    _lengthField = 0;
-    _checksumField = 0;
-    _sum = 0;
+    _frame.assign(1, kSlipEnd);
+}
+
+void CradleChannel::end_frame()
+{
+    _inFrame = false;
+    _frame.clear();
+    if (_frame.capacity() > kKeepFrameCapacity) {
+        io::protocol::ByteBuffer().swap(_frame);
+    }
 }
 
 void CradleChannel::stray(std::size_t count, std::uint64_t now)
@@ -112,59 +131,38 @@ void CradleChannel::stray(std::size_t count, std::uint64_t now)
     }
 }
 
-// Follows SLIP framing and checks each frame as a FujiBus packet (header:
-// device, command, u16 LE total length, checksum, descriptor) without keeping
-// it: the length must match and the folded sum, taken with the checksum byte
-// as zero, must equal the checksum.
+// Follows SLIP framing (END bytes only) and hands each whole frame to
+// is_fujibus_packet(), so the cradle and the transport cannot disagree about
+// what a FujiBus packet is.
 void CradleChannel::scan(const std::uint8_t* data, std::size_t len, std::uint64_t now)
 {
     for (std::size_t i = 0; i < len; ++i) {
-        std::uint8_t b = data[i];
-        if (b == kSlipEnd) {
-            if (_inFrame && _frameLen > 0) {
-                const bool packet = _frameLen >= kMinFrameBytes && _lengthField == _frameLen &&
-                                    static_cast<std::uint8_t>(_sum) == _checksumField;
-                if (packet) {
-                    ++_stats.frames;
-                    _sawFrame = true;
-                    _lastFrameMs = now;
-                    _holdUntilMs = now + _timing.hostHoldMs;
-                    _inFrame = false;
-                    continue;
-                }
-                stray(_frameLen, now);
+        const std::uint8_t b = data[i];
+        if (b != kSlipEnd) {
+            if (!_inFrame) {
+                stray(1, now);
+                continue;
             }
-            // An END after anything but a packet may open the next one.
-            start_frame();
+            _frame.push_back(b);
+            if (_frame.size() > kMaxFrameBytes) {
+                stray(_frame.size() - 1, now);
+                end_frame();
+            }
             continue;
         }
-        if (!_inFrame) {
-            stray(1, now);
-            continue;
+        if (_inFrame && _frame.size() > 1) {
+            if (is_fujibus_packet(_frame)) {
+                ++_stats.frames;
+                _sawFrame = true;
+                _lastFrameMs = now;
+                _holdUntilMs = now + _timing.hostHoldMs;
+                end_frame();
+                continue;
+            }
+            stray(_frame.size() - 1, now);
         }
-        if (_escape) {
-            _escape = false;
-            b = b == kSlipEscEnd ? kSlipEnd : b == kSlipEscEsc ? kSlipEsc : b;
-        } else if (b == kSlipEsc) {
-            _escape = true;
-            continue;
-        }
-        const std::size_t pos = _frameLen++;
-        if (pos == 2) {
-            _lengthField = b;
-        } else if (pos == 3) {
-            _lengthField = static_cast<std::uint16_t>(_lengthField | (b << 8));
-        }
-        if (pos == 4) {
-            _checksumField = b;
-        } else {
-            _sum = static_cast<std::uint16_t>(_sum + b);
-            _sum = static_cast<std::uint16_t>((_sum >> 8) + (_sum & 0xFF));
-        }
-        if (_frameLen > kMaxFrameBytes) {
-            stray(_frameLen, now);
-            _inFrame = false;
-        }
+        // An END after anything but a packet may open the next one.
+        start_frame();
     }
 }
 
@@ -219,7 +217,7 @@ bool CradleChannel::claim(std::uint32_t baud)
         }
         _pending.clear();
         discard_pending();
-        _inFrame = false;
+        end_frame();
         _lent = true;
         ++_stats.lends;
     }
@@ -302,3 +300,5 @@ void CradleChannel::LentLink::set_baud_rate(std::uint32_t baud)
 }
 
 } // namespace fujinet::hotsync
+
+#endif // FN_WITH_HOTSYNC

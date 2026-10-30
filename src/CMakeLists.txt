@@ -74,8 +74,10 @@ idf_component_register(
         lib/hotsync/padp_transport.cpp
         lib/hotsync/palm_database.cpp
         lib/hotsync/session.cpp
+        lib/hotsync/sha256.cpp
         lib/hotsync/slp.cpp
         lib/hotsync/tcp_link.cpp
+        lib/hotsync_init_off.cpp
         lib/image/ilbm_writer.cpp
         lib/image/image_pipeline.cpp
         lib/image/output_format.cpp

@@ -1,6 +1,10 @@
 // Derived from palm-sync (https://github.com/jichu4n/palm-sync),
 // Copyright Chuan Ji, Apache License 2.0. See docs/hotsync.md.
 
+// HotSync builds only (FN_WITH_HOTSYNC): the ESP32 build compiles every
+// source, so elsewhere this file compiles to nothing.
+#if FN_WITH_HOTSYNC == 1
+
 #include "fujinet/hotsync/dlp.h"
 
 #include <algorithm>
@@ -199,3 +203,5 @@ bool DlpResponse::decode(DlpFunc expected, const Bytes& message)
 }
 
 } // namespace fujinet::hotsync
+
+#endif // FN_WITH_HOTSYNC

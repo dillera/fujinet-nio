@@ -337,15 +337,11 @@ extern "C" void fujinet_core_task(void* arg)
         if (packetLinkDiag) diagRegistry.add_provider(*packetLinkDiag);
     }
 
-    // Palm HotSync over the network, and through a cradle on the FujiBus line
-    // (hotsync.cradle). Its task waits for the network itself. The UART
-    // diagnostics above keep the line beneath the cradle; the transports
-    // below must get the cradle, which owns the line.
-    fujinet::hotsync::CradleChannel* cradle = nullptr;
-    channel = fujinet::hotsync::attach_cradle(std::move(channel), config.hotsync, cradle);
-    auto hotsync = fujinet::hotsync::start_hotsync_service(core.storageManager(), config.hotsync, cradle);
-    auto hotsyncDiag = fujinet::diag::create_hotsync_diagnostic_provider(hotsync, services.fuji);
-    diagRegistry.add_provider(*hotsyncDiag);
+    // Palm HotSync (FN_WITH_HOTSYNC builds). With hotsync.cradle on it puts
+    // the cradle over `channel`, so the transports below get the cradle; the
+    // UART diagnostics above keep the line beneath it.
+    auto hotsync = fujinet::hotsync::start_hotsync(
+        {core.storageManager(), config.hotsync, services.fuji, diagRegistry}, channel);
 
     if (channel) {
         core::setup_transports(core, *channel, profile, &config);

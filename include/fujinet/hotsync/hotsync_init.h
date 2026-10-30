@@ -1,11 +1,19 @@
 #pragma once
 
-#include <cstdint>
+// HotSync's one entry point for a platform main (docs/hotsync.md).
+//
+// Builds without FN_WITH_HOTSYNC link a stub (src/lib/hotsync_init_off.cpp)
+// that does nothing, so a main calls start_hotsync() the same way in every
+// build, and no HotSync code is built.
+
 #include <memory>
-#include <string>
 
 namespace fujinet::config {
 struct HotSyncConfig;
+}
+
+namespace fujinet::diag {
+class DiagnosticRegistry;
 }
 
 namespace fujinet::fs {
@@ -14,31 +22,32 @@ class StorageManager;
 
 namespace fujinet::io {
 class Channel;
+class FujiDevice;
 }
 
 namespace fujinet::hotsync {
 
-class CradleChannel;
-class HotSyncService;
-enum class BackupPolicy : std::uint8_t;
+// What HotSync needs from the main.
+struct HotSyncHost {
+    fs::StorageManager& storage;
+    const config::HotSyncConfig& config;
+    io::FujiDevice* fuji;                // for hotsync.get/set/save; may be null
+    diag::DiagnosticRegistry& diagnostics;
+};
 
-// Parses `hotsync.backup`; false for an unknown value.
-bool parse_backup_policy(const std::string& text, BackupPolicy& out);
-const char* backup_policy_name(BackupPolicy policy);
+// Everything HotSync started. The main keeps it for the program's life.
+class HotSyncRuntime {
+public:
+    virtual ~HotSyncRuntime() = default;
+};
 
-// With HotSync and its cradle on, wraps the FujiBus line in a CradleChannel
-// and points `cradle` at it; the line must change rate (io::BaudControl).
-// Otherwise returns `line` unchanged and leaves `cradle` null.
-std::unique_ptr<io::Channel> attach_cradle(std::unique_ptr<io::Channel> line,
-                                           const config::HotSyncConfig& config, CradleChannel*& cradle);
-
-// Starts the HotSync service on a task of its own when config.enabled, with
-// its folder on the persistent filesystem: NetSync unless config.port is 0,
-// and the cradle when `cradle` is given (from attach_cradle). Returns null when
-// HotSync is off or cannot start (no persistent filesystem, no task). The task
-// keeps its own reference, so the service outlives the returned pointer.
-std::shared_ptr<HotSyncService> start_hotsync_service(fs::StorageManager& storage,
-                                                      const config::HotSyncConfig& config,
-                                                      CradleChannel* cradle);
+// Call once the FujiBus line exists and before core::setup_transports, and
+// give the transports `line` afterwards: with hotsync.cradle on, start_hotsync
+// replaces it with the cradle that owns it. Starts the service on a task of its
+// own when hotsync.enabled, and registers the hotsync.* console commands. Null
+// `line` (a build with no FujiBus channel) is fine.
+//
+// Without FN_WITH_HOTSYNC it leaves `line` alone and returns null.
+std::unique_ptr<HotSyncRuntime> start_hotsync(const HotSyncHost& host, std::unique_ptr<io::Channel>& line);
 
 } // namespace fujinet::hotsync

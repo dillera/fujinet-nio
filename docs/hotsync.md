@@ -18,15 +18,24 @@ backs up databases, and stamps the Palm as last synced with FujiNet.
 
 Not yet: copying a calendar into the Date Book.
 
+## Builds
+
+HotSync is in builds with `FN_WITH_HOTSYNC`: on by default for the POSIX
+`fujibus-pty-*` and `fujibus-rs232-*` presets and on the FN-RS232 ESP32
+boards. `-DFN_WITH_HOTSYNC=OFF` leaves it out of a POSIX build and `=ON` adds
+it to another. Other builds carry none of its code; see
+[build_feature_matrix.md](build_feature_matrix.md).
+
 ## Turning it on
 
-HotSync is off by default. Add a `hotsync:` block to `fujinet.yaml` and restart:
+In those builds HotSync is off until it is turned on. Add a `hotsync:` block to
+`fujinet.yaml` and restart:
 
 ```yaml
 hotsync:
   enabled: true
   port: 14238          # NetSync TCP port; 0 turns NetSync off
-  cradle: true         # a Palm cradle shares the FujiBus serial line
+  cradle: true         # a Palm cradle shares the FujiBus serial line (see Cradle)
   root: /hotsync       # folder on the persistent filesystem
   user_name: FujiNet   # given to a Palm that has never synced
   backup: flagged      # none | flagged | all
@@ -81,8 +90,50 @@ hotsync.fetch http://192.168.1.5:8000/FujiNetTest.prc     # on the FujiNet conso
 ending in `.prc`, `.pdb` or `.pqa`, from the URL or given as a second argument.
 The file lands in `incoming/` first and moves to `install/` when complete.
 
+Give it the file's SHA-256 and it queues the download only if it matches:
+
+```
+shasum -a 256 FujiNetTest.prc                   # on the computer
+hotsync.fetch http://192.168.1.5:8000/FujiNetTest.prc sha256=<the 64 hex digits>
+```
+
 A database larger than 1 MB is neither installed nor backed up, so it never
 has to be held in memory. On ESP32 buffers that large come from PSRAM.
+
+### Sharing the filesystem
+
+The service writes from its own task while the core may be using the same
+filesystem for FileDevice and DiskDevice. That is safe on the local
+filesystems HotSync uses (host, `sd0`, `flash`): `fs::IFileSystem` documents
+why, and HotSync refuses a network filesystem. Two things still follow from
+sharing it:
+
+- Two writers to one file interleave. A client copying a file into `install/`
+  while a sync reads it can hand the sync part of a file, which the sync then
+  refuses as corrupt. `hotsync.fetch` writes to `incoming/` and renames, for
+  this reason; a FileDevice client should copy to another name and rename, or
+  write the file's header last.
+- A directory listing taken during a sync may or may not show the files it
+  adds.
+
+`tests/test_hotsync.cpp` runs 100 syncs while another thread writes, reads,
+lists and removes files on the same filesystem.
+
+## Security
+
+HotSync trusts its network, as Palm Desktop did:
+
+- NetSync listens on TCP `port` on every interface whenever HotSync is on, and
+  asks for no password. Anything that can reach it and speaks NetSync is given
+  the queued apps and can write backups (each at most 1 MB) under `backup/`.
+  Keep the FujiNet on a trusted network, or set `port: 0` to turn NetSync off
+  and keep the cradle.
+- `hotsync.fetch` uses plain HTTP with no TLS, so anything on the network path
+  can substitute the file, and the next sync installs it on the Palm. Fetch
+  from a computer on the same trusted network, and pass `sha256=` with a digest
+  you got from the file's publisher. HTTPS through the firmware's network
+  backend is possible future work.
+- The cradle needs physical access to the Palm and the FujiNet.
 
 ## Syncing a Palm
 
@@ -106,13 +157,22 @@ one now and then, and FujiBus is off the line while it does:
   A WAKEUP keeps the line for the whole sync, including the change to the
   faster rate the Palm accepts; afterwards the bus rate is restored and bytes
   left at the other rate are dropped.
-- A Palm running an app is not HotSyncing: each FujiBus packet (a SLIP frame
-  whose length and checksum hold) keeps windows closed for 60 s.
+- A Palm running an app is not HotSyncing: each FujiBus packet keeps windows
+  closed for 60 s. A SLIP frame counts as a packet only if the FujiBus
+  transport would take it: `CradleChannel` decodes it with `decodeSLIP` and
+  checks it with `FujiBusPacket::fromRaw`, so the two cannot disagree.
 - Bytes that are not FujiBus, with no packet in the last second, end that wait
   at once: a Palm whose HotSync button was pressed sends a WAKEUP, which reads
   as such bytes at the bus rate.
 - While the line is lent FujiBus requests get no answer, and the request after
   a sync can be lost to the Palm's leftover WAKEUP bytes; Palm apps retry.
+
+**Other FujiBus clients on the line.** With `hotsync.cradle` on, after 60 s
+without a FujiBus packet the line is deaf to FujiBus for 1.5 s of every 3 s,
+and a request sent in that time is lost. Turn it on only where the clients
+retry: the Palm library on `fujinet-nio-lib` reclaims the line after an idle
+spell with a FujiDevice GetInfo, which is harmless to repeat. Leave it off on a
+line shared with a computer whose FujiBus client does not retry.
 
 The line must be able to change rate: the ESP32 UART (FN-RS232) or a POSIX
 serial port (`fujibus-rs232-*` presets). A Palm cradle never grants RTS/CTS
@@ -154,7 +214,9 @@ and Palms that woke but did not finish the cradle handshake; they are not
 syncs. With a cradle it adds the cradle's state (`app` while a FujiBus host
 holds the line, `listening` during a window, `syncing`, `idle`) and counters:
 windows opened, FujiBus packets seen, stray bytes, windows refused while an
-app was active, and FujiBus writes dropped while the line was lent:
+app was active, and FujiBus writes dropped while the line was lent. On ESP32,
+`task_stack_min_free` is the least free stack the HotSync task has had, in
+bytes, out of its 8192:
 
 ```
 enabled: 1
@@ -199,15 +261,35 @@ last_backup_failures: 0
 - `HotSyncService` listens for NetSync through `net::ITcpSocketOps` and runs
   the cradle windows, one sync at a time. A sync waits on the Palm for seconds
   at a time and runs for minutes, so the service runs on a task of its own
-  (`platform::start_service_task`), never in `core.tick()`. The platform
-  `main` wraps the bus channel with `hotsync::attach_cradle()` and starts the
-  service with `hotsync::start_hotsync_service()`.
+  (`platform::start_service_task`, an 8 KB stack in internal RAM on ESP32),
+  never in `core.tick()`.
+- A platform `main` calls `hotsync::start_hotsync()` once, after creating the
+  bus channel and before `core::setup_transports`: it puts the cradle over the
+  line, starts the service and registers `hotsync.*`. Builds without
+  `FN_WITH_HOTSYNC` link a stub of it that does nothing.
+- NetSync binds its port once the network is up: until then `bind()` fails,
+  and the service tries again every 5 s. It does not subscribe to
+  `SystemEvents` ([event_driven_services.md](event_driven_services.md)):
+  those callbacks run on the publisher's thread, and the service has a task
+  of its own, so an event could only set a flag for its loop to poll. The
+  retry does that with nothing shared between threads, also recovers a port
+  another program holds on POSIX, and lets the cradle, which needs no
+  network, start at once.
 - `FsStorage` keeps the folders above on an `fs::IFileSystem`.
+- HotSync adds no FujiBus device, command or setting on the wire, so
+  `py/fujinet_tools` and `fujinet-nio-lib` have nothing to follow.
 - Tests: `tests/test_hotsync.cpp` replays bytes captured from a Palm OS 3.3
   device, palm-sync's NetSync recording and the emulator rig, runs whole
   syncs against a fake Palm, and covers the cradle hand-off: app traffic
   holding the line, stray bytes ending the hold, a WAKEUP inside a window, a
-  window with none, and the rate restored.
+  window with none, and the rate restored. It also pins the cradle's packet
+  test to the transport's, runs syncs beside another thread's file traffic,
+  checks SHA-256 against the FIPS 180-4 examples, and drives
+  `start_hotsync()`.
+- Not covered by automated tests, but tested live: the ESP32 service task and
+  `UartChannel::set_baud_rate` (on an FN-RS232 board with a Palm in a
+  cradle), and NetSync with a real Palm (only with `fake_palm.py` and
+  palm-sync's recording, since the test Palm has no network).
 
 ## Licence
 

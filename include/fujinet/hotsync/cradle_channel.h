@@ -8,8 +8,9 @@
 // HotSync service borrows it between FujiBus conversations:
 //
 // - Every FujiBus packet keeps the line for the bus for hostHoldMs: a Palm
-//   running an app cannot be HotSyncing. A packet counts only when its length
-//   and checksum hold; a Palm's SLP frames carry SLIP END bytes too.
+//   running an app cannot be HotSyncing. A SLIP frame counts as a packet only
+//   when the FujiBus transport would take it (decodeSLIP, then
+//   FujiBusPacket::fromRaw); a Palm's SLP frames carry SLIP END bytes too.
 // - Any other bytes, with no packet close by, end that hold at once. That is
 //   what a HotSync start looks like on the bus.
 // - While the line is free, claim() lends it at another rate; release() puts
@@ -18,6 +19,10 @@
 // Only one side touches the line at a time: FujiBus while it is the bus's,
 // the HotSync service while it is lent. FujiBus reads nothing and its writes
 // are dropped while the line is lent; a Palm app retries.
+//
+// One mutex guards the line. wait_for_readable() holds it for its whole wait,
+// because the ESP32 UART reads its driver while it waits; so claim(), on the
+// service task, can wait up to one core idle wait (20 ms on ESP32) for it.
 
 #include "fujinet/hotsync/link.h"
 #include "fujinet/io/core/channel.h"
@@ -94,6 +99,7 @@ private:
     void scan(const std::uint8_t* data, std::size_t len, std::uint64_t now);
     void stray(std::size_t count, std::uint64_t now);
     void start_frame();
+    void end_frame();
     void discard_pending();
     void settle() const;
 
@@ -109,14 +115,10 @@ private:
     std::vector<std::uint8_t> _pending;
     bool _lent{false};
     std::uint32_t _busBaud{0};
-    // SLIP framing as seen on the way to FujiBus: the frame being decoded,
-    // its header's length and checksum, and its own folded sum.
+    // SLIP framing as seen on the way to FujiBus: the frame so far, as sent,
+    // from its opening END.
     bool _inFrame{false};
-    bool _escape{false};
-    std::size_t _frameLen{0};
-    std::uint16_t _lengthField{0};
-    std::uint8_t _checksumField{0};
-    std::uint16_t _sum{0};
+    std::vector<std::uint8_t> _frame;
     bool _sawFrame{false};
     std::uint64_t _lastFrameMs{0};
     std::uint64_t _holdUntilMs{0};
