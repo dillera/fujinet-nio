@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <chrono>
 
 #include "fujinet/net/network_link.h"
 
@@ -49,6 +50,8 @@ private:
     std::string _gateway;
     std::string _dns;
     net::MacAddress _mac;
+    bool _sim_restore_pending{false};
+    std::chrono::steady_clock::time_point _sim_connect_at{};
 };
 
 } // namespace fujinet::platform::posix

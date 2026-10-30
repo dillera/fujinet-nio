@@ -99,7 +99,9 @@ The POSIX FujiNet process always registers this service. Set
 control of the host network; set `FN_POSIX_WIFI_INTERFACE` to select an
 interface. Simulated mode provides three stable access points and a test IPv4
 connection, making PTY and BBC emulator tests independent of host Wi-Fi. For
-failure-path tests, `FN_POSIX_WIFI_SIM_FAIL_SSID` makes that named simulated
+failure-path tests, `FN_POSIX_WIFI_SIM_RESTORE_DELAY_MS` delays a simulated
+restoration after a rejected connection, and `FN_POSIX_WIFI_SIM_SCAN_EDGE_CASES`
+adds a hidden SSID and duplicate access point. `FN_POSIX_WIFI_SIM_FAIL_SSID` makes that named simulated
 network fail to connect; it has no effect on the host-managed backend.
 
 ## What Was Implemented

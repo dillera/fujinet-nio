@@ -50,6 +50,9 @@ WifiBackendMode PosixWifiLink::mode_from_environment()
 
 net::LinkState PosixWifiLink::state() const
 {
+    if (_mode == WifiBackendMode::Simulated && _state == net::LinkState::Connecting &&
+        std::chrono::steady_clock::now() >= _sim_connect_at)
+        return net::LinkState::Connected;
     return _state;
 }
 
@@ -62,10 +65,19 @@ void PosixWifiLink::connect(std::string ssid, std::string pass)
         const char* reject = std::getenv("FN_POSIX_WIFI_SIM_FAIL_SSID");
         if (reject && *reject && _ssid == reject) {
             _state = net::LinkState::Failed;
+            _sim_restore_pending = true;
             _ip.clear(); _subnet.clear(); _gateway.clear(); _dns.clear();
             return;
         }
-        _state = net::LinkState::Connected;
+        const char* delay = std::getenv("FN_POSIX_WIFI_SIM_RESTORE_DELAY_MS");
+        const long delay_ms = delay ? std::strtol(delay, nullptr, 10) : 0;
+        if (_sim_restore_pending && delay_ms > 0 && delay_ms <= 30000) {
+            _state = net::LinkState::Connecting;
+            _sim_connect_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(delay_ms);
+        } else {
+            _state = net::LinkState::Connected;
+        }
+        _sim_restore_pending = false;
         _ip = "192.0.2.2";
         _subnet = "255.255.255.0";
         _gateway = "192.0.2.1";
@@ -102,13 +114,16 @@ void PosixWifiLink::disconnect()
 void PosixWifiLink::poll()
 {
     if (_mode == WifiBackendMode::Host) refresh_host_state();
+    if (_mode == WifiBackendMode::Simulated && _state == net::LinkState::Connecting &&
+        std::chrono::steady_clock::now() >= _sim_connect_at)
+        _state = net::LinkState::Connected;
 }
 
 std::string PosixWifiLink::ip_address() const { return _ip; }
 net::WifiBssid PosixWifiLink::current_bssid() const { return {}; }
 bool PosixWifiLink::active_credentials(net::WifiCredentials& out) const
 {
-    if (_mode != WifiBackendMode::Simulated || _state != net::LinkState::Connected || _ssid.empty())
+    if (_mode != WifiBackendMode::Simulated || state() != net::LinkState::Connected || _ssid.empty())
         return false;
     out.ssid = _ssid;
     out.password = _password;
@@ -182,6 +197,15 @@ net::WifiScanResult PosixWifiLink::scan_wifi()
         record.channel = channels[i];
         record.auth = i == 2 ? 0 : 1;
         result.records.push_back(std::move(record));
+    }
+    if (std::getenv("FN_POSIX_WIFI_SIM_SCAN_EDGE_CASES")) {
+        net::WifiScanRecord hidden;
+        hidden.rssi = -80;
+        hidden.auth = 1;
+        result.records.push_back(hidden);
+        auto duplicate = result.records[0];
+        duplicate.rssi = -30;
+        result.records.push_back(duplicate);
     }
     result.success = true;
     return result;
