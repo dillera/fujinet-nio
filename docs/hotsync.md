@@ -243,7 +243,11 @@ last_installed: 1
 last_install_failures: 0
 last_backed_up: 1
 last_backup_failures: 0
+task_stack_min_free: 4076
 ```
+
+The `task_stack_min_free` above is from an FN-RS232 ESP32-S3 after a cradle
+sync that backed up ten databases: a sync uses about 4 KB of the task's 8 KB.
 
 ## Design
 
