@@ -167,7 +167,9 @@ It exposes:
   `fujinet.yaml` (needs the FujiDevice from the Wi-Fi context)
 - `net.translation.stats` — totals since start-up and the last 8
   translations, newest first, with time, sizes, stack and heap used
-- `net.wifi.*` — scan, status, get, set and save (when a Wi-Fi context is given)
+- `net.wifi.*` — scan, status, get, set and save (when a Wi-Fi context is given).
+  `net.wifi.status` includes `join_trial`: idle, connecting, succeeded, or failed
+  with previous-network restoration attempted. Scan and set report busy during a trial.
 
 `net.sessions` starts with an `active_sessions: N` line, then one line per
 active session, each reading:

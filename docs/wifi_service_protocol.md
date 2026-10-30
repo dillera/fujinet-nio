@@ -5,8 +5,8 @@ platform can expose the management endpoint. Hardware capabilities describe
 which live operations are available; they do not by themselves hide the
 endpoint on POSIX or emulator platforms.
 Payload integers are little-endian. Every request and response starts with
-protocol version `1`. Password bytes are accepted only by `SET_CONFIG`; they
-are never present in any response.
+protocol version `1`. Password bytes are accepted by `SET_CONFIG` and `TRY_JOIN`;
+they are never present in any response.
 
 ## Commands
 
@@ -17,6 +17,8 @@ are never present in any response.
 | `SET_CONFIG` | `0x03` | version, field flags, selected fields |
 | `SCAN` | `0x04` | version, offset `u16`, limit `u8` |
 | `GET_ADAPTER_INFO` | `0x05` | version (highest understood; see below) |
+| `TRY_JOIN` | `0x06` | version, SSID string8, password string8 |
+| `GET_JOIN_STATUS` | `0x07` | version (highest understood) |
 
 `SET_CONFIG` field flags are `enabled=0x01`, `ssid=0x02`, `bssid=0x04`,
 `password=0x08`, `persist=0x10`, and `reconnect=0x20`. Enabled is one byte;
@@ -56,6 +58,30 @@ than fail. The firmware version comes from FujiDevice `GetInfo`
 console's `net.wifi.status` shows the MAC, and `./scripts/fujinet --port <port>
 wifi adapter` asks for it from a host.
 
+`TRY_JOIN` tests new credentials before saving them. If the connected link
+provides its credentials and they differ from saved settings (for example after
+an older client saved settings without reconnecting), the working live settings
+are first saved as the restoration point. Otherwise the saved settings are used. The SSID is 1–32 bytes, the password is 0–64 bytes; an empty
+password selects an open network. It clears any old BSSID pin and starts the
+attempt after sending its reply. The old credentials stay saved until the new
+link reports Connected. On success the new credentials are saved. On failure
+or after 30 seconds, the service retains the old configuration and attempts to
+reconnect it (or disconnects if none was configured). A restart during a trial
+therefore retains the previous configuration. A concurrent `TRY_JOIN`, `SET_CONFIG`, or `SCAN`
+is rejected as busy; console scan and set commands are likewise blocked during
+the trial. Passwords are never returned.
+
+`GET_JOIN_STATUS` returns version and a state byte: 0 idle, 1 pending, 2
+connected and saved, 3 failed with restoration attempted. The failure result
+is retained even if the old network subsequently reconnects; inspect the live
+link separately with `GET_STATUS`. The console's `net.wifi.status` also reports
+`join_trial`. These new commands
+follow the [extension rules](protocol_reference.md#extending-commands): they
+accept a nonzero highest-supported version and ignore trailing request bytes;
+replies use the lower supported version. Older firmware returns Unsupported.
+`wifi join <ssid>` starts a trial (prompting for the password; `--open` selects
+an open network); `wifi join-status` reports the result.
+
 `SCAN` returns version, more flag, count, and records. Each record contains an
 SSID, six BSSID bytes, signed RSSI, channel, and authentication mode. The
 offset and limit make responses safe for 8-bit clients; implementations cap a
@@ -72,7 +98,9 @@ The POSIX FujiNet process always registers this service. Set
 `unavailable`. Host mode observes the selected host interface without taking
 control of the host network; set `FN_POSIX_WIFI_INTERFACE` to select an
 interface. Simulated mode provides three stable access points and a test IPv4
-connection, making PTY and BBC emulator tests independent of host Wi-Fi.
+connection, making PTY and BBC emulator tests independent of host Wi-Fi. For
+failure-path tests, `FN_POSIX_WIFI_SIM_FAIL_SSID` makes that named simulated
+network fail to connect; it has no effect on the host-managed backend.
 
 ## What Was Implemented
 

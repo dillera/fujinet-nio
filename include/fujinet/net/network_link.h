@@ -66,6 +66,13 @@ enum WifiCapability : std::uint16_t {
     WifiCapabilitySimulated = 1U << 7,
 };
 
+// Internal-only snapshot; never encoded in status or diagnostics.
+struct WifiCredentials {
+    std::string ssid;
+    std::string password;
+    std::string bssid;
+};
+
 struct WifiLinkCapabilities {
     std::uint16_t flags{WifiCapabilityConfig | WifiCapabilityStatus};
     WifiBackendKind backend{WifiBackendKind::Unavailable};
@@ -87,6 +94,8 @@ public:
     virtual std::string ip_address() const = 0;
 
     virtual WifiBssid current_bssid() const { return {}; }
+    // Available only when the backend knows the credentials of a live link.
+    virtual bool active_credentials(WifiCredentials&) const { return false; }
     // Station interface MAC address; valid=false when the backend cannot report it.
     virtual MacAddress mac_address() const { return {}; }
     virtual std::int8_t rssi() const { return 0; }

@@ -37,6 +37,8 @@ COMMAND_NAMES: dict[int, dict[int, str]] = {
         0x03: "SetConfig",
         0x04: "Scan",
         0x05: "GetAdapterInfo",
+        0x06: "TryJoin",
+        0x07: "GetJoinStatus",
     },
     0x45: {
         0x01: "GetTime",

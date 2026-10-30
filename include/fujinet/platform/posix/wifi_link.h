@@ -25,6 +25,7 @@ public:
     void poll() override;
     std::string ip_address() const override;
     net::WifiBssid current_bssid() const override;
+    bool active_credentials(net::WifiCredentials& out) const override;
     net::MacAddress mac_address() const override;
     std::int8_t rssi() const override;
     std::string subnet_mask() const override;

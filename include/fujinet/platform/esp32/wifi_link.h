@@ -46,6 +46,7 @@ public:
 
     std::string ip_address() const override;
     fujinet::net::WifiBssid current_bssid() const override;
+    bool active_credentials(fujinet::net::WifiCredentials& out) const override;
     fujinet::net::MacAddress mac_address() const override;
     std::int8_t rssi() const override;
     std::string subnet_mask() const override;

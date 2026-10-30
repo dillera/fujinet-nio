@@ -19,13 +19,26 @@ struct Store final : fujinet::config::FujiConfigStore {
 struct Link final : fujinet::net::INetworkLink {
     fujinet::net::LinkState state_value{fujinet::net::LinkState::Connected};
     bool connected{false};
+    bool connect_starts{false};
+    bool active_available{false};
+    fujinet::net::WifiCredentials active;
+    bool active_credentials(fujinet::net::WifiCredentials& out) const override {
+        if (!active_available) return false;
+        out = active;
+        return true;
+    }
+    std::vector<std::pair<std::string, std::string>> attempts;
     bool scan_enabled{false};
     int scans{0};
     std::string bssid;
     fujinet::net::WifiBssid mac{{0x24, 0x6f, 0x28, 0x01, 0x02, 0x03}, true};
     fujinet::net::LinkState state() const override { return state_value; }
     fujinet::net::WifiBssid mac_address() const override { return mac; }
-    void connect(std::string, std::string) override { connected = true; }
+    void connect(std::string ssid, std::string pass) override {
+        connected = true;
+        attempts.emplace_back(std::move(ssid), std::move(pass));
+        if (connect_starts) state_value = fujinet::net::LinkState::Connecting;
+    }
     void disconnect() override { connected = false; }
     void poll() override {}
     std::string ip_address() const override { return "192.0.2.2"; }
@@ -226,4 +239,168 @@ TEST_CASE("POSIX Wi-Fi backends advertise real capabilities") {
     unavailable.connect("ssid", "password");
     CHECK(unavailable.state() == fujinet::net::LinkState::Failed);
     CHECK(!unavailable.mac_address().valid);
+}
+
+TEST_CASE("wifi trial commits only after connection and rolls back on failure or timeout") {
+    using namespace fujinet;
+    config::FujiConfig config;
+    config.wifi.enabled = true;
+    config.wifi.ssid = "old";
+    config.wifi.passphrase = "old-pass";
+    config.wifi.bssid = "aa:bb:cc:dd:ee:ff";
+    Store store;
+    Link link;
+    link.connect_starts = true;
+    auto now = io::WifiService::Clock::time_point{};
+    io::WifiService service(config, &store, [&] { return &link; }, [&] { return now; });
+    io::IORequest req;
+    req.command = 6;
+    req.payload = {1, 3, 'n', 'e', 'w', 3, 'b', 'a', 'd'};
+    REQUIRE(service.handle(req).status == io::StatusCode::Ok);
+    CHECK(store.saves == 0);
+    CHECK(config.wifi.ssid == "old");
+    CHECK(link.attempts.empty());
+    CHECK(service.handle(req).status == io::StatusCode::DeviceBusy);
+    service.poll();
+    CHECK(link.attempts.empty());
+    now += std::chrono::milliseconds(500);
+    service.poll();
+    REQUIRE(link.attempts.size() == 1);
+    CHECK(link.attempts.back() == std::make_pair(std::string("new"), std::string("bad")));
+    CHECK(link.bssid.empty());
+    link.state_value = net::LinkState::Failed;
+    service.poll();
+    REQUIRE(link.attempts.size() == 2);
+    CHECK(link.attempts.back() == std::make_pair(std::string("old"), std::string("old-pass")));
+    CHECK(link.bssid == "aa:bb:cc:dd:ee:ff");
+    CHECK(config.wifi.ssid == "old");
+    CHECK(store.saves == 0);
+    req.command = 7; req.payload = {1};
+    CHECK(service.handle(req).payload == std::vector<std::uint8_t>{1, 3});
+
+    req.command = 6; req.payload = {1, 3, 'n', 'e', 'w', 4, 'g', 'o', 'o', 'd'};
+    REQUIRE(service.handle(req).status == io::StatusCode::Ok);
+    now += std::chrono::milliseconds(500);
+    service.poll();
+    link.state_value = net::LinkState::Connected;
+    service.poll();
+    CHECK(config.wifi.ssid == "new");
+    CHECK(config.wifi.passphrase == "good");
+    CHECK(config.wifi.bssid.empty());
+    CHECK(store.saves == 1);
+    req.command = 7; req.payload = {1, 99}; // trailing extensions are ignored
+    CHECK(service.handle(req).payload == std::vector<std::uint8_t>{1, 2});
+
+    // A wrong password for the same SSID must not be mistaken for success.
+    req.command = 6; req.payload = {1, 3, 'n', 'e', 'w', 3, 'b', 'a', 'd'};
+    REQUIRE(service.handle(req).status == io::StatusCode::Ok);
+    now += std::chrono::milliseconds(500);
+    service.poll();
+    link.state_value = net::LinkState::Failed;
+    service.poll();
+    CHECK(config.wifi.ssid == "new");
+    CHECK(config.wifi.passphrase == "good");
+    CHECK(store.saves == 1);
+    CHECK(link.attempts.back() == std::make_pair(std::string("new"), std::string("good")));
+    req.command = 7; req.payload = {1};
+    CHECK(service.handle(req).payload == std::vector<std::uint8_t>{1, 3});
+
+    req.command = 6; req.payload = {1, 3, 'b', 'a', 'd', 0};
+    REQUIRE(service.handle(req).status == io::StatusCode::Ok);
+    now += std::chrono::milliseconds(500);
+    service.poll();
+    now += std::chrono::seconds(31);
+    service.poll();
+    CHECK(config.wifi.ssid == "new");
+    CHECK(store.saves == 1);
+    CHECK(link.attempts.back() == std::make_pair(std::string("new"), std::string("good")));
+    req.command = 7; req.payload = {1};
+    CHECK(service.handle(req).payload == std::vector<std::uint8_t>{1, 3});
+}
+
+TEST_CASE("wifi trial requires valid input, a writable store and a capable link") {
+    using namespace fujinet;
+    config::FujiConfig config;
+    Link link;
+    io::IORequest req; req.command = 6; req.payload = {1, 0, 0};
+    io::WifiService missingStore(config, nullptr, [&] { return &link; });
+    CHECK(missingStore.handle(req).status == io::StatusCode::InvalidRequest);
+    req.payload = {1, 1, 'x', 0};
+    CHECK(missingStore.handle(req).status == io::StatusCode::NotReady);
+    Store store;
+    io::WifiService missingLink(config, &store, [] { return nullptr; });
+    CHECK(missingLink.handle(req).status == io::StatusCode::NotReady);
+    CHECK(config.wifi.ssid.empty());
+    CHECK(store.saves == 0);
+}
+
+TEST_CASE("net.wifi.status reports trial state and prevents disruptive commands") {
+    using namespace fujinet;
+    core::FujinetCore core;
+    io::FujiDevice fuji(nullptr, nullptr);
+    fuji.config_mut().wifi.enabled = true;
+    fuji.config_mut().wifi.ssid = "old";
+    fuji.config_mut().wifi.passphrase = "old-secret";
+    Store store;
+    Link link;
+    link.connect_starts = true;
+    auto now = io::WifiService::Clock::time_point{};
+    auto service = std::make_unique<io::WifiService>(
+        fuji.config_mut(), &store, [&] { return &link; }, [&] { return now; });
+    auto* trial = service.get();
+    REQUIRE(core.deviceManager().registerDevice(0xF3, std::move(service)));
+    auto ctx = std::make_shared<diag::NetworkDiagWifiContext>();
+    ctx->fuji = &fuji;
+    ctx->ensure_wifi = [&]() -> net::INetworkLink* { return &link; };
+    auto console = diag::create_network_diagnostic_provider(core, ctx);
+    diag::DiagArgsView status; status.argv = {"net.wifi.status"};
+    CHECK(console->execute(status).text.find("join_trial: idle") != std::string::npos);
+    io::IORequest req; req.command = 6; req.payload = {1, 3, 'n','e','w', 3, 'b','a','d'};
+    REQUIRE(trial->handle(req).status == io::StatusCode::Ok);
+    CHECK(console->execute(status).text.find("join_trial: connecting") != std::string::npos);
+    diag::DiagArgsView set; set.argv = {"net.wifi.set", "ssid", "other"};
+    CHECK(console->execute(set).status == diag::DiagStatus::Busy);
+    diag::DiagArgsView scan; scan.argv = {"net.wifi.scan"};
+    CHECK(console->execute(scan).status == diag::DiagStatus::Busy);
+    req.command = 4; req.payload = {1, 0, 0, 1};
+    CHECK(trial->handle(req).status == io::StatusCode::DeviceBusy);
+    now += std::chrono::milliseconds(500);
+    trial->poll();
+    link.state_value = net::LinkState::Failed;
+    trial->poll();
+    const auto result = console->execute(status);
+    CHECK(result.text.find("join_trial: failed; previous network restore attempted") != std::string::npos);
+    CHECK(result.text.find("old-secret") == std::string::npos);
+    CHECK(result.text.find("bad") == std::string::npos);
+}
+
+TEST_CASE("wifi trial recovers the live network when saved credentials differ") {
+    using namespace fujinet;
+    config::FujiConfig config;
+    config.wifi.enabled = true;
+    config.wifi.ssid = "incorrectly-saved";
+    config.wifi.passphrase = "bad-saved";
+    Store store;
+    Link link;
+    link.connect_starts = true;
+    link.active_available = true;
+    link.active = {"live", "live-pass", "aa:bb:cc:dd:ee:ff"};
+    auto now = io::WifiService::Clock::time_point{};
+    io::WifiService service(config, &store, [&] { return &link; }, [&] { return now; });
+    io::IORequest req; req.command = 6; req.payload = {1, 3, 'n','e','w', 3, 'b','a','d'};
+    REQUIRE(service.handle(req).status == io::StatusCode::Ok);
+    CHECK(config.wifi.ssid == "live");
+    CHECK(config.wifi.passphrase == "live-pass");
+    CHECK(config.wifi.bssid == "aa:bb:cc:dd:ee:ff");
+    CHECK(store.saves == 1);
+    now += std::chrono::milliseconds(500);
+    service.poll();
+    link.state_value = net::LinkState::Failed;
+    service.poll();
+    REQUIRE(link.attempts.size() == 2);
+    CHECK(link.attempts.back() == std::make_pair(std::string("live"), std::string("live-pass")));
+    CHECK(link.bssid == "aa:bb:cc:dd:ee:ff");
+    CHECK(config.wifi.ssid == "live");
+    req.command = 7; req.payload = {1};
+    CHECK(service.handle(req).payload == std::vector<std::uint8_t>{1, 3});
 }

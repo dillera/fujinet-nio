@@ -25,6 +25,7 @@ public:
     config::WifiConfig& config_mut() { return _config.wifi; }
     net::INetworkLink* link() const { return _linkProvider ? _linkProvider() : nullptr; }
 
+    bool can_save() const { return _store != nullptr; }
     StatusCode save() const;
     StatusCode update(const config::WifiConfig& next, bool persist, bool reconnect);
     StatusCode reconnect();

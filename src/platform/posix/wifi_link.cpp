@@ -58,6 +58,13 @@ void PosixWifiLink::connect(std::string ssid, std::string pass)
     _ssid = std::move(ssid);
     _password = std::move(pass);
     if (_mode == WifiBackendMode::Simulated) {
+        // Optional fault injection for deterministic end-to-end recovery tests.
+        const char* reject = std::getenv("FN_POSIX_WIFI_SIM_FAIL_SSID");
+        if (reject && *reject && _ssid == reject) {
+            _state = net::LinkState::Failed;
+            _ip.clear(); _subnet.clear(); _gateway.clear(); _dns.clear();
+            return;
+        }
         _state = net::LinkState::Connected;
         _ip = "192.0.2.2";
         _subnet = "255.255.255.0";
@@ -99,6 +106,15 @@ void PosixWifiLink::poll()
 
 std::string PosixWifiLink::ip_address() const { return _ip; }
 net::WifiBssid PosixWifiLink::current_bssid() const { return {}; }
+bool PosixWifiLink::active_credentials(net::WifiCredentials& out) const
+{
+    if (_mode != WifiBackendMode::Simulated || _state != net::LinkState::Connected || _ssid.empty())
+        return false;
+    out.ssid = _ssid;
+    out.password = _password;
+    out.bssid = _bssid_text;
+    return true;
+}
 
 net::MacAddress PosixWifiLink::mac_address() const
 {

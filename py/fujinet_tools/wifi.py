@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional
+import getpass
 
 from .common import open_serial, status_ok
 from .fujibus import FujiBusSession
@@ -10,6 +11,8 @@ from .fujibus import FujiBusSession
 # -----------------------
 WIFI_SERVICE_ID = 0xF3
 WIFI_CMD_GET_ADAPTER_INFO = 0x05
+WIFI_CMD_TRY_JOIN = 0x06
+WIFI_CMD_GET_JOIN_STATUS = 0x07
 WIFI_VERSION = 1  # GET_ADAPTER_INFO: the highest version this client understands
 
 
@@ -27,6 +30,60 @@ def parse_get_adapter_info_resp(payload: bytes) -> Optional[str]:
     if not payload[1]:
         return None
     return ":".join(f"{b:02x}" for b in payload[2:8])
+
+
+def build_try_join_req(ssid: str, password: str) -> bytes:
+    name, secret = ssid.encode("utf-8"), password.encode("utf-8")
+    if not 1 <= len(name) <= 32 or len(secret) > 64:
+        raise ValueError("SSID must be 1..32 bytes and password at most 64 bytes")
+    return bytes([WIFI_VERSION, len(name)]) + name + bytes([len(secret)]) + secret
+
+
+def build_join_status_req() -> bytes:
+    return bytes([WIFI_VERSION])
+
+
+def parse_join_status_resp(payload: bytes) -> int:
+    if len(payload) < 2 or payload[0] != WIFI_VERSION or payload[1] > 3:
+        raise ValueError("bad Wi-Fi join status response")
+    return payload[1]
+
+
+def cmd_wifi_join(args) -> int:
+    password = "" if args.open else getpass.getpass("Wi-Fi password: ")
+    try:
+        request = build_try_join_req(args.ssid, password)
+    except ValueError as exc:
+        print(exc)
+        return 1
+    with open_serial(args.port, args.baud, timeout_s=0.01) as ser:
+        bus = FujiBusSession().attach(ser, debug=args.debug)
+        pkt = bus.send_command_expect(device=WIFI_SERVICE_ID, command=WIFI_CMD_TRY_JOIN,
+            payload=request, expect_device=WIFI_SERVICE_ID, expect_command=WIFI_CMD_TRY_JOIN,
+            timeout=args.timeout, cmd_txt="WIFI_TRY_JOIN")
+        if pkt is None or not status_ok(pkt):
+            print("Wi-Fi trial was refused or unsupported")
+            return 1
+        print("Wi-Fi connection attempt started; use wifi join-status to check it")
+    return 0
+
+
+def cmd_wifi_join_status(args) -> int:
+    with open_serial(args.port, args.baud, timeout_s=0.01) as ser:
+        bus = FujiBusSession().attach(ser, debug=args.debug)
+        pkt = bus.send_command_expect(device=WIFI_SERVICE_ID, command=WIFI_CMD_GET_JOIN_STATUS,
+            payload=build_join_status_req(), expect_device=WIFI_SERVICE_ID,
+            expect_command=WIFI_CMD_GET_JOIN_STATUS, timeout=args.timeout, cmd_txt="WIFI_GET_JOIN_STATUS")
+        if pkt is None or not status_ok(pkt):
+            print("Wi-Fi trial status unavailable")
+            return 1
+        try:
+            state = parse_join_status_resp(pkt.payload)
+        except ValueError as exc:
+            print(exc)
+            return 1
+        print(("idle", "connecting", "connected", "failed; restoring previous network")[state])
+        return 0 if state != 3 else 1
 
 
 def cmd_wifi_adapter(args) -> int:
@@ -66,3 +123,10 @@ def register_subcommands(subparsers) -> None:
         description="Ask the Wi-Fi service GET_ADAPTER_INFO for the station MAC address.",
     )
     pwa.set_defaults(fn=cmd_wifi_adapter)
+
+    pwj = wsub.add_parser("join", help="Try a network and keep the previous one on failure")
+    pwj.add_argument("ssid", help="Network name")
+    pwj.add_argument("--open", action="store_true", help="Join an open network without a password")
+    pwj.set_defaults(fn=cmd_wifi_join)
+    pws = wsub.add_parser("join-status", help="Show the latest Wi-Fi trial result")
+    pws.set_defaults(fn=cmd_wifi_join_status)

@@ -14,6 +14,7 @@ extern "C" {
 
 #include "fujinet/core/logging.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -219,11 +220,11 @@ void Esp32WifiLink::connect(std::string ssid, std::string pass)
 
     wifi_config_t wifi_cfg{};
     std::memset(&wifi_cfg, 0, sizeof(wifi_cfg));
-    std::strncpy(reinterpret_cast<char*>(wifi_cfg.sta.ssid), _ssid.c_str(), sizeof(wifi_cfg.sta.ssid) - 1);
-    std::strncpy(reinterpret_cast<char*>(wifi_cfg.sta.password), _pass.c_str(), sizeof(wifi_cfg.sta.password) - 1);
+    std::memcpy(wifi_cfg.sta.ssid, _ssid.data(), std::min(_ssid.size(), sizeof(wifi_cfg.sta.ssid)));
+    std::memcpy(wifi_cfg.sta.password, _pass.data(), std::min(_pass.size(), sizeof(wifi_cfg.sta.password)));
 
     // NOTE: consider relaxing this later (WPA/WPA2/WPA3 mixed environments)
-    wifi_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_cfg.sta.threshold.authmode = _pass.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
     wifi_cfg.sta.pmf_cfg.capable = true;
     wifi_cfg.sta.pmf_cfg.required = false;
     std::uint8_t configured_bssid[6]{};
@@ -301,6 +302,15 @@ void Esp32WifiLink::poll()
 std::string Esp32WifiLink::ip_address() const
 {
     return _ip;
+}
+
+bool Esp32WifiLink::active_credentials(fujinet::net::WifiCredentials& out) const
+{
+    if (_state != fujinet::net::LinkState::Connected || _ssid.empty()) return false;
+    out.ssid = _ssid;
+    out.password = _pass;
+    out.bssid = _configured_bssid;
+    return true;
 }
 
 fujinet::net::WifiBssid Esp32WifiLink::current_bssid() const

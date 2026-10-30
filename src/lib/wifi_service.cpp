@@ -58,9 +58,48 @@ void put_string8(std::vector<std::uint8_t>& p, const std::string& s)
 
 WifiService::WifiService(config::FujiConfig& config,
                          config::FujiConfigStore* store,
-                         LinkProvider linkProvider)
-    : _controller(config, store, std::move(linkProvider))
+                         LinkProvider linkProvider,
+                         Now now)
+    : _now(std::move(now)), _controller(config, store, std::move(linkProvider))
 {}
+
+void WifiService::poll()
+{
+    if (_joinState != JoinState::Pending) return;
+    auto* link = _controller.link();
+    if (!link) {
+        _joinPrevious = {};
+        _joinCandidate = {};
+        _joinState = JoinState::Failed;
+        return;
+    }
+    if (_joinStartPending) {
+        // Give a polled transport time to deliver the reply before radio
+        // teardown, which can block the core task for several seconds.
+        if (_now() < _joinStartAt) return;
+        _joinStartPending = false;
+        link->set_bssid(_joinCandidate.bssid);
+        link->connect(_joinCandidate.ssid, _joinCandidate.passphrase);
+    }
+    if (link->state() == net::LinkState::Connected) {
+        _controller.config_mut() = _joinCandidate;
+        (void)_controller.save();
+        _joinPrevious = {};
+        _joinCandidate = {};
+        _joinState = JoinState::Connected;
+    } else if (link->state() == net::LinkState::Failed ||
+               link->state() == net::LinkState::Disconnected ||
+               _now() >= _joinDeadline) {
+        _joinState = JoinState::Failed;
+        link->set_bssid(_joinPrevious.bssid);
+        if (_joinPrevious.enabled && !_joinPrevious.ssid.empty())
+            link->connect(_joinPrevious.ssid, _joinPrevious.passphrase);
+        else
+            link->disconnect();
+        _joinPrevious = {};
+        _joinCandidate = {};
+    }
+}
 
 IOResponse WifiService::handle(const IORequest& request)
 {
@@ -76,6 +115,58 @@ IOResponse WifiService::handle(const IORequest& request)
         auto response = make_success_response(request);
         response.payload = {std::min(request.payload[0], VERSION), static_cast<std::uint8_t>(mac.valid ? 1 : 0)};
         response.payload.insert(response.payload.end(), mac.bytes, mac.bytes + 6);
+        return response;
+    }
+
+    if (command == protocol::WifiCommand::TryJoin ||
+        command == protocol::WifiCommand::GetJoinStatus) {
+        if (request.payload.empty() || request.payload[0] == 0)
+            return make_base_response(request, StatusCode::InvalidRequest);
+        auto response = make_success_response(request);
+        if (command == protocol::WifiCommand::GetJoinStatus) {
+            response.payload = {std::min(request.payload[0], VERSION),
+                                static_cast<std::uint8_t>(_joinState)};
+            return response;
+        }
+        if (_joinState == JoinState::Pending)
+            return make_base_response(request, StatusCode::DeviceBusy);
+        std::size_t at = 1;
+        std::string ssid, password;
+        if (!string8(request.payload, at, MAX_SSID, ssid) || ssid.empty() ||
+            !string8(request.payload, at, MAX_PASSWORD, password))
+            return make_base_response(request, StatusCode::InvalidRequest);
+        auto* link = _controller.link();
+        if (!link) return make_base_response(request, StatusCode::NotReady);
+        if (!(link->capabilities().flags & net::WifiCapabilityConnect))
+            return make_base_response(request, StatusCode::Unsupported);
+        // Verify that persistence is available before interrupting a good link.
+        if (!_controller.can_save()) return make_base_response(request, StatusCode::NotReady);
+        _joinPrevious = _controller.config();
+        net::WifiCredentials active;
+        if (link->active_credentials(active)) {
+            _joinPrevious.enabled = true;
+            _joinPrevious.ssid = std::move(active.ssid);
+            _joinPrevious.passphrase = std::move(active.password);
+            _joinPrevious.bssid = std::move(active.bssid);
+            // Older clients could save new settings without switching the
+            // radio. Preserve the working live connection even across reset.
+            const auto& saved = _controller.config();
+            if (saved.enabled != _joinPrevious.enabled || saved.ssid != _joinPrevious.ssid ||
+                saved.passphrase != _joinPrevious.passphrase || saved.bssid != _joinPrevious.bssid) {
+                _controller.config_mut() = _joinPrevious;
+                (void)_controller.save();
+            }
+        }
+        _joinCandidate = _joinPrevious;
+        _joinCandidate.enabled = true;
+        _joinCandidate.ssid = std::move(ssid);
+        _joinCandidate.bssid.clear();
+        _joinCandidate.passphrase = std::move(password);
+        _joinState = JoinState::Pending;
+        _joinStartPending = true; // send the reply before potentially slow radio teardown
+        _joinStartAt = _now() + std::chrono::milliseconds(500);
+        _joinDeadline = _joinStartAt + std::chrono::seconds(30);
+        response.payload = {std::min(request.payload[0], VERSION)};
         return response;
     }
 
@@ -117,6 +208,8 @@ IOResponse WifiService::handle(const IORequest& request)
     }
 
     if (command == protocol::WifiCommand::SetConfig) {
+        if (_joinState == JoinState::Pending)
+            return make_base_response(request, StatusCode::DeviceBusy);
         if (request.payload.size() < 2) return make_base_response(request, StatusCode::InvalidRequest);
         std::size_t at = 1;
         std::uint8_t flags = request.payload[at++];
@@ -143,6 +236,8 @@ IOResponse WifiService::handle(const IORequest& request)
     }
 
     if (command == protocol::WifiCommand::Scan) {
+        if (_joinState == JoinState::Pending)
+            return make_base_response(request, StatusCode::DeviceBusy);
         std::size_t at = 1;
         std::uint16_t offset = 0;
         std::uint8_t limit = 0;

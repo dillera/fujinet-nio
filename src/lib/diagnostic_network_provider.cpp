@@ -4,6 +4,7 @@
 #include "fujinet/diag/diagnostic_parse.h"
 #include "fujinet/io/devices/fuji_device.h"
 #include "fujinet/io/devices/wifi_controller.h"
+#include "fujinet/io/devices/wifi_service.h"
 #include "fujinet/io/devices/network_device.h"
 #include "fujinet/io/devices/network_device_diagnostics.h"
 #include "fujinet/io/devices/network_translation.h"
@@ -113,6 +114,25 @@ static fujinet::io::NetworkDevice* get_net_device(fujinet::core::FujinetCore& co
 
     auto* dev = core.deviceManager().getDevice(to_device_id(WireDeviceId::NetworkService));
     return dynamic_cast<fujinet::io::NetworkDevice*>(dev);
+}
+
+static fujinet::io::WifiService* get_wifi_service(fujinet::core::FujinetCore& core)
+{
+    using fujinet::io::protocol::WireDeviceId;
+    using fujinet::io::protocol::to_device_id;
+    return dynamic_cast<fujinet::io::WifiService*>(
+        core.deviceManager().getDevice(to_device_id(WireDeviceId::WifiService)));
+}
+
+static const char* join_state_name(std::uint8_t state)
+{
+    switch (state) {
+    case 0: return "idle";
+    case 1: return "connecting";
+    case 2: return "succeeded";
+    case 3: return "failed; previous network restore attempted";
+    default: return "unknown";
+    }
 }
 
 class NetworkDiagnosticProvider final : public IDiagnosticProvider {
@@ -309,6 +329,10 @@ private:
         text += (wifi_cfg.enabled ? "1" : "0");
         text += "\r\nconfigured_ssid: ";
         text += wifi_cfg.ssid;
+        text += "\r\njoin_trial: ";
+        auto* service = get_wifi_service(_core);
+        const char* trial = service ? join_state_name(service->join_status()) : "unavailable";
+        text += trial;
         text += "\r\n";
 
         if (!link) {
@@ -336,6 +360,7 @@ private:
         text += "\r\n";
 
         DiagResult r = DiagResult::ok(text);
+        r.kv.emplace_back("join_trial", trial);
         r.kv.emplace_back("link_state", link_state_name(link->state()));
         r.kv.emplace_back("ip", link->ip_address());
         r.kv.emplace_back("mac", mac);
@@ -344,6 +369,9 @@ private:
 
     DiagResult cmd_wifi_set(const DiagArgsView& args)
     {
+        auto* service = get_wifi_service(_core);
+        if (service && service->join_status() == 1)
+            return DiagResult::busy("Wi-Fi trial in progress");
         auto* fuji = fuji_device();
         if (!fuji) {
             return DiagResult::not_ready("FujiDevice not available");
@@ -436,6 +464,9 @@ private:
 
     DiagResult cmd_wifi_scan()
     {
+        auto* service = get_wifi_service(_core);
+        if (service && service->join_status() == 1)
+            return DiagResult::busy("Wi-Fi trial in progress");
         auto controller = wifi_controller();
         const auto scan = controller.scan();
         if (!scan.success) {

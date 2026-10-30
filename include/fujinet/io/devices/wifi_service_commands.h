@@ -10,6 +10,8 @@ enum class WifiCommand : std::uint8_t {
     SetConfig = 0x03,
     Scan = 0x04,
     GetAdapterInfo = 0x05,
+    TryJoin = 0x06,
+    GetJoinStatus = 0x07,
 };
 
 inline WifiCommand to_wifi_command(std::uint16_t command)
