@@ -278,6 +278,7 @@ or from `SBNIO_CONSOLE`, and `SBNIO_SERIAL` picks one board of several.
 | `regs` | the CS1 register table |
 | `send <hex>` | send a raw FujiBus packet to NIO as sequence 0, without a Palm |
 | `trace on\|off` | log every CS1 write |
+| `log on\|off` | log every request and reply with a hex dump (off at start: replies other than ok are always logged) |
 | `loopback on\|off` | answer requests with themselves instead of asking NIO |
 | `settle [0-31]` | PIO cycles from seeing a write to sampling it |
 | `widths` | measured WE low times, then reset them |
