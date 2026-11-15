@@ -8,6 +8,7 @@
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
+#include "hardware/structs/busctrl.h"
 #include "hardware/structs/sio.h"
 #include "hardware/sync.h"
 #include "persistent_reply.h"
@@ -240,6 +241,11 @@ uint32_t bus_write_head(void) {
 
 void bus_launch_core1(void) {
     clamp();
+    /* Core1 answers every Palm read from SRAM within one bus cycle; let it
+     * win SRAM arbitration over Core0 and DMA, whose traffic (console
+     * formatting, USB, the write ring) could otherwise hold its table loads
+     * long enough for the Palm to sample a wrong word. */
+    busctrl_hw->priority = BUSCTRL_BUS_PRIORITY_PROC1_BITS;
     multicore_launch_core1(core1_service);
 }
 
